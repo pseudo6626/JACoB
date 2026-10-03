@@ -1,6 +1,6 @@
 # JACoB Compatibility Report
 
-> **GALNET TECHNICAL REPORT // PLATFORM STATUS**
+
 
 JACoB keeps host-specific input, capture, recorder, and overlay code behind platform adapters. Custom tabs use the same SDK on supported systems.
 
