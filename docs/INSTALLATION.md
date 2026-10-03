@@ -1,7 +1,6 @@
 # JACoB Installation Notice
 
-> **GALNET SERVICE BULLETIN // LOCAL SYSTEMS**  
-> Installation procedure for JACoB Alpha 0.2.2.
+
 
 ## Windows
 
