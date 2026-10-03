@@ -1,0 +1,15 @@
+# build output
+dist/
+cmd/installer/payload/*.exe
+*.exe
+*.log
+
+# local state
+custom-tabs.json
+appearance.json
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
