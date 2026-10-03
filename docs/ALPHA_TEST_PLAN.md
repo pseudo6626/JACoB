@@ -1,7 +1,6 @@
 # JACoB Alpha 0.2.2 Field Evaluation
 
-> **GALNET TEST CIRCULAR // ALPHA CHANNEL**  
-> Record failures with platform, build, reproduction steps, and the relevant `jacob.log` excerpt.
+
 
 ## Installation
 
