@@ -1,6 +1,6 @@
 # JACoB Custom Tab Technical Reference
 
-> **GALNET TECHNICAL ARCHIVE // JACoB TAB INTERFACE**  
+
 > Version: Alpha 0.2.2  
 > SDK version: 1
 
