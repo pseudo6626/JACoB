@@ -1,13 +1,13 @@
 # JACoB — Journal Aligned Control Bridge
 
-> **GALNET TECHNICAL BULLETIN // ALPHA CHANNEL**  
+
 > Current field build: **0.2.2 Alpha**
 
 JACoB is a local companion bridge for **Elite Dangerous**. It reads the live journal and `Status.json`, resolves control bindings, sends game input, hosts persistent custom HTML tabs, supplies a game-view stream, and renders native HUD overlays.
 
 The core carries the interfaces. User tabs carry the tools. Route queues, race HUDs, mining utilities, control panels, and other workflows live in ordinary HTML loaded through Tab Manager.
 
-## Field installation
+## Installation
 
 Windows commanders should use the release installer. It installs for the current Windows account, creates Start Menu entries, and registers an uninstaller. The Action Recorder is optional during setup.
 
@@ -21,7 +21,7 @@ Uninstalling the program leaves saved tabs and appearance settings in place.
 
 Steam Deck and Linux builds use the same tab SDK and web interface. Platform-specific capability is reported by the relevant API before use.
 
-## Shipboard interface
+## Interface
 
 The standard console keeps routine controls in view:
 
