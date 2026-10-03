@@ -1,0 +1,1168 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Custom Tab Technical Reference — JACoB</title><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="stylesheet" href="docs.css"></head><body><main class="doc"><h1>JACoB Custom Tab Technical Reference</h1>
+<blockquote>
+<p><strong>GALNET TECHNICAL ARCHIVE // JACoB TAB INTERFACE</strong><br />
+Version: Alpha 0.2.2<br />
+SDK version: 1</p>
+</blockquote>
+<p>This record defines the JACoB custom-tab interface: runtime rules, browser SDK, direct WebSocket protocol, state and event shapes, input calls, HUD overlays, Game View, Action Recorder support, persistence, security boundaries, schemas, and platform limits.</p>
+<p>JACoB supplies game-facing primitives. Sequencing, timers, state machines, route queues, race logic, HUD calculations, and other tool behavior are implemented by the custom HTML tab.</p>
+<hr />
+<h2>1. Smallest useful tab</h2>
+<p>A custom tab is ordinary self-contained HTML. JACoB injects the <code>Elite</code> JavaScript object into the tab at runtime.</p>
+<pre><code class="language-html">&lt;!doctype html&gt;
+&lt;html&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;style&gt;
+body { margin: 0; padding: 16px; background: #090a0b; color: #eee; font: 14px system-ui; }
+button { padding: 8px 10px; }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;button id=&quot;galmap&quot;&gt;Galaxy Map&lt;/button&gt;
+&lt;pre id=&quot;out&quot;&gt;&lt;/pre&gt;
+&lt;script&gt;
+const out = document.querySelector('#out');
+
+document.querySelector('#galmap').onclick = async () =&gt; {
+  try {
+    const result = await Elite.bindings.press('GalaxyMapOpen');
+    out.textContent = JSON.stringify(result, null, 2);
+  } catch (error) {
+    out.textContent = `${error.code || 'ERROR'}: ${error.message}`;
+  }
+};
+
+Elite.journal.subscribe('FSDJump', event =&gt; {
+  out.textContent = `Jumped to ${event.StarSystem || '?'}`;
+});
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
+<p>Load the file through <strong>Tab Manager</strong>, inspect it in Preview, then save it. The saved tool joins the main navigation and returns after restart.</p>
+<hr />
+<h2>2. Runtime model</h2>
+<h3>2.1 Sandbox</h3>
+<p>Saved and previewed tabs run in sandboxed iframes with script execution enabled. They do not receive normal same-origin access to the JACoB host page, filesystem access, operating-system APIs, or direct access to JACoB's privileged WebSocket.</p>
+<p>The host injects the <code>Elite</code> SDK into each tab and forwards only allowed SDK calls.</p>
+<h3>2.2 Lifetime</h3>
+<p>A saved tab remains loaded while JACoB is open, even when another tab is visible. This allows a hidden tab to keep journal subscriptions, timers, queue state, and overlay updates running.</p>
+<p>Editing and saving a tab reloads that tab's iframe. Other saved tabs stay loaded.</p>
+<p>Deleting a tab removes its persistent record and clears that tab's overlay layer.</p>
+<h3>2.3 Persistence</h3>
+<p>Saved tabs are stored by the JACoB core, not browser local storage. On Windows the default data directory is normally:</p>
+<pre><code class="language-text">%APPDATA%\JACoB
+</code></pre>
+<p>The tab database is:</p>
+<pre><code class="language-text">custom-tabs.json
+</code></pre>
+<p>A saved tab record contains:</p>
+<pre><code class="language-json">{
+  &quot;id&quot;: &quot;tab-0123456789abcdef&quot;,
+  &quot;name&quot;: &quot;Route Queue&quot;,
+  &quot;html&quot;: &quot;&lt;!doctype html&gt;...&quot;,
+  &quot;createdAt&quot;: &quot;2026-10-03T16:00:00Z&quot;,
+  &quot;updatedAt&quot;: &quot;2026-10-03T16:10:00Z&quot;
+}
+</code></pre>
+<p>Maximum saved HTML size is 1 MiB per tab.</p>
+<h3>2.4 Overlay isolation</h3>
+<p>Each saved tab receives a separate overlay layer. <code>Elite.overlay.clear()</code> clears only the calling tab's layer. A preview in Tab Manager uses a temporary preview layer.</p>
+<hr />
+<h2>3. SDK overview</h2>
+<p>The injected object is:</p>
+<pre><code class="language-js">Elite
+</code></pre>
+<p>Current top-level namespaces:</p>
+<pre><code class="language-text">Elite.api
+Elite.core
+Elite.system
+Elite.state
+Elite.bindings
+Elite.input
+Elite.recorder
+Elite.overlay
+Elite.video
+Elite.events
+Elite.journal
+</code></pre>
+<p>The current SDK version is:</p>
+<pre><code class="language-js">Elite.api.version === 1
+</code></pre>
+<p>All command methods return Promises.</p>
+<p>Errors reject with an <code>Error</code> object carrying a machine-readable <code>code</code> when one is available:</p>
+<pre><code class="language-js">try {
+  await Elite.bindings.press('UI_Select');
+} catch (error) {
+  console.log(error.code);
+  console.log(error.message);
+}
+</code></pre>
+<hr />
+<h2>4. Core and system health</h2>
+<h3><code>Elite.core.ping()</code></h3>
+<pre><code class="language-js">const result = await Elite.core.ping();
+</code></pre>
+<p>Result:</p>
+<pre><code class="language-json">{
+  &quot;pong&quot;: true,
+  &quot;time&quot;: &quot;2026-10-03T20:15:12.123456Z&quot;
+}
+</code></pre>
+<h3><code>Elite.system.health()</code></h3>
+<pre><code class="language-js">const health = await Elite.system.health();
+</code></pre>
+<p>Result shape:</p>
+<pre><code class="language-json">{
+  &quot;status&quot;: &quot;ok&quot;,
+  &quot;blockers&quot;: [],
+  &quot;warnings&quot;: [],
+  &quot;gameRunning&quot;: true,
+  &quot;devices&quot;: {
+    &quot;source&quot;: &quot;windows-raw-input&quot;,
+    &quot;keyboardCount&quot;: 1,
+    &quot;mouseCount&quot;: 1,
+    &quot;hidCount&quot;: 0,
+    &quot;error&quot;: &quot;&quot;
+  },
+  &quot;bindings&quot;: {}
+}
+</code></pre>
+<p><code>status</code> is one of:</p>
+<pre><code class="language-text">ok
+warning
+blocked
+</code></pre>
+<p>A blocked health result does not mean every JACoB feature is unusable. It means the current binding/device state has a condition that can make input automation unreliable or unsafe.</p>
+<hr />
+<h2>5. State and Elite event data</h2>
+<p>Journal and <code>Status.json</code> payloads stay close to Elite's original structure. New game fields pass through without normalization where the bridge can preserve them safely.</p>
+<h3><code>Elite.state.get()</code></h3>
+<pre><code class="language-js">const snapshot = await Elite.state.get();
+</code></pre>
+<p>Result:</p>
+<pre><code class="language-json">{
+  &quot;journalDir&quot;: &quot;C:\\Users\\name\\Saved Games\\Frontier Developments\\Elite Dangerous&quot;,
+  &quot;journalFile&quot;: &quot;Journal.2026-10-03T160000.01.log&quot;,
+  &quot;status&quot;: {
+    &quot;timestamp&quot;: &quot;2026-10-03T20:00:00Z&quot;,
+    &quot;event&quot;: &quot;Status&quot;,
+    &quot;Flags&quot;: 0,
+    &quot;Latitude&quot;: 12.345,
+    &quot;Longitude&quot;: -67.89,
+    &quot;Heading&quot;: 142
+  },
+  &quot;lastJournalEvent&quot;: {
+    &quot;timestamp&quot;: &quot;2026-10-03T19:59:58Z&quot;,
+    &quot;event&quot;: &quot;FSDJump&quot;,
+    &quot;StarSystem&quot;: &quot;Sol&quot;
+  }
+}
+</code></pre>
+<p><code>status</code> and <code>lastJournalEvent</code> may be <code>null</code>/empty when Elite has not produced those files or events yet.</p>
+<h3>Status subscription</h3>
+<pre><code class="language-js">const unsubscribe = Elite.state.subscribe(status =&gt; {
+  console.log(status.Latitude, status.Longitude, status.Heading);
+});
+
+unsubscribe();
+</code></pre>
+<p>Equivalent generic event name:</p>
+<pre><code class="language-js">Elite.events.subscribe('status', status =&gt; {});
+</code></pre>
+<p>JACoB checks <code>Status.json</code> approximately every 250 ms and emits a status event when the file modification time changes.</p>
+<h3>Journal subscription</h3>
+<p>Specific event:</p>
+<pre><code class="language-js">const unsubscribe = Elite.journal.subscribe('FSDJump', event =&gt; {
+  console.log(event.StarSystem);
+});
+</code></pre>
+<p>All journal events:</p>
+<pre><code class="language-js">Elite.journal.subscribe('*', event =&gt; {
+  console.log(event.event, event);
+});
+</code></pre>
+<p>Journal objects are the parsed JSON objects written by Elite.</p>
+<h3>Generic event subscription</h3>
+<pre><code class="language-js">Elite.events.subscribe('journal', event =&gt; {});
+Elite.events.subscribe('status', status =&gt; {});
+Elite.events.subscribe('recorder.input', input =&gt; {});
+
+Elite.events.subscribe('*', (eventName, data) =&gt; {
+  console.log(eventName, data);
+});
+</code></pre>
+<p>Events currently relayed to tabs can include:</p>
+<pre><code class="language-text">core.hello
+core.journalFile
+state
+status
+journal
+tabs.changed
+appearance.changed
+recorder.input
+</code></pre>
+<hr />
+<h2>6. Elite bindings</h2>
+<h3>Binding action shape</h3>
+<pre><code class="language-json">{
+  &quot;name&quot;: &quot;UI_Select&quot;,
+  &quot;primary&quot;: {
+    &quot;device&quot;: &quot;Keyboard&quot;,
+    &quot;key&quot;: &quot;Key_Enter&quot;,
+    &quot;modifiers&quot;: []
+  },
+  &quot;secondary&quot;: {
+    &quot;device&quot;: &quot;Keyboard&quot;,
+    &quot;key&quot;: &quot;Key_Numpad_1&quot;,
+    &quot;modifiers&quot;: [
+      {&quot;device&quot;:&quot;Keyboard&quot;,&quot;key&quot;:&quot;Key_LeftControl&quot;}
+    ]
+  }
+}
+</code></pre>
+<p>A slot can be empty or use a non-keyboard device.</p>
+<h3>Binding execution rule</h3>
+<p>When JACoB executes a semantic Elite binding:</p>
+<ol>
+<li>use an injectable keyboard <strong>Secondary</strong> binding if one exists;</li>
+<li>otherwise use an injectable keyboard <strong>Primary</strong> binding;</li>
+<li>otherwise return an error.</li>
+</ol>
+<p>This rule applies to both press and hold.</p>
+<h3><code>Elite.bindings.list()</code></h3>
+<pre><code class="language-js">const result = await Elite.bindings.list();
+</code></pre>
+<p>Result includes:</p>
+<pre><code class="language-json">{
+  &quot;directory&quot;: &quot;...&quot;,
+  &quot;activeFile&quot;: &quot;...&quot;,
+  &quot;activeFiles&quot;: [&quot;...&quot;],
+  &quot;activeSource&quot;: &quot;user&quot;,
+  &quot;files&quot;: [],
+  &quot;actions&quot;: [],
+  &quot;autoBind&quot;: {},
+  &quot;diagnostics&quot;: {}
+}
+</code></pre>
+<h3><code>Elite.bindings.get(name)</code></h3>
+<pre><code class="language-js">const action = await Elite.bindings.get('GalaxyMapOpen');
+</code></pre>
+<p>Returns one binding action object.</p>
+<h3><code>Elite.bindings.diagnostics()</code></h3>
+<p>Returns the active preset diagnostics, including selector state, required devices, duplicate elements, parse errors, loader errors, and whether the source preset is read-only.</p>
+<p>Representative shape:</p>
+<pre><code class="language-json">{
+  &quot;directory&quot;: &quot;...&quot;,
+  &quot;activeFile&quot;: &quot;...&quot;,
+  &quot;activeFiles&quot;: [&quot;...&quot;],
+  &quot;activeSource&quot;: &quot;user&quot;,
+  &quot;selectorLegacy&quot;: [],
+  &quot;selectorOdyssey&quot;: [&quot;Custom&quot;, &quot;Custom&quot;, &quot;Custom&quot;, &quot;Custom&quot;],
+  &quot;requiredDevices&quot;: [&quot;Keyboard&quot;, &quot;Mouse&quot;],
+  &quot;duplicateElements&quot;: [&quot;MouseGUI&quot;],
+  &quot;parseError&quot;: &quot;&quot;,
+  &quot;readOnly&quot;: false,
+  &quot;loader&quot;: {
+    &quot;path&quot;: &quot;...BindingLoadingErrors.log&quot;,
+    &quot;relevant&quot;: true,
+    &quot;hasErrors&quot;: false,
+    &quot;presetFiles&quot;: [],
+    &quot;missingDevices&quot;: [],
+    &quot;duplicateBindings&quot;: [],
+    &quot;lines&quot;: []
+  }
+}
+</code></pre>
+<p><code>MouseGUI</code> is treated as a known non-fatal duplicate because Elite itself uses the first entry.</p>
+<h3><code>Elite.bindings.reload()</code></h3>
+<pre><code class="language-js">await Elite.bindings.reload();
+</code></pre>
+<p>Reloads binding files from disk.</p>
+<h3><code>Elite.bindings.autofill()</code></h3>
+<pre><code class="language-js">const report = await Elite.bindings.autofill();
+</code></pre>
+<p>Autofill is intentionally conservative:</p>
+<ul>
+<li>Elite must be closed;</li>
+<li>health preflight must have no blockers;</li>
+<li>the active preset is never edited in place;</li>
+<li>JACoB clones the current preset into a user preset;</li>
+<li>existing Primary bindings are preserved;</li>
+<li>existing Secondary bindings are preserved;</li>
+<li>a fallback Secondary keyboard chord is assigned only when both slots are empty;</li>
+<li>selector files are updated transactionally;</li>
+<li>failures restore the selector and remove incomplete clones.</li>
+</ul>
+<p>Representative report:</p>
+<pre><code class="language-json">{
+  &quot;scannedActions&quot;: 220,
+  &quot;alreadyBound&quot;: 198,
+  &quot;existingFallback&quot;: 7,
+  &quot;assigned&quot;: 15,
+  &quot;sourceFiles&quot;: [&quot;...&quot;],
+  &quot;createdFiles&quot;: [&quot;...&quot;],
+  &quot;selectorBackups&quot;: [&quot;...&quot;],
+  &quot;assignments&quot;: [
+    {&quot;action&quot;:&quot;SomeAction&quot;,&quot;key&quot;:&quot;F9&quot;,&quot;modifiers&quot;:[&quot;CTRL&quot;,&quot;ALT&quot;]}
+  ],
+  &quot;clones&quot;: [
+    {
+      &quot;sourceFile&quot;:&quot;...&quot;,
+      &quot;sourcePreset&quot;:&quot;KeyboardMouseOnly&quot;,
+      &quot;targetFile&quot;:&quot;...&quot;,
+      &quot;targetPreset&quot;:&quot;JACoB - KeyboardMouseOnly&quot;,
+      &quot;assigned&quot;:15
+    }
+  ]
+}
+</code></pre>
+<h3><code>Elite.bindings.press(action)</code></h3>
+<pre><code class="language-js">await Elite.bindings.press('UI_Select');
+</code></pre>
+<p>JACoB focuses Elite and sends one semantic binding press.</p>
+<h3><code>Elite.bindings.hold(action, durationMs)</code></h3>
+<pre><code class="language-js">await Elite.bindings.hold('MoveFreeCamRight', 240);
+</code></pre>
+<p><code>durationMs</code> range: 20 to 10,000 ms.</p>
+<hr />
+<h2>7. Raw keyboard input</h2>
+<p>Use raw input when the physical key is the required target. Use binding actions for ordinary Elite commands.</p>
+<h3><code>Elite.input.tap(key, options)</code></h3>
+<pre><code class="language-js">await Elite.input.tap('D');
+await Elite.input.tap('K', { modifiers: ['CTRL', 'SHIFT'] });
+await Elite.input.tap('ENTER', { delayMs: 250 });
+</code></pre>
+<p>Options:</p>
+<pre><code class="language-json">{
+  &quot;delayMs&quot;: 0,
+  &quot;modifiers&quot;: []
+}
+</code></pre>
+<p><code>delayMs</code> range: 0 to 5,000 ms.</p>
+<h3><code>Elite.input.hold(key, durationMs, options)</code></h3>
+<pre><code class="language-js">await Elite.input.hold('D', 350);
+await Elite.input.hold('F8', 800, { modifiers: ['CTRL'] });
+</code></pre>
+<p><code>durationMs</code> range: 20 to 10,000 ms.</p>
+<h3>Accepted normalized key names</h3>
+<p>Letters and digits:</p>
+<pre><code class="language-text">A through Z
+0 through 9
+</code></pre>
+<p>Named keys:</p>
+<pre><code class="language-text">ENTER RETURN ESC ESCAPE TAB SPACE BACKSPACE
+PAGEUP PAGEDOWN END HOME
+UP DOWN LEFT RIGHT INSERT DELETE
+CTRL CONTROL LEFTCONTROL RIGHTCONTROL
+SHIFT LEFTSHIFT RIGHTSHIFT
+ALT LEFTALT RIGHTALT
+NUMPAD0 through NUMPAD9
+MULTIPLY ADD SUBTRACT DECIMAL DIVIDE
+SEMICOLON EQUALS COMMA MINUS PERIOD SLASH GRAVE
+LEFTBRACKET BACKSLASH RIGHTBRACKET APOSTROPHE
+F1 through F12
+</code></pre>
+<h3><code>Elite.input.text(text, options)</code></h3>
+<pre><code class="language-js">await Elite.input.text('Hegoo SB-L b35-0', { intervalMs: 18 });
+</code></pre>
+<p>The built-in text mapper supports:</p>
+<ul>
+<li>A-Z / a-z</li>
+<li>0-9</li>
+<li>space, newline, tab</li>
+<li><code>- _ = + . , / ? \\ ; : ' &quot; [ { ] }</code></li>
+<li><code>! @ # $ % ^ &amp; * ( )</code></li>
+</ul>
+<p>Unsupported characters return an error instead of silently changing the text.</p>
+<hr />
+<h2>8. Input recorder</h2>
+<p>Recorder support is optional in Windows installation and may be unavailable on some platform builds.</p>
+<h3><code>Elite.recorder.status()</code></h3>
+<pre><code class="language-js">const status = await Elite.recorder.status();
+</code></pre>
+<p>Shape:</p>
+<pre><code class="language-json">{
+  &quot;available&quot;: true,
+  &quot;driver&quot;: &quot;windows-low-level-keyboard-hook&quot;,
+  &quot;recording&quot;: false,
+  &quot;eventCount&quot;: 0,
+  &quot;scope&quot;: &quot;Elite foreground only&quot;
+}
+</code></pre>
+<h3><code>Elite.recorder.start()</code></h3>
+<pre><code class="language-js">await Elite.recorder.start();
+</code></pre>
+<p>The recorder only captures while explicitly armed. On Windows it records keyboard events while Elite is foreground. JACoB marks its own injected input and excludes it from recorder output while still allowing remote-input tools to be recorded.</p>
+<h3><code>Elite.recorder.subscribe(callback)</code></h3>
+<pre><code class="language-js">const off = Elite.recorder.subscribe(event =&gt; {
+  console.log(event);
+});
+</code></pre>
+<p>Event shape:</p>
+<pre><code class="language-json">{
+  &quot;pressId&quot;: 12,
+  &quot;type&quot;: &quot;up&quot;,
+  &quot;key&quot;: &quot;D&quot;,
+  &quot;modifiers&quot;: [],
+  &quot;atMs&quot;: 1835,
+  &quot;deltaMs&quot;: 87,
+  &quot;durationMs&quot;: 142,
+  &quot;isModifier&quot;: false,
+  &quot;matches&quot;: [
+    {&quot;action&quot;:&quot;MoveFreeCamRight&quot;,&quot;slot&quot;:&quot;primary&quot;}
+  ]
+}
+</code></pre>
+<p>Fields:</p>
+<ul>
+<li><code>pressId</code>: identifies one key-down/key-up pair.</li>
+<li><code>type</code>: <code>down</code> or <code>up</code>.</li>
+<li><code>key</code>: normalized raw key name.</li>
+<li><code>modifiers</code>: modifiers active for the chord.</li>
+<li><code>atMs</code>: milliseconds since recorder start.</li>
+<li><code>deltaMs</code>: milliseconds since the preceding recorder event.</li>
+<li><code>durationMs</code>: hold duration on the <code>up</code> event.</li>
+<li><code>isModifier</code>: true for modifier-only transitions.</li>
+<li><code>matches</code>: Elite binding actions matching the physical chord.</li>
+</ul>
+<h3><code>Elite.recorder.stop()</code></h3>
+<pre><code class="language-js">const result = await Elite.recorder.stop();
+</code></pre>
+<p>Result:</p>
+<pre><code class="language-json">{
+  &quot;status&quot;: {},
+  &quot;events&quot;: []
+}
+</code></pre>
+<p>A common replay transformation is:</p>
+<pre><code class="language-text">wait before action = current key-down atMs - previous action key-up atMs
+hold duration      = current key-up atMs - current key-down atMs
+</code></pre>
+<hr />
+<h2>9. Overlay HUD API</h2>
+<h3><code>Elite.overlay.info()</code></h3>
+<pre><code class="language-js">const info = await Elite.overlay.info();
+</code></pre>
+<p>Representative result:</p>
+<pre><code class="language-json">{
+  &quot;available&quot;: true,
+  &quot;driver&quot;: &quot;windows-layered-window&quot;,
+  &quot;visible&quot;: true,
+  &quot;layers&quot;: 2,
+  &quot;width&quot;: 1920,
+  &quot;height&quot;: 1080,
+  &quot;supportsAlpha&quot;: false,
+  &quot;supportsText&quot;: true,
+  &quot;supportsShapes&quot;: [&quot;text&quot;,&quot;line&quot;,&quot;polyline&quot;,&quot;polygon&quot;,&quot;rect&quot;,&quot;circle&quot;],
+  &quot;coordinateSpaces&quot;: [&quot;normalized&quot;,&quot;pixels&quot;],
+  &quot;note&quot;: &quot;&quot;
+}
+</code></pre>
+<h3><code>Elite.overlay.set(scene)</code></h3>
+<pre><code class="language-js">await Elite.overlay.set({
+  z: 20,
+  space: 'normalized',
+  items: [
+    {
+      type: 'text',
+      x: 0.5,
+      y: 0.08,
+      text: 'LAP 2 / 5',
+      color: '#ff7b00',
+      fontSize: 28,
+      align: 'center'
+    },
+    {
+      type: 'polyline',
+      points: [
+        {x:0.10,y:0.80},
+        {x:0.20,y:0.70},
+        {x:0.30,y:0.82}
+      ],
+      stroke: '#ff7b00',
+      lineWidth: 3
+    },
+    {
+      type: 'circle',
+      x: 0.20,
+      y: 0.70,
+      r: 0.008,
+      fill: '#ffffff'
+    }
+  ]
+});
+</code></pre>
+<h3><code>Elite.overlay.clear()</code></h3>
+<pre><code class="language-js">await Elite.overlay.clear();
+</code></pre>
+<p>Clears the calling tab's layer only.</p>
+<h3>Scene fields</h3>
+<pre><code class="language-json">{
+  &quot;z&quot;: 0,
+  &quot;space&quot;: &quot;normalized&quot;,
+  &quot;width&quot;: 0,
+  &quot;height&quot;: 0,
+  &quot;items&quot;: []
+}
+</code></pre>
+<p><code>space</code>:</p>
+<ul>
+<li><code>normalized</code>: coordinates are relative to the Elite client area; X/W use overlay width and Y/H use overlay height. Circle radius is relative to the smaller overlay dimension.</li>
+<li><code>pixels</code>: coordinates are direct overlay pixels.</li>
+</ul>
+<p>Supported item types:</p>
+<pre><code class="language-text">text
+line
+polyline
+polygon
+rect
+circle
+</code></pre>
+<p>Common item fields:</p>
+<pre><code class="language-text">x y x2 y2 w h r
+points[]
+text
+color
+stroke
+fill
+lineWidth
+fontSize
+align
+</code></pre>
+<p>Color formats:</p>
+<pre><code class="language-text">#RGB
+#RRGGBB
+#RRGGBBAA
+transparent
+none
+</code></pre>
+<p>Limits and defaults:</p>
+<ul>
+<li>maximum 2,000 items per scene;</li>
+<li>maximum 10,000 points in one polyline/polygon;</li>
+<li>default <code>space</code>: <code>normalized</code>;</li>
+<li>default <code>lineWidth</code>: 2;</li>
+<li>maximum <code>lineWidth</code>: 64;</li>
+<li>default <code>fontSize</code>: 18;</li>
+<li>maximum <code>fontSize</code>: 256;</li>
+<li>default <code>align</code>: <code>left</code>;</li>
+<li><code>align</code>: <code>left</code>, <code>center</code>, or <code>right</code>.</li>
+</ul>
+<h3>Racing/minimap pattern</h3>
+<p>A racing tab can keep track control points in the HTML, subscribe to Status.json, project Elite latitude/longitude into a local track plane, and render a polyline plus ship marker.</p>
+<pre><code class="language-js">const track = [
+  {lat:12.3450, lon:-67.8900},
+  {lat:12.3454, lon:-67.8892},
+  {lat:12.3460, lon:-67.8887}
+];
+
+Elite.state.subscribe(status =&gt; {
+  if (typeof status.Latitude !== 'number' || typeof status.Longitude !== 'number') return;
+
+  const scene = buildTrackScene(track, status.Latitude, status.Longitude, status.Heading);
+  Elite.overlay.set(scene).catch(console.error);
+});
+</code></pre>
+<h3>Windows notes</h3>
+<p>The Windows overlay is a topmost, non-activating, click-through layered window aligned to the Elite client area. It automatically hides when Elite is not foreground.</p>
+<p>The compatibility renderer does not provide full blended per-pixel alpha on every supported Windows configuration. Basic text and shapes are the intended baseline.</p>
+<h3>Steam Deck / Linux notes</h3>
+<p>The Linux overlay uses an X11/XWayland ARGB window and the Gamescope external-overlay path when available. If the required display path is unavailable, <code>Elite.overlay.info()</code> reports <code>available:false</code>. Other bridge services remain available.</p>
+<hr />
+<h2>10. Video preview</h2>
+<h3><code>Elite.video.info()</code></h3>
+<pre><code class="language-js">const info = await Elite.video.info();
+</code></pre>
+<p>Result:</p>
+<pre><code class="language-json">{
+  &quot;available&quot;: true,
+  &quot;driver&quot;: &quot;windows-gdi&quot;
+}
+</code></pre>
+<h3><code>Elite.video.url(options)</code></h3>
+<pre><code class="language-js">const url = await Elite.video.url({
+  width: 960,
+  fps: 5,
+  quality: 60
+});
+</code></pre>
+<p>The returned URL is already prepared for the current local/paired browser.</p>
+<h3><code>Elite.video.attach(element, options)</code></h3>
+<pre><code class="language-html">&lt;img id=&quot;game&quot; alt=&quot;Elite preview&quot;&gt;
+</code></pre>
+<pre><code class="language-js">await Elite.video.attach(document.querySelector('#game'), {
+  width: 960,
+  fps: 5,
+  quality: 60
+});
+</code></pre>
+<p>Current MJPEG limits:</p>
+<ul>
+<li>width: 160 to 1920;</li>
+<li>FPS: 1 to 15;</li>
+<li>JPEG quality: 20 to 95.</li>
+</ul>
+<p>This preview is for utility/remote-control views, not high-frame-rate game streaming.</p>
+<hr />
+<h2>11. Timing and sequencing patterns</h2>
+<p>JACoB does not include a procedure engine. Build sequences inside the custom tab.</p>
+<h3>Sleep helper</h3>
+<pre><code class="language-js">const sleep = ms =&gt; new Promise(resolve =&gt; setTimeout(resolve, ms));
+</code></pre>
+<h3>Timed sequence</h3>
+<pre><code class="language-js">await Elite.bindings.press('GalaxyMapOpen');
+await sleep(1200);
+await Elite.bindings.press('UI_Up');
+await sleep(150);
+await Elite.bindings.press('UI_Select');
+</code></pre>
+<h3>Wait for a journal event</h3>
+<pre><code class="language-js">function waitForJournal(eventName, timeoutMs = 120000) {
+  return new Promise((resolve, reject) =&gt; {
+    let timer;
+    const off = Elite.journal.subscribe(eventName, event =&gt; {
+      clearTimeout(timer);
+      off();
+      resolve(event);
+    });
+    timer = setTimeout(() =&gt; {
+      off();
+      reject(new Error(`Timed out waiting for ${eventName}`));
+    }, timeoutMs);
+  });
+}
+
+await waitForJournal('FSDJump');
+</code></pre>
+<h3>Wait for a Status.json condition</h3>
+<pre><code class="language-js">function waitForStatus(test, timeoutMs = 10000) {
+  return new Promise((resolve, reject) =&gt; {
+    let timer;
+    const off = Elite.state.subscribe(status =&gt; {
+      if (!test(status)) return;
+      clearTimeout(timer);
+      off();
+      resolve(status);
+    });
+    timer = setTimeout(() =&gt; {
+      off();
+      reject(new Error('Status wait timed out'));
+    }, timeoutMs);
+  });
+}
+</code></pre>
+<h3>Cancellation token pattern</h3>
+<pre><code class="language-js">let runId = 0;
+
+async function run() {
+  const token = ++runId;
+  await Elite.bindings.press('UI_Up');
+  await sleep(250);
+  if (token !== runId) return;
+  await Elite.bindings.press('UI_Select');
+}
+
+function stop() {
+  runId++;
+}
+</code></pre>
+<hr />
+<h2>12. Appearance/theme files</h2>
+<p>A JACoB shell theme is an HTML file uploaded under <strong>Settings → Appearance</strong>.</p>
+<p>Theme files can contain CSS:</p>
+<pre><code class="language-html">&lt;style&gt;
+:root { --accent: #7fd5ff; }
+body { font-family: monospace; }
+.card { border-color: #7fd5ff; }
+&lt;/style&gt;
+</code></pre>
+<p>A theme can replace shell slots with <code>&lt;template&gt;</code> elements:</p>
+<pre><code class="language-html">&lt;template data-jacob-slot=&quot;brand&quot;&gt;
+  &lt;strong&gt;MY BRIDGE&lt;/strong&gt;&lt;span&gt;Elite tools&lt;/span&gt;
+&lt;/template&gt;
+
+&lt;template data-jacob-slot=&quot;header-extra&quot;&gt;...&lt;/template&gt;
+&lt;template data-jacob-slot=&quot;nav-extra&quot;&gt;...&lt;/template&gt;
+&lt;template data-jacob-slot=&quot;home-extra&quot;&gt;...&lt;/template&gt;
+&lt;template data-jacob-slot=&quot;footer&quot;&gt;...&lt;/template&gt;
+</code></pre>
+<p>Optional body class:</p>
+<pre><code class="language-html">&lt;meta name=&quot;jacob-body-class&quot; content=&quot;compact-theme&quot;&gt;
+</code></pre>
+<p>All host CSS selectors can be overridden. Theme scripts are not executed in the privileged host page. Interactive behavior belongs in custom tabs.</p>
+<p>The selected theme is persisted by the core and is shared by browsers opening the same JACoB instance.</p>
+<hr />
+<h2>13. Direct WebSocket protocol</h2>
+<p>Most custom tabs should use the injected SDK. The direct protocol is documented for external clients and debugging.</p>
+<p>Endpoint:</p>
+<pre><code class="language-text">ws://HOST:4510/ws
+</code></pre>
+<p>Loopback clients do not require a pairing token. LAN clients use:</p>
+<pre><code class="language-text">ws://HOST:4510/ws?token=PAIR_TOKEN
+</code></pre>
+<h3>Request</h3>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;request&quot;,
+  &quot;id&quot;: &quot;req-1&quot;,
+  &quot;method&quot;: &quot;binding.press&quot;,
+  &quot;params&quot;: {
+    &quot;action&quot;: &quot;UI_Select&quot;
+  }
+}
+</code></pre>
+<h3>Success response</h3>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;response&quot;,
+  &quot;id&quot;: &quot;req-1&quot;,
+  &quot;ok&quot;: true,
+  &quot;result&quot;: {}
+}
+</code></pre>
+<h3>Error response</h3>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;response&quot;,
+  &quot;id&quot;: &quot;req-1&quot;,
+  &quot;ok&quot;: false,
+  &quot;error&quot;: {
+    &quot;code&quot;: &quot;BINDING_NOT_FOUND&quot;,
+    &quot;message&quot;: &quot;...&quot;
+  }
+}
+</code></pre>
+<h3>Event</h3>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;event&quot;,
+  &quot;event&quot;: &quot;journal&quot;,
+  &quot;data&quot;: {
+    &quot;event&quot;: &quot;FSDJump&quot;,
+    &quot;StarSystem&quot;: &quot;Sol&quot;
+  }
+}
+</code></pre>
+<h3>Core methods</h3>
+<p>The core currently recognizes:</p>
+<pre><code class="language-text">core.ping
+core.shutdown
+state.get
+system.health
+appearance.get
+appearance.save
+appearance.reset
+tabs.list
+tabs.get
+tabs.save
+tabs.delete
+bindings.list
+bindings.diagnostics
+bindings.autofill
+bindings.reload
+bindings.get
+binding.press
+binding.hold
+input.tap
+input.hold
+input.text
+recorder.status
+recorder.start
+recorder.stop
+overlay.info
+overlay.set
+overlay.clear
+video.info
+</code></pre>
+<p><code>core.shutdown</code> is host-UI only and is accepted only from a loopback browser. It is not exposed through the custom-tab SDK.</p>
+<p>The sandbox SDK intentionally exposes only the methods appropriate for a custom tab. Tab storage and appearance management remain host/UI concerns.</p>
+<hr />
+<h2>14. HTTP media endpoints</h2>
+<p>Snapshot:</p>
+<pre><code class="language-text">GET /api/video/frame.jpg?width=960&amp;quality=60
+</code></pre>
+<p>MJPEG:</p>
+<pre><code class="language-text">GET /api/video.mjpeg?width=960&amp;fps=5&amp;quality=60
+</code></pre>
+<p>LAN requests must include the pairing token query parameter.</p>
+<hr />
+<h2>15. Core hello structure</h2>
+<p>When a browser connects, the host receives <code>core.hello</code>. Custom tabs receive it through the generic event bridge.</p>
+<p>Representative shape:</p>
+<pre><code class="language-json">{
+  &quot;prototype&quot;: &quot;Alpha 0.2.2&quot;,
+  &quot;product&quot;: &quot;JACoB&quot;,
+  &quot;name&quot;: &quot;Journal Aligned Control Bridge&quot;,
+  &quot;apiVersion&quot;: 1,
+  &quot;os&quot;: &quot;windows&quot;,
+  &quot;arch&quot;: &quot;amd64&quot;,
+  &quot;goRuntime&quot;: &quot;go1.x&quot;,
+  &quot;host&quot;: &quot;PC-NAME&quot;,
+  &quot;uptimeSeconds&quot;: 120,
+  &quot;journalDir&quot;: &quot;...&quot;,
+  &quot;bindingsDir&quot;: &quot;...&quot;,
+  &quot;bindingsFile&quot;: &quot;...&quot;,
+  &quot;bindingsFiles&quot;: [&quot;...&quot;],
+  &quot;bindingsSource&quot;: &quot;user&quot;,
+  &quot;bindingsCount&quot;: 220,
+  &quot;input&quot;: {
+    &quot;enabled&quot;: true,
+    &quot;available&quot;: true,
+    &quot;driver&quot;: &quot;windows-sendinput-scancode&quot;
+  },
+  &quot;recorder&quot;: {},
+  &quot;capture&quot;: {},
+  &quot;overlay&quot;: {},
+  &quot;lan&quot;: {},
+  &quot;health&quot;: {},
+  &quot;appearance&quot;: {},
+  &quot;customTabs&quot;: {}
+}
+</code></pre>
+<hr />
+<h2>16. Common error codes</h2>
+<p>The exact set can grow, but tabs should be prepared for at least:</p>
+<pre><code class="language-text">OFFLINE
+TIMEOUT
+SDK_DENIED
+BAD_MESSAGE
+BAD_JSON
+BAD_PARAMS
+NO_SUCH_METHOD
+INPUT_DISABLED
+INPUT_UNAVAILABLE
+INPUT_FAILED
+GAME_FOCUS_FAILED
+TEXT_INPUT_FAILED
+BINDING_NOT_FOUND
+BINDING_PRESS_FAILED
+BINDING_HOLD_FAILED
+BINDINGS_RELOAD_FAILED
+BINDINGS_AUTOFILL_FAILED
+BINDINGS_PREFLIGHT_FAILED
+GAME_RUNNING
+RECORDER_UNAVAILABLE
+RECORDER_START_FAILED
+RECORDER_STOP_FAILED
+OVERLAY_UNAVAILABLE
+OVERLAY_SCENE_INVALID
+OVERLAY_RENDER_FAILED
+OVERLAY_CLEAR_FAILED
+TAB_STORE_UNAVAILABLE
+TAB_NOT_FOUND
+TAB_SAVE_FAILED
+TAB_DELETE_FAILED
+APPEARANCE_UNAVAILABLE
+APPEARANCE_SAVE_FAILED
+APPEARANCE_RESET_FAILED
+</code></pre>
+<p>Do not depend on error message wording. Use <code>error.code</code> for branching.</p>
+<hr />
+<h2>17. Security and trust boundaries</h2>
+<p>Custom tabs:</p>
+<ul>
+<li>run in sandboxed iframes;</li>
+<li>do not receive direct filesystem access;</li>
+<li>do not receive direct native API access;</li>
+<li>do not connect directly to the privileged core WebSocket;</li>
+<li>can invoke only the SDK methods forwarded by the host;</li>
+<li>receive their own overlay layer;</li>
+<li>can continue running while hidden.</li>
+</ul>
+<p>Theme files:</p>
+<ul>
+<li>can override host CSS;</li>
+<li>can replace documented shell template slots;</li>
+<li>do not execute theme scripts in the privileged host page.</li>
+</ul>
+<p>Recorder:</p>
+<ul>
+<li>is optional on Windows install;</li>
+<li>starts only on explicit request;</li>
+<li>stops when requested or when the controlling browser disconnects;</li>
+<li>records only in its documented scope.</li>
+</ul>
+<p>LAN clients require the pairing token for WebSocket and video access.</p>
+<hr />
+<h2>18. Platform capability summary</h2>
+<h3>Windows</h3>
+<p>Expected capabilities:</p>
+<pre><code class="language-text">journal/status       yes
+bindings             yes
+semantic input       yes
+raw input            yes
+text input           yes
+recorder              optional install component
+game preview         yes, compatibility capture path
+overlay               yes, native click-through window
+LAN web UI           yes
+</code></pre>
+<h3>Steam Deck / Linux</h3>
+<p>Expected capabilities:</p>
+<pre><code class="language-text">journal/status       yes
+bindings             yes
+semantic input       /dev/uinput path when available
+automation tabs      same HTML/SDK model
+game preview         platform-dependent
+recorder              currently reports unavailable when scoped capture is not supported
+overlay               Gamescope/XWayland path when available
+LAN web UI           yes
+</code></pre>
+<p>Tabs should query capability methods instead of assuming every platform exposes every optional feature:</p>
+<pre><code class="language-js">const overlay = await Elite.overlay.info();
+if (overlay.available) {
+  // enable HUD controls
+}
+
+const recorder = await Elite.recorder.status();
+if (!recorder.available) {
+  // hide recorder-specific controls
+}
+</code></pre>
+<hr />
+<h2>19. JSON schemas</h2>
+<p>The release package contains machine-readable schemas under:</p>
+<pre><code class="language-text">docs/schemas/
+</code></pre>
+<h3>Binding action</h3>
+<pre><code class="language-json">{
+  &quot;$schema&quot;: &quot;https://json-schema.org/draft/2020-12/schema&quot;,
+  &quot;title&quot;: &quot;JACoB binding action&quot;,
+  &quot;type&quot;: &quot;object&quot;,
+  &quot;required&quot;: [&quot;name&quot;, &quot;primary&quot;, &quot;secondary&quot;],
+  &quot;properties&quot;: {
+    &quot;name&quot;: {&quot;type&quot;:&quot;string&quot;},
+    &quot;primary&quot;: {&quot;$ref&quot;:&quot;#/$defs/slot&quot;},
+    &quot;secondary&quot;: {&quot;$ref&quot;:&quot;#/$defs/slot&quot;}
+  },
+  &quot;$defs&quot;: {
+    &quot;slot&quot;: {
+      &quot;type&quot;:&quot;object&quot;,
+      &quot;required&quot;:[&quot;device&quot;,&quot;key&quot;],
+      &quot;properties&quot;: {
+        &quot;device&quot;:{&quot;type&quot;:&quot;string&quot;},
+        &quot;key&quot;:{&quot;type&quot;:&quot;string&quot;},
+        &quot;modifiers&quot;:{
+          &quot;type&quot;:&quot;array&quot;,
+          &quot;items&quot;:{
+            &quot;type&quot;:&quot;object&quot;,
+            &quot;required&quot;:[&quot;device&quot;,&quot;key&quot;],
+            &quot;properties&quot;:{&quot;device&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;key&quot;:{&quot;type&quot;:&quot;string&quot;}}
+          }
+        }
+      }
+    }
+  }
+}
+</code></pre>
+<h3>State snapshot</h3>
+<pre><code class="language-json">{
+  &quot;$schema&quot;: &quot;https://json-schema.org/draft/2020-12/schema&quot;,
+  &quot;title&quot;: &quot;JACoB State Snapshot&quot;,
+  &quot;type&quot;: &quot;object&quot;,
+  &quot;required&quot;: [&quot;journalDir&quot;, &quot;journalFile&quot;, &quot;status&quot;, &quot;lastJournalEvent&quot;],
+  &quot;properties&quot;: {
+    &quot;journalDir&quot;: {&quot;type&quot;:&quot;string&quot;},
+    &quot;journalFile&quot;: {&quot;type&quot;:&quot;string&quot;},
+    &quot;status&quot;: {&quot;type&quot;:[&quot;object&quot;,&quot;null&quot;],&quot;additionalProperties&quot;:true},
+    &quot;lastJournalEvent&quot;: {&quot;type&quot;:[&quot;object&quot;,&quot;null&quot;],&quot;additionalProperties&quot;:true}
+  },
+  &quot;additionalProperties&quot;: true
+}
+</code></pre>
+<h3>Overlay scene</h3>
+<pre><code class="language-json">{
+  &quot;$schema&quot;: &quot;https://json-schema.org/draft/2020-12/schema&quot;,
+  &quot;title&quot;: &quot;JACoB Overlay Scene&quot;,
+  &quot;type&quot;: &quot;object&quot;,
+  &quot;required&quot;: [&quot;items&quot;],
+  &quot;properties&quot;: {
+    &quot;z&quot;: {&quot;type&quot;:&quot;integer&quot;},
+    &quot;space&quot;: {&quot;enum&quot;:[&quot;normalized&quot;,&quot;pixels&quot;],&quot;default&quot;:&quot;normalized&quot;},
+    &quot;width&quot;: {&quot;type&quot;:&quot;integer&quot;,&quot;minimum&quot;:0},
+    &quot;height&quot;: {&quot;type&quot;:&quot;integer&quot;,&quot;minimum&quot;:0},
+    &quot;items&quot;: {
+      &quot;type&quot;:&quot;array&quot;,
+      &quot;maxItems&quot;:2000,
+      &quot;items&quot;: {
+        &quot;type&quot;:&quot;object&quot;,
+        &quot;required&quot;:[&quot;type&quot;],
+        &quot;properties&quot;: {
+          &quot;type&quot;:{&quot;enum&quot;:[&quot;text&quot;,&quot;line&quot;,&quot;polyline&quot;,&quot;polygon&quot;,&quot;rect&quot;,&quot;circle&quot;]},
+          &quot;x&quot;:{&quot;type&quot;:&quot;number&quot;}, &quot;y&quot;:{&quot;type&quot;:&quot;number&quot;},
+          &quot;x2&quot;:{&quot;type&quot;:&quot;number&quot;}, &quot;y2&quot;:{&quot;type&quot;:&quot;number&quot;},
+          &quot;w&quot;:{&quot;type&quot;:&quot;number&quot;}, &quot;h&quot;:{&quot;type&quot;:&quot;number&quot;}, &quot;r&quot;:{&quot;type&quot;:&quot;number&quot;},
+          &quot;text&quot;:{&quot;type&quot;:&quot;string&quot;},
+          &quot;points&quot;:{&quot;type&quot;:&quot;array&quot;,&quot;maxItems&quot;:10000,&quot;items&quot;:{&quot;type&quot;:&quot;object&quot;,&quot;required&quot;:[&quot;x&quot;,&quot;y&quot;],&quot;properties&quot;:{&quot;x&quot;:{&quot;type&quot;:&quot;number&quot;},&quot;y&quot;:{&quot;type&quot;:&quot;number&quot;}}}},
+          &quot;color&quot;:{&quot;type&quot;:&quot;string&quot;}, &quot;stroke&quot;:{&quot;type&quot;:&quot;string&quot;}, &quot;fill&quot;:{&quot;type&quot;:&quot;string&quot;},
+          &quot;lineWidth&quot;:{&quot;type&quot;:&quot;number&quot;,&quot;exclusiveMinimum&quot;:0,&quot;maximum&quot;:64},
+          &quot;fontSize&quot;:{&quot;type&quot;:&quot;number&quot;,&quot;exclusiveMinimum&quot;:0,&quot;maximum&quot;:256},
+          &quot;align&quot;:{&quot;enum&quot;:[&quot;left&quot;,&quot;center&quot;,&quot;right&quot;]}
+        }
+      }
+    }
+  }
+}
+</code></pre>
+<h3>Health object</h3>
+<pre><code class="language-json">{
+  &quot;$schema&quot;: &quot;https://json-schema.org/draft/2020-12/schema&quot;,
+  &quot;title&quot;: &quot;JACoB system health&quot;,
+  &quot;type&quot;: &quot;object&quot;,
+  &quot;required&quot;: [&quot;status&quot;, &quot;blockers&quot;, &quot;warnings&quot;, &quot;devices&quot;, &quot;bindings&quot;, &quot;gameRunning&quot;],
+  &quot;properties&quot;: {
+    &quot;status&quot;: {&quot;type&quot;:&quot;string&quot;,&quot;enum&quot;:[&quot;ok&quot;,&quot;warning&quot;,&quot;blocked&quot;]},
+    &quot;blockers&quot;: {&quot;type&quot;:&quot;array&quot;,&quot;items&quot;:{&quot;type&quot;:&quot;string&quot;}},
+    &quot;warnings&quot;: {&quot;type&quot;:&quot;array&quot;,&quot;items&quot;:{&quot;type&quot;:&quot;string&quot;}},
+    &quot;gameRunning&quot;: {&quot;type&quot;:&quot;boolean&quot;},
+    &quot;devices&quot;: {
+      &quot;type&quot;:&quot;object&quot;,
+      &quot;required&quot;:[&quot;source&quot;,&quot;keyboardCount&quot;,&quot;mouseCount&quot;],
+      &quot;properties&quot;: {
+        &quot;source&quot;:{&quot;type&quot;:&quot;string&quot;},
+        &quot;keyboardCount&quot;:{&quot;type&quot;:&quot;integer&quot;,&quot;minimum&quot;:0},
+        &quot;mouseCount&quot;:{&quot;type&quot;:&quot;integer&quot;,&quot;minimum&quot;:0},
+        &quot;hidCount&quot;:{&quot;type&quot;:&quot;integer&quot;,&quot;minimum&quot;:0},
+        &quot;error&quot;:{&quot;type&quot;:&quot;string&quot;}
+      },
+      &quot;additionalProperties&quot;:true
+    },
+    &quot;bindings&quot;: {&quot;type&quot;:&quot;object&quot;}
+  },
+  &quot;additionalProperties&quot;:true
+}
+</code></pre>
+<h3>WebSocket envelope</h3>
+<pre><code class="language-json">{
+  &quot;request&quot;: {
+    &quot;type&quot;: &quot;request&quot;,
+    &quot;id&quot;: &quot;string&quot;,
+    &quot;method&quot;: &quot;string&quot;,
+    &quot;params&quot;: {}
+  },
+  &quot;response&quot;: {
+    &quot;type&quot;: &quot;response&quot;,
+    &quot;id&quot;: &quot;string&quot;,
+    &quot;ok&quot;: true,
+    &quot;result&quot;: {}
+  },
+  &quot;errorResponse&quot;: {
+    &quot;type&quot;: &quot;response&quot;,
+    &quot;id&quot;: &quot;string&quot;,
+    &quot;ok&quot;: false,
+    &quot;error&quot;: {&quot;code&quot;:&quot;string&quot;,&quot;message&quot;:&quot;string&quot;}
+  },
+  &quot;event&quot;: {
+    &quot;type&quot;: &quot;event&quot;,
+    &quot;event&quot;: &quot;string&quot;,
+    &quot;data&quot;: {}
+  }
+}
+</code></pre>
+<p>For exact machine-readable schemas, use the files in <code>docs/schemas/</code> shipped with the same release.</p>
+<hr />
+<h2>20. Complete custom-tab starter</h2>
+<pre><code class="language-html">&lt;!doctype html&gt;
+&lt;html&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;
+&lt;style&gt;
+body {
+  margin: 0;
+  padding: 14px;
+  background: #070809;
+  color: #e8e3dc;
+  font: 14px system-ui;
+}
+button, input {
+  font: inherit;
+  color: inherit;
+  background: #111315;
+  border: 1px solid #8a430e;
+  border-radius: 0;
+  padding: 8px 10px;
+}
+pre {
+  white-space: pre-wrap;
+  background: #050607;
+  border: 1px solid #2a2d30;
+  padding: 10px;
+}
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+
+&lt;button id=&quot;action&quot;&gt;Run action&lt;/button&gt;
+&lt;button id=&quot;clear&quot;&gt;Clear HUD&lt;/button&gt;
+&lt;pre id=&quot;log&quot;&gt;Ready.&lt;/pre&gt;
+
+&lt;script&gt;
+const log = document.querySelector('#log');
+const sleep = ms =&gt; new Promise(resolve =&gt; setTimeout(resolve, ms));
+let stopped = false;
+
+function write(value) {
+  log.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
+
+document.querySelector('#action').onclick = async () =&gt; {
+  stopped = false;
+  try {
+    const health = await Elite.system.health();
+    if (health.status === 'blocked') throw new Error(health.blockers.join('; '));
+
+    await Elite.bindings.press('UI_Up');
+    await sleep(180);
+    if (stopped) return;
+    await Elite.bindings.press('UI_Select');
+    write('Done');
+  } catch (error) {
+    write(`${error.code || 'ERROR'}: ${error.message}`);
+  }
+};
+
+document.querySelector('#clear').onclick = async () =&gt; {
+  stopped = true;
+  await Elite.overlay.clear();
+};
+
+Elite.journal.subscribe('FSDJump', event =&gt; {
+  write(`FSDJump → ${event.StarSystem || '?'}`);
+});
+
+Elite.state.subscribe(status =&gt; {
+  if (typeof status.Latitude !== 'number') return;
+
+  Elite.overlay.set({
+    space: 'normalized',
+    items: [
+      {
+        type: 'text',
+        x: 0.03,
+        y: 0.08,
+        text: `HDG ${Math.round(status.Heading || 0)}`,
+        color: '#ff7b00',
+        fontSize: 20
+      }
+    ]
+  }).catch(() =&gt; {});
+});
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
+<hr />
+<h2>21. Design guidance for durable tabs</h2>
+<ul>
+<li>Prefer semantic Elite bindings over raw keys when the action name is known.</li>
+<li>Use raw keys only when the physical key itself is part of the interaction.</li>
+<li>Query optional capabilities before showing controls that depend on them.</li>
+<li>Keep long-running sequences cancellable.</li>
+<li>Add timeouts to waits for journal/status conditions.</li>
+<li>Keep overlay scenes small and update only when useful.</li>
+<li>Clear the overlay when a tool is stopped or disabled.</li>
+<li>Treat journal and Status.json objects as extensible; ignore fields you do not use.</li>
+<li>Do not depend on exact human-readable error messages.</li>
+<li>Keep platform-specific assumptions out of the tab unless the tab is intentionally platform-specific.</li>
+</ul>
+<p>This document is intended to be sufficient for implementing JACoB custom tabs without reading the JACoB source tree.</p>
+</main></body></html>

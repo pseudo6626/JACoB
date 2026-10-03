@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jacob.local/schemas/bindings-diagnostics.schema.json",
+  "title": "JACoB bindings diagnostics",
+  "type": "object",
+  "required": ["directory", "readOnly", "loader"],
+  "properties": {
+    "directory": {"type": "string"},
+    "activeFile": {"type": "string"},
+    "activeFiles": {"type": "array", "items": {"type": "string"}},
+    "activeSource": {"type": "string", "enum": ["", "user", "builtin"]},
+    "selectorLegacy": {"type": "array", "items": {"type": "string"}},
+    "selectorOdyssey": {"type": "array", "items": {"type": "string"}},
+    "requiredDevices": {"type": "array", "items": {"type": "string"}},
+    "duplicateElements": {"type": "array", "items": {"type": "string"}},
+    "parseError": {"type": "string"},
+    "readOnly": {"type": "boolean"},
+    "loader": {
+      "type": "object",
+      "required": ["relevant", "hasErrors"],
+      "properties": {
+        "path": {"type": "string"},
+        "modified": {"type": "string", "format": "date-time"},
+        "relevant": {"type": "boolean"},
+        "hasErrors": {"type": "boolean"},
+        "presetFiles": {"type": "array", "items": {"type": "string"}},
+        "missingDevices": {"type": "array", "items": {"type": "string"}},
+        "duplicateBindings": {"type": "array", "items": {"type": "string"}},
+        "lines": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

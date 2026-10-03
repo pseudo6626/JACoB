@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+<title>JACoB</title>
+<meta name="jacob-body-class" content="high-contrast-theme">
+<style>
+:root{
+  --bg:#020304;
+  --panel:#07090a;
+  --panel2:#0b0d0f;
+  --line:#394047;
+  --line-hot:#8db9d0;
+  --text:#eef4f7;
+  --muted:#89969d;
+  --accent:#68b9df;
+  --accent2:#a9ddf3;
+}
+.topbar{border-bottom-color:#31566a}.brand strong{color:var(--accent)}.nav.active{color:var(--accent2);box-shadow:inset 0 -2px 0 var(--accent)}
+</style>
+</head>
+<body>
+<template data-jacob-slot="brand"><strong>JACoB</strong><span>local bridge</span></template>
+<template data-jacob-slot="home-extra"><div style="border-left:2px solid var(--accent);padding:8px 10px;margin-bottom:12px;color:var(--muted)">Custom shell theme active.</div></template>
+<template data-jacob-slot="footer"><span>JACoB / local</span><a href="/docs/index.html" target="_blank">Docs</a></template>
+</body>
+</html>

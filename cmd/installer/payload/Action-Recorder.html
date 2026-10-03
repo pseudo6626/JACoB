@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JACoB Action Recorder</title>
+<style>
+:root{color-scheme:dark;--bg:#080c0f;--panel:#11181e;--panel2:#151f26;--line:#2c3b45;--text:#edf2f4;--muted:#8f9da6;--accent:#ff8b2c;--good:#65d394;--bad:#ff666d;--warn:#ffc567}
+*{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,sans-serif}h1{font-size:21px;margin:0 0 4px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;margin:0 0 10px;color:#cbd4d9}p{margin:0 0 13px;color:var(--muted)}button,select,input,textarea{font:inherit}button,select,input{background:#18222a;color:#fff;border:1px solid #3b4a55;border-radius:6px;padding:8px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}button.primary{border-color:var(--accent);color:#ffd6b2}button.danger{border-color:#794149;color:#ffc0c4}button:disabled{opacity:.4;cursor:not-allowed}.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.pill{font:12px ui-monospace,SFMono-Regular,Consolas,monospace;padding:6px 9px;border:1px solid var(--line);border-radius:99px}.pill.good{color:var(--good);border-color:#31684b}.pill.warn{color:var(--warn);border-color:#745b31}.pill.bad{color:var(--bad);border-color:#75393f}.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(290px,.65fr);gap:12px}.card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:9px;padding:13px;min-width:0}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.spacer{height:10px}.notice{padding:9px 11px;border:1px solid #604c29;background:#1a1710;color:#e5c890;border-radius:6px;margin:10px 0}.table-wrap{overflow:auto;max-height:540px;border:1px solid #24313a;border-radius:6px}table{width:100%;border-collapse:collapse;min-width:780px}th,td{text-align:left;padding:7px 7px;border-bottom:1px solid #202b32;vertical-align:middle}th{position:sticky;top:0;background:#10171c;color:#8e9ca5;font-size:11px;text-transform:uppercase;letter-spacing:.05em;z-index:1}tr:last-child td{border-bottom:0}td.num{color:#6f7d86;width:38px}td.chord{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;white-space:nowrap}.timing{width:86px;min-width:86px}.map-select{width:100%;min-width:230px}.ambiguous{color:var(--warn);font-size:11px;margin-top:2px}.muted{color:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.stats{display:grid;grid-template-columns:125px 1fr;gap:6px 10px;margin:8px 0 14px}.stats div:nth-child(odd){color:var(--muted)}textarea{width:100%;height:250px;resize:vertical;background:#06090b;color:#dfe7ea;border:1px solid #283740;border-radius:6px;padding:10px;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}.log{height:135px;overflow:auto;background:#06090b;border:1px solid #283740;border-radius:6px;padding:8px;white-space:pre-wrap;font:11px ui-monospace,SFMono-Regular,Consolas,monospace;color:#abb8bf}.empty{padding:25px 12px;text-align:center;color:var(--muted)}label.inline{display:flex;align-items:center;gap:6px;color:var(--muted)}label.inline input{min-width:0;width:74px}@media(max-width:800px){.grid{grid-template-columns:1fr}.top{flex-direction:column}.table-wrap{max-height:420px}}
+</style>
+</head>
+<body>
+<div class="top">
+  <div>
+    <h1>Action Recorder</h1>
+    <p>Record physical keyboard actions performed in Elite, including the delay between actions and how long each key was held.</p>
+  </div>
+  <span id="status" class="pill warn">CHECKING</span>
+</div>
+
+<div class="notice">
+  Recording is explicitly armed from this tab, captures keyboard input only while <strong>Elite Dangerous is the foreground window</strong>, and ignores JACoB-generated input. P2.10 recording is available on Windows and accepts Sunshine/Moonlight remote keyboard input; JACoB-generated replay input is ignored. The Steam Deck recorder adapter uses the same API but is not enabled yet.
+</div>
+
+<div class="grid">
+  <section class="card">
+    <div class="row">
+      <button id="start" class="primary">Start new recording</button>
+      <button id="stop" class="danger" disabled>Stop recording</button>
+      <button id="clear" class="secondary">Clear</button>
+      <span id="hint" class="muted">Start, then switch to Elite and perform the action.</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Physical input</th><th>Replay as</th><th>Wait before</th><th>Hold</th><th></th></tr></thead>
+        <tbody id="steps"></tbody>
+      </table>
+      <div id="empty" class="empty">No actions recorded.</div>
+    </div>
+  </section>
+
+  <aside>
+    <section class="card">
+      <h2>Recording</h2>
+      <div class="stats">
+        <div>Actions</div><div id="count">0</div>
+        <div>Total timeline</div><div id="timeline">0 ms</div>
+        <div>Recorder</div><div id="driver" class="mono">—</div>
+        <div>Scope</div><div id="scope">—</div>
+      </div>
+      <label class="inline">Tap threshold <input id="tapThreshold" type="number" value="120" min="20" max="1000" step="10"> ms</label>
+      <p style="margin-top:8px">The threshold only affects generated code comments/display. Recorded hold times themselves are preserved.</p>
+    </section>
+
+    <section class="card" style="margin-top:12px">
+      <h2>Recorder log</h2>
+      <div id="log" class="log"></div>
+    </section>
+  </aside>
+</div>
+
+<section class="card" style="margin-top:12px">
+  <div class="row" style="justify-content:space-between">
+    <div><h2 style="margin-bottom:3px">Generate user automation tab</h2><p style="margin:0">This output contains the recorded sequence in HTML/JavaScript. JACoB itself does not store or execute the sequence.</p></div>
+    <div class="row"><button id="generate">Generate HTML</button><button id="selectOutput" class="secondary">Select all</button></div>
+  </div>
+  <textarea id="output" spellcheck="false" placeholder="Record some actions, then generate HTML."></textarea>
+</section>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const state = {recording:false, actions:[], downs:new Map(), unsubscribe:null, recorder:null};
+
+  function log(msg){const box=$('#log');box.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;box.scrollTop=box.scrollHeight}
+  function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+  function chord(a){return [...(a.modifiers||[]),a.key].join('+')}
+  function uniqueActions(matches=[]){const seen=new Set(),out=[];for(const m of matches){if(!seen.has(m.action)){seen.add(m.action);out.push(m.action)}}return out}
+
+  function setStatus(text,cls='warn'){$('#status').textContent=text;$('#status').className=`pill ${cls}`}
+
+  function recalc(){
+    state.actions.sort((a,b)=>a.startMs-b.startMs || a.pressId-b.pressId);
+    let previousEnd=0;
+    for(const a of state.actions){a.delayMs=Math.max(0,a.startMs-previousEnd);previousEnd=Math.max(previousEnd,a.endMs)}
+    render();
+  }
+
+  function ingest(ev){
+    if(!ev || ev.isModifier) return;
+    if(ev.type==='down'){
+      state.downs.set(ev.pressId,ev);
+      log(`DOWN ${[...(ev.modifiers||[]),ev.key].join('+')} @ ${ev.atMs} ms`);
+      return;
+    }
+    if(ev.type!=='up')return;
+    const down=state.downs.get(ev.pressId);
+    if(!down)return;
+    state.downs.delete(ev.pressId);
+    const matches=uniqueActions(down.matches||ev.matches||[]);
+    const selection=matches.length===1?`binding:${matches[0]}`:'raw';
+    const existing=state.actions.findIndex(a=>a.pressId===ev.pressId);
+    const action={pressId:ev.pressId,key:down.key,modifiers:down.modifiers||[],startMs:down.atMs,endMs:ev.atMs,holdMs:Math.max(20,ev.durationMs||ev.atMs-down.atMs||70),delayMs:0,matches,selection};
+    if(existing>=0)state.actions[existing]=action;else state.actions.push(action);
+    log(`UP   ${chord(action)} — held ${action.holdMs} ms${matches.length?` — matches ${matches.join(', ')}`:''}`);
+    recalc();
+  }
+
+  function rebuild(raw=[]){state.actions=[];state.downs.clear();for(const ev of raw)ingest(ev);recalc()}
+
+  function render(){
+    const body=$('#steps');body.innerHTML='';$('#empty').style.display=state.actions.length?'none':'block';
+    state.actions.forEach((a,i)=>{
+      const tr=document.createElement('tr');
+      const matches=a.matches||[];
+      const opts=[`<option value="raw" ${a.selection==='raw'?'selected':''}>Raw key: ${esc(chord(a))}</option>`].concat(matches.map(name=>`<option value="binding:${esc(name)}" ${a.selection===`binding:${name}`?'selected':''}>Binding: ${esc(name)}</option>`)).join('');
+      tr.innerHTML=`<td class="num">${i+1}</td><td class="chord">${esc(chord(a))}${matches.length>1?`<div class="ambiguous">${matches.length} binding matches — choose one or keep raw</div>`:''}</td><td><select class="map-select">${opts}</select></td><td><input class="timing delay" type="number" min="0" step="10" value="${a.delayMs}"> ms</td><td><input class="timing hold" type="number" min="20" max="10000" step="10" value="${a.holdMs}"> ms</td><td><button class="danger remove">×</button></td>`;
+      const sel=tr.querySelector('.map-select');sel.onchange=()=>{a.selection=sel.value};
+      tr.querySelector('.delay').onchange=e=>{a.delayMs=Math.max(0,Number(e.target.value)||0);e.target.value=a.delayMs};
+      tr.querySelector('.hold').onchange=e=>{a.holdMs=Math.max(20,Math.min(10000,Number(e.target.value)||70));e.target.value=a.holdMs};
+      tr.querySelector('.remove').onclick=()=>{state.actions.splice(i,1);recalc()};
+      body.appendChild(tr);
+    });
+    $('#count').textContent=String(state.actions.length);
+    const end=state.actions.reduce((m,a)=>Math.max(m,a.startMs+a.holdMs),0);$('#timeline').textContent=`${end} ms`;
+  }
+
+  async function refreshStatus(){
+    try{
+      const r=await Elite.recorder.status();state.recorder=r;$('#driver').textContent=r.driver||'—';$('#scope').textContent=r.scope||'—';
+      if(r.recording){state.recording=true;setStatus('RECORDING','bad');$('#start').disabled=true;$('#stop').disabled=false}else{setStatus(r.available?'READY':'UNAVAILABLE',r.available?'good':'bad')}
+      if(!r.available)$('#start').disabled=true;
+    }catch(e){setStatus('ERROR','bad');log(`${e.code||'ERROR'}: ${e.message}`)}
+  }
+
+  $('#start').onclick=async()=>{
+    try{
+      state.actions=[];state.downs.clear();render();$('#output').value='';
+      const r=await Elite.recorder.start();state.recording=true;setStatus('RECORDING','bad');$('#start').disabled=true;$('#stop').disabled=false;$('#hint').textContent='Switch to Elite now. Only physical keys pressed while Elite is foreground are captured.';log(`Recording started (${r.driver}).`);
+    }catch(e){log(`${e.code||'ERROR'}: ${e.message}`)}
+  };
+  $('#stop').onclick=async()=>{
+    try{
+      const result=await Elite.recorder.stop();state.recording=false;setStatus('READY','good');$('#start').disabled=false;$('#stop').disabled=true;$('#hint').textContent='Recording stopped. Review/edit timing and action mappings below.';
+      rebuild(result.events||[]);log(`Recording stopped: ${state.actions.length} logical action(s).`);
+    }catch(e){log(`${e.code||'ERROR'}: ${e.message}`)}
+  };
+  $('#clear').onclick=()=>{if(state.recording)return;state.actions=[];state.downs.clear();$('#output').value='';render();log('Recording cleared.')};
+
+  function generatedSteps(){return state.actions.map(a=>{const binding=a.selection?.startsWith('binding:')?a.selection.slice(8):null;return binding?{delayMs:a.delayMs,holdMs:a.holdMs,type:'binding',action:binding}:{delayMs:a.delayMs,holdMs:a.holdMs,type:'raw',key:a.key,modifiers:a.modifiers||[]}})}
+  function generateHTML(){
+    const steps=generatedSteps();
+    const data=JSON.stringify(steps,null,2).replace(/<\/script/gi,'<\\/script');
+    return `<!doctype html>\n<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>\nbody{margin:0;padding:18px;background:#090d10;color:#eef3f5;font:14px system-ui}button,input{background:#172129;color:#fff;border:1px solid #42515b;border-radius:6px;padding:9px 12px;font:inherit}button{cursor:pointer}button.primary{border-color:#ff8b2c}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.log{margin-top:12px;background:#05080a;border:1px solid #27343c;border-radius:6px;padding:9px;height:180px;overflow:auto;white-space:pre-wrap;font:12px ui-monospace,monospace}.muted{color:#8f9aa3}\n</style></head><body>\n<h2>Recorded JACoB Action</h2><p class="muted">Generated by Action Recorder. Sequence logic lives entirely in this custom tab.</p>\n<div class="row"><button id="run" class="primary">Run</button><button id="stop">Stop after current step</button><label>Speed <input id="speed" type="number" value="1" min="0.1" max="5" step="0.1" style="width:70px">×</label></div>\n<div id="log" class="log"></div>\n<script>\nconst steps=${data};\nlet cancelled=false,running=false;const logBox=document.querySelector('#log');\nconst sleep=ms=>new Promise(r=>setTimeout(r,Math.max(0,ms)));\nfunction log(s){logBox.textContent+='['+new Date().toLocaleTimeString()+'] '+s+'\\n';logBox.scrollTop=logBox.scrollHeight}\nasync function replayStep(step,speed){if(step.delayMs>0){log('wait '+step.delayMs+' ms');await sleep(step.delayMs/speed)}if(cancelled)return;const hold=Math.max(20,Math.round((step.holdMs||70)/speed));if(step.type==='binding'){log('binding '+step.action+' / '+hold+' ms');await Elite.bindings.hold(step.action,hold)}else{const chord=[...(step.modifiers||[]),step.key].join('+');log('raw '+chord+' / '+hold+' ms');await Elite.input.hold(step.key,hold,{modifiers:step.modifiers||[]})}}\ndocument.querySelector('#run').onclick=async()=>{if(running)return;running=true;cancelled=false;const speed=Math.max(.1,Number(document.querySelector('#speed').value)||1);log('run started');try{for(const step of steps){if(cancelled)break;await replayStep(step,speed)}log(cancelled?'stopped':'complete')}catch(e){log('ERROR: '+(e.message||e))}finally{running=false}};\ndocument.querySelector('#stop').onclick=()=>{cancelled=true;log('stop requested')};\n\x3C/script></body></html>`;
+  }
+  $('#generate').onclick=()=>{
+    const html=generateHTML();
+    if(!html.includes('</script>') || html.includes('<\\/script>')){
+      log('ERROR: generated HTML failed script-tag validation.');
+      return;
+    }
+    $('#output').value=html;
+    log(`Generated replay tab with ${state.actions.length} step(s).`);
+  };
+  $('#selectOutput').onclick=()=>{$('#output').focus();$('#output').select()};
+
+  state.unsubscribe=Elite.recorder.subscribe(ingest);
+  refreshStatus();render();log('Recorder tab ready.');
+})();
+</script>
+</body>
+</html>

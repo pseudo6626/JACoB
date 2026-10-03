@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jacob.local/schema/binding-action-v1.json",
+  "title": "JACoB Binding Action v1",
+  "type": "object",
+  "required": ["name", "primary", "secondary"],
+  "properties": {
+    "name": {"type": "string"},
+    "primary": {"$ref": "#/$defs/slot"},
+    "secondary": {"$ref": "#/$defs/slot"}
+  },
+  "$defs": {
+    "slot": {
+      "type": "object",
+      "required": ["device", "key"],
+      "properties": {
+        "device": {"type": "string"},
+        "key": {"type": "string"},
+        "modifiers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["device", "key"],
+            "properties": {
+              "device": {"type": "string"},
+              "key": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
