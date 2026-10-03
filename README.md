@@ -31,15 +31,16 @@ The standard console keeps routine controls in view:
 - **Tutorial** — first-run operating notes
 - **Settings** — appearance, LAN access, bindings, capture, and diagnostics
 
-Technical panels remain folded until opened.
-
-## Technical library
+JACoB is by design fairly limited in features by default. It is the creation of user added tabs via custom HTML files that bring the app to full life. Examples of possible tab ideas are provided in [Examples](examples)
 
 The full custom-tab contract is recorded in:
 
 [`docs/JACOB_CUSTOM_TAB_REFERENCE.md`](docs/JACOB_CUSTOM_TAB_REFERENCE.md)
 
 It includes the browser SDK, event model, state shapes, input calls, overlay scene schema, recorder interface, video interface, storage behavior, WebSocket protocol, platform notes, error codes, and working examples.
+
+
+## Technical library
 
 Additional notices:
 
