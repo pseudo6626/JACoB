@@ -1,6 +1,5 @@
 # JACoB Interface Index
 
-> **GALNET TECHNICAL INDEX // TAB INTERFACE**
 
 The authoritative Alpha 0.2.2 interface contract is:
 
