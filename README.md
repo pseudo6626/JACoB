@@ -9,7 +9,7 @@ The core carries the interfaces. User tabs carry the tools. Route queues, race H
 
 ## Installation
 
-Windows commanders should use the release installer. It installs for the current Windows account, creates Start Menu entries, and registers an uninstaller. The Action Recorder is optional during setup.
+[Windows commanders should use the release installer found here](https://github.com/pseudo6626/JACoB/releases/tag/v0.2.2-alpha) . It installs for the current Windows account, creates Start Menu entries, and registers an uninstaller. The Action Recorder is optional during setup.
 
 Installed data is kept under:
 
@@ -19,7 +19,7 @@ Installed data is kept under:
 
 Uninstalling the program leaves saved tabs and appearance settings in place.
 
-Steam Deck and Linux builds use the same tab SDK and web interface. Platform-specific capability is reported by the relevant API before use.
+[Steam Deck and Linux builds use the same tab SDK and web interface](https://github.com/pseudo6626/JACoB/releases/tag/v0.2.2-alpha). Platform-specific capability is reported by the relevant API before use.
 
 ## Interface
 
