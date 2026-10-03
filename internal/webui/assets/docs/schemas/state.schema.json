@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jacob.local/schemas/v1/state.schema.json",
+  "title": "JACoB State Snapshot",
+  "type": "object",
+  "required": ["journalDir", "journalFile", "status", "lastJournalEvent"],
+  "properties": {
+    "journalDir": { "type": "string" },
+    "journalFile": { "type": "string" },
+    "status": { "type": ["object", "null"], "additionalProperties": true },
+    "lastJournalEvent": { "type": ["object", "null"], "additionalProperties": true }
+  },
+  "additionalProperties": true
+}

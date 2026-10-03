@@ -1,0 +1,35 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Console Appearance Specification — JACoB</title><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="stylesheet" href="/docs/docs.css"></head><body><main class="doc"><h1>JACoB Console Appearance Specification</h1>
+<blockquote>
+<p><strong>GALNET TECHNICAL CIRCULAR // DISPLAY SYSTEMS</strong></p>
+</blockquote>
+<p>Open <strong>Settings → Appearance</strong> to load an HTML appearance file.</p>
+<p>The file may contain CSS for the JACoB host console and replacement templates for documented shell regions.</p>
+<pre><code class="language-html">&lt;style&gt;
+:root {
+  --accent: #ff8a00;
+}
+
+body {
+  font-family: monospace;
+}
+
+.card {
+  border-color: #ff8a00;
+}
+&lt;/style&gt;
+
+&lt;template data-jacob-slot=&quot;brand&quot;&gt;
+  &lt;strong&gt;MY BRIDGE&lt;/strong&gt;&lt;span&gt;COMMAND CONSOLE&lt;/span&gt;
+&lt;/template&gt;
+
+&lt;template data-jacob-slot=&quot;header-extra&quot;&gt;...&lt;/template&gt;
+&lt;template data-jacob-slot=&quot;nav-extra&quot;&gt;...&lt;/template&gt;
+&lt;template data-jacob-slot=&quot;home-extra&quot;&gt;...&lt;/template&gt;
+&lt;template data-jacob-slot=&quot;footer&quot;&gt;...&lt;/template&gt;
+</code></pre>
+<p>Optional body class:</p>
+<pre><code class="language-html">&lt;meta name=&quot;jacob-body-class&quot; content=&quot;my-theme&quot;&gt;
+</code></pre>
+<p>JACoB stores the uploaded file locally and applies it to browsers connected to that instance.</p>
+<p>Scripts contained in an appearance file are not executed in the host page. Interactive functions belong in sandboxed custom tabs.</p>
+</main></body></html>

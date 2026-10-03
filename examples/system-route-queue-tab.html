@@ -1,0 +1,257 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{color-scheme:dark;--bg:#090d10;--panel:#111820;--line:#34434d;--accent:#ff8b2c;--good:#53d18b;--bad:#ff6262;--muted:#8e9aa3}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#eef3f5;font:14px system-ui,-apple-system,Segoe UI,sans-serif;padding:16px}h2{margin:0 0 4px;font-size:20px}p{color:var(--muted);margin:0 0 14px}.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,.65fr);gap:12px}.card{background:var(--panel);border:1px solid #26343d;border-radius:9px;padding:12px}textarea,input,button{font:inherit}textarea{width:100%;height:260px;resize:vertical;background:#070b0e;color:#fff;border:1px solid var(--line);border-radius:6px;padding:10px;line-height:1.45}button{background:#18222a;color:#fff;border:1px solid var(--line);border-radius:6px;padding:9px 12px;cursor:pointer}button.primary{border-color:var(--accent);color:#ffd8b8}button.danger{border-color:#814141;color:#ffc0c0}button:disabled{opacity:.45;cursor:not-allowed}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}.status{font-weight:700}.ok{color:var(--good)}.bad{color:var(--bad)}.wait{color:#ffc15c}.muted{color:var(--muted)}.kv{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;margin-top:8px}.queue{max-height:280px;overflow:auto;margin-top:10px;border-top:1px solid #25313a}.q{padding:7px 4px;border-bottom:1px solid #1d282f;display:flex;gap:8px}.q.done{color:#66737b;text-decoration:line-through}.q.current{color:#fff;background:#151f26}.num{width:28px;color:#73818a}.log{height:170px;overflow:auto;background:#06090b;border:1px solid #222e35;border-radius:6px;padding:8px;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}.settings{display:grid;grid-template-columns:1fr 90px;gap:6px 10px;align-items:center}.settings input{width:90px;background:#080d10;color:#fff;border:1px solid var(--line);border-radius:5px;padding:6px}details{margin-top:10px}summary{cursor:pointer;color:#c2ccd2}@media(max-width:760px){.grid{grid-template-columns:1fr}textarea{height:190px}}
+</style>
+</head>
+<body>
+<h2>System Route Queue</h2>
+<p>One system per line. JACoB plots the next target, then waits for a journal <code>FSDJump</code> before advancing.</p>
+
+<div class="grid">
+  <section class="card">
+    <textarea id="systems" spellcheck="false" placeholder="Sol&#10;Alpha Centauri&#10;Barnard's Star"></textarea>
+    <div class="row">
+      <button id="start" class="primary">Start queue</button>
+      <button id="pause">Pause after jump</button>
+      <button id="resume" disabled>Resume</button>
+      <button id="stop" class="danger" disabled>Stop</button>
+    </div>
+    <div class="kv">
+      <div class="muted">State</div><div id="state" class="status">Idle</div>
+      <div class="muted">Target</div><div id="target">—</div>
+      <div class="muted">Last jump</div><div id="lastJump">—</div>
+      <div class="muted">Progress</div><div id="progress">0 / 0</div>
+    </div>
+    <div id="queue" class="queue"></div>
+  </section>
+
+  <aside class="card">
+    <div style="font-weight:700;margin-bottom:8px">Timing</div>
+    <div class="settings">
+      <label>GalMap open</label><input id="mapDelay" type="number" value="1400" min="100" step="50">
+      <label>After UI up</label><input id="upDelay" type="number" value="180" min="0" step="25">
+      <label>After first select</label><input id="firstSelectDelay" type="number" value="300" min="0" step="25">
+      <label>After typing</label><input id="textDelay" type="number" value="250" min="0" step="25">
+      <label>After UI down</label><input id="downDelay" type="number" value="180" min="0" step="25">
+      <label>Search-result wait</label><input id="resultDelay" type="number" value="850" min="0" step="50">
+      <label>After D nudge</label><input id="nudgeDelay" type="number" value="140" min="0" step="20">
+      <label>After UI right</label><input id="rightDelay" type="number" value="180" min="0" step="25">
+      <label>After jump</label><input id="jumpDelay" type="number" value="1200" min="0" step="100">
+      <label>Typing interval</label><input id="typeInterval" type="number" value="18" min="0" max="200" step="1">
+    </div>
+    <details>
+      <summary>Sequence</summary>
+      <div class="muted" style="margin-top:8px;line-height:1.5">GalaxyMapOpen → UI_Up → UI_Select → type system → UI_Down → UI_Select → MoveFreeCamRight nudge → UI_Right → 7× UI_Down → UI_Select → GalaxyMapOpen → wait for FSDJump.</div>
+    </details>
+    <div style="font-weight:700;margin:14px 0 8px">Log</div>
+    <div id="log" class="log"></div>
+  </aside>
+</div>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const sleep = ms => new Promise(r => setTimeout(r, Math.max(0, Number(ms)||0)));
+  const ui = {
+    systems: $('#systems'), start: $('#start'), pause: $('#pause'), resume: $('#resume'), stop: $('#stop'),
+    state: $('#state'), target: $('#target'), lastJump: $('#lastJump'), progress: $('#progress'), queue: $('#queue'), log: $('#log')
+  };
+
+  let systems = [];
+  let index = 0;
+  let running = false;
+  let waitingForJump = false;
+  let plotting = false;
+  let pauseAfterJump = false;
+  let paused = false;
+  let runToken = 0;
+
+  function n(id){ const el=$('#'+id); return el ? (Number(el.value)||0) : 0; }
+  function log(msg){
+    const t = new Date().toLocaleTimeString();
+    ui.log.textContent += `[${t}] ${msg}\n`;
+    ui.log.scrollTop = ui.log.scrollHeight;
+  }
+  function setState(text, cls=''){
+    ui.state.textContent = text;
+    ui.state.className = 'status '+cls;
+  }
+  function parseSystems(){
+    const seen = new Set();
+    return ui.systems.value.split(/\r?\n/).map(x=>x.trim()).filter(x=>{
+      if(!x || seen.has(x.toLowerCase())) return false;
+      seen.add(x.toLowerCase()); return true;
+    });
+  }
+  function render(){
+    ui.progress.textContent = `${Math.min(index,systems.length)} / ${systems.length}`;
+    ui.target.textContent = running && index < systems.length ? systems[index] : '—';
+    ui.queue.innerHTML = systems.map((s,i)=>`<div class="q ${i<index?'done':''} ${i===index&&running?'current':''}"><span class="num">${i+1}</span><span>${escapeHtml(s)}</span></div>`).join('');
+    ui.start.disabled = running;
+    ui.stop.disabled = !running;
+    ui.pause.disabled = !running || pauseAfterJump || paused;
+    ui.resume.disabled = !running || !paused;
+  }
+  function escapeHtml(v){ return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function alive(token){ return running && token === runToken; }
+
+  async function press(action, token){
+    if(!alive(token)) throw new Error('Queue stopped');
+    log(`Press ${action}`);
+    return Elite.bindings.press(action);
+  }
+
+  async function plotCurrent(){
+    if(!running || paused || plotting || waitingForJump || index >= systems.length) return;
+    const token = runToken;
+    const target = systems[index];
+    plotting = true;
+    render();
+    setState('Plotting route…','wait');
+    log(`Plotting ${target}`);
+
+    try {
+      const health = await Elite.system.health();
+      if(health?.status === 'blocked') throw new Error((health.blockers||['JACoB preflight blocked']).join('; '));
+
+      await press('GalaxyMapOpen', token);
+      await sleep(n('mapDelay'));
+      await press('UI_Up', token);
+      await sleep(n('upDelay'));
+      await press('UI_Select', token);
+      await sleep(n('firstSelectDelay'));
+
+      if(!alive(token)) throw new Error('Queue stopped');
+      log(`Type "${target}"`);
+      await Elite.input.text(target,{intervalMs:n('typeInterval')});
+      await sleep(n('textDelay'));
+
+      await press('UI_Down', token);
+      await sleep(n('downDelay'));
+
+      await press('UI_Select', token);
+      await sleep(n('resultDelay'));
+
+      if(!alive(token)) throw new Error('Queue stopped');
+      log('Nudge GalMap with MoveFreeCamRight');
+      await press('MoveFreeCamRight', token);
+      await sleep(n('nudgeDelay'));
+
+      if(!alive(token)) throw new Error('Queue stopped');
+      await press('UI_Right', token);
+      await sleep(n('rightDelay'));
+
+      for (let i = 0; i < 7; i++) {
+        await press('UI_Down', token);
+        await sleep(90);
+      }
+
+      await press('UI_Select', token);
+      await sleep(250);
+      await press('GalaxyMapOpen', token);
+
+      if(!alive(token)) return;
+      waitingForJump = true;
+      setState('Route plotted — waiting for FSDJump','wait');
+      log('Waiting for successful jump journal event.');
+    } catch(e){
+      if(alive(token)){
+        setState('Error','bad');
+        log(`ERROR: ${e?.message || e}`);
+        running = false;
+      }
+    } finally {
+      plotting = false;
+      render();
+    }
+  }
+
+  async function start(){
+    systems = parseSystems();
+    if(!systems.length){ setState('Paste at least one system','bad'); return; }
+    index = 0;
+    running = true;
+    waitingForJump = false;
+    plotting = false;
+    pauseAfterJump = false;
+    paused = false;
+    runToken++;
+    ui.log.textContent = '';
+    log(`Queue started with ${systems.length} system${systems.length===1?'':'s'}.`);
+    render();
+    await plotCurrent();
+  }
+
+  function stop(){
+    runToken++;
+    running = false;
+    waitingForJump = false;
+    plotting = false;
+    pauseAfterJump = false;
+    paused = false;
+    setState('Stopped');
+    log('Queue stopped. Existing in-game route was left unchanged.');
+    render();
+  }
+
+  ui.start.onclick = start;
+  ui.stop.onclick = stop;
+  ui.pause.onclick = () => {
+    if(!running) return;
+    pauseAfterJump = true;
+    ui.pause.disabled = true;
+    setState(waitingForJump?'Will pause after next jump':'Pause armed','wait');
+    log('Pause-after-jump armed.');
+  };
+  ui.resume.onclick = async () => {
+    if(!running || !paused) return;
+    paused = false;
+    pauseAfterJump = false;
+    log('Queue resumed.');
+    render();
+    await plotCurrent();
+  };
+
+  Elite.journal.subscribe('FSDJump', async ev => {
+    ui.lastJump.textContent = ev?.StarSystem || 'Unknown system';
+    log(`FSDJump: ${ev?.StarSystem || '?'}`);
+    if(!running || !waitingForJump) return;
+
+    waitingForJump = false;
+    index++;
+    render();
+
+    if(index >= systems.length){
+      running = false;
+      setState('Queue complete','ok');
+      log('Queue complete.');
+      render();
+      return;
+    }
+
+    if(pauseAfterJump){
+      pauseAfterJump = false;
+      paused = true;
+      setState('Paused','wait');
+      log(`Paused. Next target: ${systems[index]}`);
+      render();
+      return;
+    }
+
+    setState('Jump confirmed','ok');
+    await sleep(n('jumpDelay'));
+    await plotCurrent();
+  });
+
+  setState('Idle');
+  render();
+  log('Tab ready.');
+})();
+</script>
+</body>
+</html>

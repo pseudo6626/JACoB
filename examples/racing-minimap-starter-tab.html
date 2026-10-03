@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body{margin:0;padding:16px;background:#0a0e12;color:#e8edf0;font:14px system-ui}textarea{width:100%;height:160px;background:#070b0e;color:#fff;border:1px solid #3b4850;border-radius:6px;padding:8px}button{padding:8px 12px;margin:6px 4px 6px 0;background:#18222a;color:#fff;border:1px solid #ff8b2c;border-radius:6px}.muted{color:#8e9aa3}pre{background:#050709;padding:8px;white-space:pre-wrap}
+</style></head><body>
+<h2>Racing Minimap Starter</h2>
+<p class="muted">Enter track points as latitude,longitude — one point per line. Start HUD, then return to Elite. The ship dot updates from Status.json.</p>
+<textarea id="points" placeholder="12.345000,-45.678000&#10;12.345100,-45.677800&#10;12.345250,-45.677950"></textarea>
+<button id="start">Start HUD</button><button id="clear">Clear</button><pre id="out">Waiting.</pre>
+<script>
+const out=document.querySelector('#out');let track=[],running=false;
+function parse(){return document.querySelector('#points').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean).map(line=>{const [lat,lon]=line.split(',').map(Number);return {lat,lon}}).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lon))}
+function project(lat,lon){const lat0=track.reduce((s,p)=>s+p.lat,0)/track.length;const lon0=track.reduce((s,p)=>s+p.lon,0)/track.length;return {x:(lon-lon0)*Math.cos(lat0*Math.PI/180),y:lat-lat0}}
+function bounds(points){let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;for(const p of points){minX=Math.min(minX,p.x);maxX=Math.max(maxX,p.x);minY=Math.min(minY,p.y);maxY=Math.max(maxY,p.y)}return {minX,maxX,minY,maxY}}
+function norm(p,b){const dx=Math.max(1e-9,b.maxX-b.minX),dy=Math.max(1e-9,b.maxY-b.minY),span=Math.max(dx,dy);return {x:.06+((p.x-b.minX)/span)*.22,y:.91-((p.y-b.minY)/span)*.22}}
+async function render(status){if(!running||track.length<2||!Number.isFinite(status?.Latitude)||!Number.isFinite(status?.Longitude))return;const local=track.map(p=>project(p.lat,p.lon)),b=bounds(local),path=local.map(p=>norm(p,b)),ship=norm(project(status.Latitude,status.Longitude),b);await Elite.overlay.set({space:'normalized',items:[{type:'rect',x:.035,y:.66,w:.27,h:.29,stroke:'#ff8b2c',fill:'#081016aa',lineWidth:2},{type:'text',x:.17,y:.675,text:'TRACK',color:'#ff8b2c',fontSize:18,align:'center'},{type:'polyline',points:[...path,path[0]],stroke:'#ff8b2c',lineWidth:3},{type:'circle',x:ship.x,y:ship.y,r:.008,fill:'#ffffff',stroke:'#000000',lineWidth:1},{type:'text',x:.17,y:.925,text:`HDG ${Math.round(status.Heading||0)}°`,color:'#ffffff',fontSize:14,align:'center'}]})}
+document.querySelector('#start').onclick=async()=>{track=parse();if(track.length<2){out.textContent='Need at least two valid track points.';return}running=true;const s=await Elite.state.get();await render(s.status||{});out.textContent=`HUD running with ${track.length} track points.`};
+document.querySelector('#clear').onclick=async()=>{running=false;await Elite.overlay.clear();out.textContent='HUD cleared.'};
+Elite.state.subscribe(status=>render(status).catch(e=>out.textContent=e.code+': '+e.message));
+</script></body></html>

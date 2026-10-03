@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body{font:14px system-ui;background:#0a0e12;color:#eef;padding:16px}button,input{padding:8px;margin:4px;background:#182028;color:#fff;border:1px solid #ff8b2c;border-radius:5px}img{display:block;width:100%;margin-top:10px;background:#000}
+</style>
+</head>
+<body>
+<h2>JACoB P2.7 example tab</h2>
+<input id="text" value="Sol"><button id="send">Type text</button><button id="map">Open Galaxy Map</button><button id="video">Game view</button>
+<img id="view">
+<pre id="out">Ready.</pre>
+<script>
+const out=document.querySelector('#out');
+document.querySelector('#send').onclick=async()=>out.textContent=JSON.stringify(await Elite.input.text(document.querySelector('#text').value),null,2);
+document.querySelector('#map').onclick=async()=>out.textContent=JSON.stringify(await Elite.bindings.press('GalaxyMapOpen'),null,2);
+document.querySelector('#video').onclick=async()=>Elite.video.attach(document.querySelector('#view'),{width:640,fps:5,quality:55});
+Elite.journal.subscribe('FSDJump',e=>out.textContent='Jumped to '+e.StarSystem);
+</script>
+</body>
+</html>

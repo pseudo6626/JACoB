@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jacob.local/schemas/health.schema.json",
+  "title": "JACoB system health",
+  "type": "object",
+  "required": ["status", "blockers", "warnings", "devices", "bindings", "gameRunning"],
+  "properties": {
+    "status": {"type": "string", "enum": ["ok", "warning", "blocked"]},
+    "blockers": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "gameRunning": {"type": "boolean"},
+    "devices": {
+      "type": "object",
+      "required": ["source", "keyboardCount", "mouseCount"],
+      "properties": {
+        "source": {"type": "string"},
+        "keyboardCount": {"type": "integer", "minimum": 0},
+        "mouseCount": {"type": "integer", "minimum": 0},
+        "hidCount": {"type": "integer", "minimum": 0},
+        "error": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "bindings": {"$ref": "bindings-diagnostics.schema.json"}
+  },
+  "additionalProperties": true
+}

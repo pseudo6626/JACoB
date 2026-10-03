@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body{margin:0;padding:18px;background:#0a0e12;color:#e8edf0;font:14px system-ui}button{padding:9px 12px;margin:4px;background:#1a232a;color:white;border:1px solid #ff8b2c;border-radius:6px}pre{background:#050709;padding:10px;white-space:pre-wrap}.muted{color:#8f9ba3}
+</style></head><body>
+<h2>Overlay Demo</h2><p class="muted">Draws a JACoB HUD over Elite. Switch back to Elite after clicking Show.</p>
+<button id="show">Show demo HUD</button><button id="clear">Clear</button><pre id="out">Ready.</pre>
+<script>
+const out=document.querySelector('#out');
+const scene={space:'normalized',items:[
+ {type:'text',x:.5,y:.06,text:'JACoB HUD',color:'#ff8b2c',fontSize:30,align:'center'},
+ {type:'rect',x:.035,y:.72,w:.23,h:.20,stroke:'#ff8b2c',fill:'#10182099',lineWidth:2},
+ {type:'polyline',points:[{x:.06,y:.84},{x:.09,y:.77},{x:.15,y:.79},{x:.22,y:.75},{x:.24,y:.87},{x:.16,y:.89},{x:.06,y:.84}],stroke:'#ff8b2c',lineWidth:3},
+ {type:'circle',x:.15,y:.79,r:.009,fill:'#ffffff'},
+ {type:'text',x:.15,y:.90,text:'MINIMAP',color:'#ffffff',fontSize:15,align:'center'},
+ {type:'line',x:.47,y:.48,x2:.53,y2:.48,stroke:'#ffffff',lineWidth:2},
+ {type:'line',x:.50,y:.45,x2:.50,y2:.51,stroke:'#ffffff',lineWidth:2}
+]};
+document.querySelector('#show').onclick=async()=>{try{out.textContent=JSON.stringify(await Elite.overlay.set(scene),null,2)}catch(e){out.textContent=e.code+': '+e.message}};
+document.querySelector('#clear').onclick=async()=>{try{out.textContent=JSON.stringify(await Elite.overlay.clear(),null,2)}catch(e){out.textContent=e.code+': '+e.message}};
+</script></body></html>

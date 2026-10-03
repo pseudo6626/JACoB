@@ -1,0 +1,576 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JACoB HUD Diagnostics</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#080b0e;
+  --panel:#11171d;
+  --line:#2a3944;
+  --text:#eef3f6;
+  --muted:#8f9ba4;
+  --accent:#ff8b2c;
+  --good:#53d18b;
+  --warn:#ffc15c;
+  --bad:#ff6666;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  padding:14px;
+  background:var(--bg);
+  color:var(--text);
+  font:14px system-ui,-apple-system,Segoe UI,sans-serif;
+}
+h1{font-size:20px;margin:0 0 4px}
+p{margin:0 0 12px;color:var(--muted)}
+.grid{
+  display:grid;
+  grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr);
+  gap:12px;
+}
+.card{
+  background:var(--panel);
+  border:1px solid #24313a;
+  border-radius:9px;
+  padding:12px;
+}
+.row{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+button,select,input{
+  font:inherit;
+}
+button{
+  background:#18222a;
+  color:#fff;
+  border:1px solid var(--line);
+  border-radius:6px;
+  padding:8px 11px;
+  cursor:pointer;
+}
+button.primary{border-color:var(--accent);color:#ffd9bb}
+button.danger{border-color:#7d4040;color:#ffc3c3}
+button:disabled{opacity:.45;cursor:not-allowed}
+select,input{
+  background:#090d10;
+  color:#fff;
+  border:1px solid var(--line);
+  border-radius:5px;
+  padding:6px;
+}
+.statgrid{
+  display:grid;
+  grid-template-columns:150px 1fr;
+  gap:6px 10px;
+  margin-top:10px;
+}
+.label{color:var(--muted)}
+.good{color:var(--good)}
+.warn{color:var(--warn)}
+.bad{color:var(--bad)}
+.log{
+  height:260px;
+  overflow:auto;
+  white-space:pre-wrap;
+  background:#06090b;
+  border:1px solid #1e2a31;
+  border-radius:6px;
+  padding:8px;
+  font:12px ui-monospace,SFMono-Regular,Consolas,monospace;
+}
+.small{font-size:12px;color:var(--muted)}
+hr{border:0;border-top:1px solid #25323a;margin:12px 0}
+@media(max-width:820px){
+  .grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<h1>HUD Diagnostics</h1>
+<p>Overlay latency, update-rate stability, state/journal responsiveness, and input-to-feedback testing.</p>
+
+<div class="grid">
+
+  <section class="card">
+    <div class="row">
+      <button id="start" class="primary">Start HUD test</button>
+      <button id="stop" class="danger" disabled>Stop</button>
+
+      <label>
+        Target FPS
+        <select id="fps">
+          <option>5</option>
+          <option>10</option>
+          <option selected>20</option>
+          <option>30</option>
+          <option>45</option>
+          <option>60</option>
+        </select>
+      </label>
+
+      <label>
+        Load
+        <select id="load">
+          <option value="light">Light</option>
+          <option value="medium" selected>Medium</option>
+          <option value="heavy">Heavy</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="statgrid">
+      <div class="label">Overlay capability</div><div id="cap">Checking…</div>
+      <div class="label">Actual update FPS</div><div id="actualFps">—</div>
+      <div class="label">overlay.set RTT</div><div id="rtt">—</div>
+      <div class="label">RTT p95</div><div id="p95">—</div>
+      <div class="label">Frame jitter</div><div id="jitter">—</div>
+      <div class="label">Dropped/late frames</div><div id="late">0</div>
+      <div class="label">Status update rate</div><div id="statusHz">—</div>
+      <div class="label">Last journal event</div><div id="journal">—</div>
+      <div class="label">Last input → feedback</div><div id="inputLatency">—</div>
+    </div>
+
+    <hr>
+
+    <div class="row">
+      <span class="label">Input probe:</span>
+      <button data-action="UI_Left">UI Left</button>
+      <button data-action="UI_Right">UI Right</button>
+      <button data-action="UI_Up">UI Up</button>
+      <button data-action="UI_Down">UI Down</button>
+      <button data-action="UI_Select">UI Select</button>
+    </div>
+
+    <p class="small" style="margin-top:8px">
+      Input latency is measured from the moment JACoB sends the binding until the next Status.json or journal update arrives.
+      This measures the complete input-to-feedback path; it is not a raw keyboard-latency figure.
+    </p>
+
+    <hr>
+
+    <div class="row">
+      <button id="pulse">Manual HUD pulse</button>
+      <button id="clear">Clear HUD</button>
+    </div>
+  </section>
+
+  <aside class="card">
+    <div style="font-weight:700;margin-bottom:8px">Event log</div>
+    <div id="log" class="log"></div>
+  </aside>
+
+</div>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+
+  const els = {
+    start: $('#start'),
+    stop: $('#stop'),
+    fps: $('#fps'),
+    load: $('#load'),
+    cap: $('#cap'),
+    actualFps: $('#actualFps'),
+    rtt: $('#rtt'),
+    p95: $('#p95'),
+    jitter: $('#jitter'),
+    late: $('#late'),
+    statusHz: $('#statusHz'),
+    journal: $('#journal'),
+    inputLatency: $('#inputLatency'),
+    pulse: $('#pulse'),
+    clear: $('#clear'),
+    log: $('#log')
+  };
+
+  let running = false;
+  let loopToken = 0;
+  let frameCount = 0;
+  let lateFrames = 0;
+  let lastFrameAt = 0;
+  let frameIntervals = [];
+  let rtts = [];
+  let statusTimes = [];
+  let pulseUntil = 0;
+  let stateFlashUntil = 0;
+  let journalFlashUntil = 0;
+  let pendingInputAt = 0;
+  let pendingInputAction = '';
+  let lastStatus = null;
+  let startAt = 0;
+
+  function now(){ return performance.now(); }
+
+  function log(msg){
+    const t = new Date().toLocaleTimeString();
+    els.log.textContent += `[${t}] ${msg}\n`;
+    els.log.scrollTop = els.log.scrollHeight;
+  }
+
+  function percentile(arr,p){
+    if(!arr.length) return 0;
+    const s=[...arr].sort((a,b)=>a-b);
+    const i=Math.min(s.length-1,Math.floor((s.length-1)*p));
+    return s[i];
+  }
+
+  function stdev(arr){
+    if(arr.length < 2) return 0;
+    const mean=arr.reduce((a,b)=>a+b,0)/arr.length;
+    const v=arr.reduce((a,b)=>a+(b-mean)*(b-mean),0)/(arr.length-1);
+    return Math.sqrt(v);
+  }
+
+  function trim(arr,max=180){
+    while(arr.length>max) arr.shift();
+  }
+
+  function markFeedback(kind){
+    if(!pendingInputAt) return;
+    const dt = now() - pendingInputAt;
+    els.inputLatency.textContent = `${dt.toFixed(1)} ms (${pendingInputAction} → ${kind})`;
+    log(`Input feedback: ${pendingInputAction} → ${kind} in ${dt.toFixed(1)} ms`);
+    pendingInputAt = 0;
+    pendingInputAction = '';
+  }
+
+  function makeTrackPoints(t){
+    const pts=[];
+    const n=120;
+    for(let i=0;i<n;i++){
+      const a=(i/(n-1))*Math.PI*2;
+      const wobble=0.025*Math.sin(a*5+t*0.001);
+      pts.push({
+        x:0.78 + Math.cos(a)*(0.13+wobble),
+        y:0.23 + Math.sin(a)*(0.09-wobble*0.6)
+      });
+    }
+    return pts;
+  }
+
+  function makeHeavyGeometry(t){
+    const items=[];
+    for(let i=0;i<40;i++){
+      const a=t*0.0005+i*0.37;
+      items.push({
+        type:'circle',
+        x:0.5+Math.cos(a)*0.32,
+        y:0.5+Math.sin(a*1.23)*0.24,
+        r:0.004+(i%4)*0.0015,
+        fill:i%2===0?'#ff8b2c':'#ffffff'
+      });
+    }
+    return items;
+  }
+
+  function sceneFor(t){
+    const sec=(t-startAt)/1000;
+    const x=0.1 + ((sec*0.18)%0.8);
+    const y=0.52 + Math.sin(sec*2.2)*0.13;
+
+    const targetFps=Number(els.fps.value)||20;
+    const actual = lastFrameAt
+      ? 1000 / Math.max(1, (frameIntervals.slice(-30).reduce((a,b)=>a+b,0) / Math.max(1,Math.min(30,frameIntervals.length))))
+      : 0;
+
+    const pulse = t < pulseUntil;
+    const sflash = t < stateFlashUntil;
+    const jflash = t < journalFlashUntil;
+
+    const items = [
+      {
+        type:'text',
+        x:0.03,y:0.05,
+        text:`JACoB HUD TEST  target ${targetFps} fps`,
+        color:'#ff8b2c',
+        fontSize:24,
+        align:'left'
+      },
+      {
+        type:'text',
+        x:0.03,y:0.095,
+        text:`actual ${actual ? actual.toFixed(1) : '—'} fps   RTT ${rtts.length ? rtts[rtts.length-1].toFixed(1) : '—'} ms`,
+        color:'#ffffff',
+        fontSize:18,
+        align:'left'
+      },
+      {
+        type:'line',
+        x1:0.05,y1:0.18,x2:0.95,y2:0.18,
+        stroke:'#ff8b2c',
+        lineWidth:2
+      },
+      {
+        type:'circle',
+        x,y,
+        r:pulse?0.024:0.014,
+        fill:pulse?'#ffffff':'#53d18b'
+      },
+      {
+        type:'rect',
+        x:0.03,y:0.84,w:0.22,h:0.09,
+        stroke:sflash?'#53d18b':'#34434d',
+        lineWidth:sflash?4:2
+      },
+      {
+        type:'text',
+        x:0.04,y:0.875,
+        text:sflash?'STATUS UPDATE':'status idle',
+        color:sflash?'#53d18b':'#8f9ba4',
+        fontSize:18,
+        align:'left'
+      },
+      {
+        type:'rect',
+        x:0.75,y:0.84,w:0.22,h:0.09,
+        stroke:jflash?'#ffc15c':'#34434d',
+        lineWidth:jflash?4:2
+      },
+      {
+        type:'text',
+        x:0.76,y:0.875,
+        text:jflash?'JOURNAL EVENT':'journal idle',
+        color:jflash?'#ffc15c':'#8f9ba4',
+        fontSize:18,
+        align:'left'
+      },
+      {
+        type:'polyline',
+        points:makeTrackPoints(t),
+        stroke:'#ff8b2c',
+        lineWidth:3
+      }
+    ];
+
+    if(lastStatus){
+      const lat = lastStatus.Latitude;
+      const lon = lastStatus.Longitude;
+      const heading = lastStatus.Heading;
+      items.push({
+        type:'text',
+        x:0.03,y:0.14,
+        text:`lat ${lat ?? '—'}   lon ${lon ?? '—'}   hdg ${heading ?? '—'}`,
+        color:'#8f9ba4',
+        fontSize:14,
+        align:'left'
+      });
+    }
+
+    if(els.load.value==='medium'){
+      for(let i=0;i<12;i++){
+        items.push({
+          type:'line',
+          x1:0.1+i*0.03,
+          y1:0.7,
+          x2:0.18+i*0.03,
+          y2:0.74+Math.sin(sec+i)*0.025,
+          stroke:i%2?'#ffffff':'#53d18b',
+          lineWidth:1
+        });
+      }
+    }
+
+    if(els.load.value==='heavy'){
+      items.push(...makeHeavyGeometry(t));
+      for(let i=0;i<20;i++){
+        items.push({
+          type:'text',
+          x:0.03+(i%5)*0.12,
+          y:0.24+Math.floor(i/5)*0.05,
+          text:`T${i}:${(sec*1000+i).toFixed(0)}`,
+          color:i%2?'#ffffff':'#ff8b2c',
+          fontSize:12,
+          align:'left'
+        });
+      }
+    }
+
+    return { space:'normalized', z:100, items };
+  }
+
+  async function renderLoop(token){
+    startAt=now();
+    lastFrameAt=0;
+    frameCount=0;
+    lateFrames=0;
+    frameIntervals=[];
+    rtts=[];
+    statusTimes=[];
+
+    while(running && token===loopToken){
+      const fps=Math.max(1,Number(els.fps.value)||20);
+      const interval=1000/fps;
+      const scheduled=now();
+
+      if(lastFrameAt){
+        const dt=scheduled-lastFrameAt;
+        frameIntervals.push(dt);
+        trim(frameIntervals);
+        if(dt > interval*1.5) lateFrames++;
+      }
+      lastFrameAt=scheduled;
+
+      const scene=sceneFor(scheduled);
+      const t0=now();
+
+      try{
+        await Elite.overlay.set(scene);
+      }catch(err){
+        log(`overlay.set error: ${err?.message || err}`);
+        running=false;
+        break;
+      }
+
+      const rtt=now()-t0;
+      rtts.push(rtt);
+      trim(rtts);
+      frameCount++;
+
+      const avgInterval=frameIntervals.length
+        ? frameIntervals.reduce((a,b)=>a+b,0)/frameIntervals.length
+        : 0;
+
+      els.actualFps.textContent = avgInterval ? `${(1000/avgInterval).toFixed(1)} fps` : '—';
+      els.rtt.textContent = `${rtt.toFixed(1)} ms`;
+      els.p95.textContent = `${percentile(rtts,.95).toFixed(1)} ms`;
+      els.jitter.textContent = `${stdev(frameIntervals).toFixed(1)} ms`;
+      els.late.textContent = String(lateFrames);
+
+      const elapsed=now()-scheduled;
+      const wait=Math.max(0,interval-elapsed);
+      await new Promise(r=>setTimeout(r,wait));
+    }
+  }
+
+  async function start(){
+    if(running) return;
+
+    try{
+      const info=await Elite.overlay.info();
+      els.cap.textContent = info?.available === false ? 'Unavailable' : 'Available';
+      els.cap.className = info?.available === false ? 'bad' : 'good';
+
+      if(info?.available === false){
+        log('Overlay unavailable on this platform/session.');
+        return;
+      }
+    }catch(err){
+      els.cap.textContent='Error';
+      els.cap.className='bad';
+      log(`overlay.info error: ${err?.message || err}`);
+      return;
+    }
+
+    running=true;
+    loopToken++;
+    els.start.disabled=true;
+    els.stop.disabled=false;
+    log(`HUD test started at ${els.fps.value} fps / ${els.load.value} load.`);
+    renderLoop(loopToken);
+  }
+
+  async function stop(){
+    running=false;
+    loopToken++;
+    els.start.disabled=false;
+    els.stop.disabled=true;
+    try{ await Elite.overlay.clear(); }catch{}
+    log('HUD test stopped and overlay cleared.');
+  }
+
+  els.start.onclick=start;
+  els.stop.onclick=stop;
+
+  els.pulse.onclick=()=>{
+    pulseUntil=now()+500;
+    log('Manual HUD pulse.');
+  };
+
+  els.clear.onclick=async()=>{
+    try{
+      await Elite.overlay.clear();
+      log('Overlay cleared.');
+    }catch(err){
+      log(`Clear failed: ${err?.message || err}`);
+    }
+  };
+
+  document.querySelectorAll('[data-action]').forEach(btn=>{
+    btn.onclick=async()=>{
+      const action=btn.dataset.action;
+      pendingInputAt=now();
+      pendingInputAction=action;
+      pulseUntil=now()+300;
+      log(`Send binding: ${action}`);
+
+      try{
+        await Elite.bindings.press(action);
+      }catch(err){
+        log(`Binding error: ${err?.message || err}`);
+        pendingInputAt=0;
+        pendingInputAction='';
+      }
+    };
+  });
+
+  try{
+    Elite.state.subscribe(status=>{
+      lastStatus=status;
+      const t=now();
+      stateFlashUntil=t+250;
+      statusTimes.push(t);
+      trim(statusTimes,100);
+
+      while(statusTimes.length && t-statusTimes[0] > 5000) statusTimes.shift();
+
+      if(statusTimes.length>=2){
+        const hz=(statusTimes.length-1)/((statusTimes[statusTimes.length-1]-statusTimes[0])/1000);
+        els.statusHz.textContent=`${hz.toFixed(1)} Hz`;
+      }
+
+      markFeedback('Status');
+    });
+  }catch(err){
+    log(`State subscribe unavailable: ${err?.message || err}`);
+  }
+
+  try{
+    Elite.journal.subscribe('*', event=>{
+      const name=event?.event || 'unknown';
+      journalFlashUntil=now()+500;
+      els.journal.textContent=name;
+      log(`Journal: ${name}`);
+      markFeedback(`Journal:${name}`);
+    });
+  }catch(err){
+    log(`Journal subscribe unavailable: ${err?.message || err}`);
+  }
+
+  (async()=>{
+    try{
+      const info=await Elite.overlay.info();
+      els.cap.textContent = info?.available === false ? 'Unavailable' : 'Available';
+      els.cap.className = info?.available === false ? 'bad' : 'good';
+      log(`Overlay capability: ${JSON.stringify(info)}`);
+    }catch(err){
+      els.cap.textContent='Error';
+      els.cap.className='bad';
+      log(`overlay.info failed: ${err?.message || err}`);
+    }
+  })();
+
+  log('HUD diagnostics ready.');
+})();
+</script>
+
+</body>
+</html>

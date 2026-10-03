@@ -1,0 +1,20 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Installation Notice — JACoB</title><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="stylesheet" href="/docs/docs.css"></head><body><main class="doc"><h1>JACoB Installation Notice</h1>
+<blockquote>
+<p><strong>GALNET SERVICE BULLETIN // LOCAL SYSTEMS</strong><br />
+Installation procedure for JACoB Alpha 0.2.2.</p>
+</blockquote>
+<h2>Windows</h2>
+<p>Run the JACoB Alpha installer from the release page.</p>
+<p>The current-user installation path is:</p>
+<pre><code class="language-text">%LOCALAPPDATA%\Programs\JACoB
+</code></pre>
+<p>Setup creates Start Menu entries and registers an uninstaller.</p>
+<p>The <strong>Action Recorder</strong> is optional. Clearing that option installs the Windows build without the recorder hook.</p>
+<p>Commander data is normally stored at:</p>
+<pre><code class="language-text">%APPDATA%\JACoB
+</code></pre>
+<p>Uninstall leaves that data in place. Saved tabs and appearance settings can therefore return after reinstall.</p>
+<h2>Steam Deck / Linux</h2>
+<p>The Linux release uses the same browser console, custom-tab runtime, journal/status reader, binding parser, and SDK. Input, capture, recorder, and overlay support depend on the host session. Check the corresponding capability call before enabling an optional feature.</p>
+<p>For Steam Deck, Gaming Mode support is expected to pass through Gamescope/XWayland where available.</p>
+</main></body></html>

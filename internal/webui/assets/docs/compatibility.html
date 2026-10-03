@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Compatibility Report — JACoB</title><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="stylesheet" href="/docs/docs.css"></head><body><main class="doc"><h1>JACoB Compatibility Report</h1>
+<blockquote>
+<p><strong>GALNET TECHNICAL REPORT // PLATFORM STATUS</strong></p>
+</blockquote>
+<p>JACoB keeps host-specific input, capture, recorder, and overlay code behind platform adapters. Custom tabs use the same SDK on supported systems.</p>
+<h2>Windows</h2>
+<p>The standard alpha build targets current Windows systems capable of running the current Elite Dangerous client. Input uses scan-code <code>SendInput</code>. HUD output uses a native layered window. Game View uses a compatibility capture path.</p>
+<p>A separate Windows build can be produced without the Action Recorder component.</p>
+<h2>Steam Deck / Linux</h2>
+<p>The Linux build shares the browser console, tab runtime, journal/status handling, binding parser, storage model, and overlay scene protocol. Input uses <code>/dev/uinput</code> when available. HUD output uses the Gamescope/XWayland external-overlay path when available.</p>
+<p>Optional platform features report availability through their SDK capability calls. An unavailable optional driver does not stop the remaining bridge services.</p>
+</main></body></html>
