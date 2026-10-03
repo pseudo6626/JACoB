@@ -1,6 +1,6 @@
 # JACoB Field Guide
 
-> **GALNET SERVICE NOTICE // COMMANDER SYSTEMS**  
+  
 > Operating notes for JACoB Alpha 0.2.2.
 
 ## Start sequence
