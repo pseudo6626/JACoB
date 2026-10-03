@@ -1,6 +1,6 @@
 # JACoB Console Appearance Specification
 
-> **GALNET TECHNICAL CIRCULAR // DISPLAY SYSTEMS**
+
 
 Open **Settings → Appearance** to load an HTML appearance file.
 
