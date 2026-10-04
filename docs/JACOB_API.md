@@ -1,10 +1,9 @@
-# JACoB Interface Index
+# JACoB custom-tab API
 
+The canonical SDK and protocol reference for Alpha 0.2.4 is:
 
-The authoritative Alpha 0.2.2 interface contract is:
+`JACOB_CUSTOM_TAB_REFERENCE.md`
 
-**[`JACOB_CUSTOM_TAB_REFERENCE.md`](JACOB_CUSTOM_TAB_REFERENCE.md)**
+SDK / protocol version: **2**.
 
-That record contains the custom-tab runtime, `Elite` SDK methods, direct WebSocket protocol, event handling, binding resolution, raw input, Action Recorder interface, Game View interface, HUD overlay scene format, errors, platform capability notes, schemas, and complete examples.
-
-Machine-readable schemas are held under `docs/schemas/`.
+The reference covers journal/state events, bindings, input, recorder access, overlays, video, browser file exports, bounded public API requests, direct WebSocket messages, JSON schemas, lifecycle behavior, security boundaries, and platform capability notes.

@@ -1,12 +1,11 @@
-# JACoB Custom Tab Technical Reference
+# JACoB Custom Tab Developer Reference
 
-> **GALNET TECHNICAL ARCHIVE // JACoB TAB INTERFACE**  
-> Version: Alpha 0.2.2  
-> SDK version: 1
+Version: Alpha 0.2.4  
+SDK version: 2
 
-This record defines the JACoB custom-tab interface: runtime rules, browser SDK, direct WebSocket protocol, state and event shapes, input calls, HUD overlays, Game View, Action Recorder support, persistence, security boundaries, schemas, and platform limits.
+This is the canonical reference for building JACoB custom HTML tabs. It describes the tab runtime, the browser SDK, the direct WebSocket protocol, state and event shapes, input behavior, overlays, video, recorder support, persistence, security boundaries, and platform limitations.
 
-JACoB supplies game-facing primitives. Sequencing, timers, state machines, route queues, race logic, HUD calculations, and other tool behavior are implemented by the custom HTML tab.
+JACoB deliberately exposes primitives. Multi-step behavior, timers, state machines, route queues, HUD logic, and other tool-specific behavior belong in custom HTML tabs.
 
 ---
 
@@ -47,7 +46,7 @@ Elite.journal.subscribe('FSDJump', event => {
 </html>
 ```
 
-Load the file through **Tab Manager**, inspect it in Preview, then save it. The saved tool joins the main navigation and returns after restart.
+Paste or upload the file in **Tab Manager**, preview it, then save it. Saved tabs become top-level JACoB tabs and persist across restarts.
 
 ---
 
@@ -55,7 +54,7 @@ Load the file through **Tab Manager**, inspect it in Preview, then save it. The 
 
 ### 2.1 Sandbox
 
-Saved and previewed tabs run in sandboxed iframes with script execution enabled. They do not receive normal same-origin access to the JACoB host page, filesystem access, operating-system APIs, or direct access to JACoB's privileged WebSocket.
+Saved and previewed tabs run in sandboxed iframes with script execution enabled. User-initiated file downloads are permitted so a tab can export its own data. Tabs do not receive normal same-origin access to the JACoB host page, arbitrary filesystem access, operating-system APIs, or direct access to JACoB's privileged WebSocket.
 
 The host injects the `Elite` SDK into each tab and forwards only allowed SDK calls.
 
@@ -121,6 +120,8 @@ Elite.input
 Elite.recorder
 Elite.overlay
 Elite.video
+Elite.net
+Elite.files
 Elite.events
 Elite.journal
 ```
@@ -128,7 +129,7 @@ Elite.journal
 The current SDK version is:
 
 ```js
-Elite.api.version === 1
+Elite.api.version === 2
 ```
 
 All command methods return Promises.
@@ -202,7 +203,7 @@ A blocked health result does not mean every JACoB feature is unusable. It means 
 
 ## 5. State and Elite event data
 
-Journal and `Status.json` payloads stay close to Elite's original structure. New game fields pass through without normalization where the bridge can preserve them safely.
+JACoB intentionally keeps Elite's journal and `Status.json` data close to the game's original structure. New game fields are passed through rather than normalized away.
 
 ### `Elite.state.get()`
 
@@ -295,6 +296,7 @@ journal
 tabs.changed
 appearance.changed
 recorder.input
+core.update
 ```
 
 ---
@@ -466,7 +468,7 @@ await Elite.bindings.hold('MoveFreeCamRight', 240);
 
 ## 7. Raw keyboard input
 
-Use raw input when the physical key is the required target. Use binding actions for ordinary Elite commands.
+Use raw input when the physical key itself matters more than the Elite action name.
 
 ### `Elite.input.tap(key, options)`
 
@@ -793,7 +795,7 @@ The compatibility renderer does not provide full blended per-pixel alpha on ever
 
 ### Steam Deck / Linux notes
 
-The Linux overlay uses an X11/XWayland ARGB window and the Gamescope external-overlay path when available. If the required display path is unavailable, `Elite.overlay.info()` reports `available:false`. Other bridge services remain available.
+The Linux overlay uses an X11/XWayland ARGB window and the Gamescope external-overlay path when available. If the required display path is unavailable, `Elite.overlay.info()` reports `available:false` rather than disabling the rest of JACoB.
 
 ---
 
@@ -847,6 +849,84 @@ Current MJPEG limits:
 - JPEG quality: 20 to 95.
 
 This preview is for utility/remote-control views, not high-frame-rate game streaming.
+
+---
+
+## 10A. File exports and public web APIs
+
+### `Elite.files.download(name, data, options)`
+
+Custom tabs can hand a file to the browser download system. Downloads remain user-browser files; JACoB does not grant the tab general filesystem access.
+
+```js
+Elite.files.download('notes.txt', 'Survey complete.');
+```
+
+For JSON:
+
+```js
+Elite.files.json('track.jacobtrack.json', trackObject);
+```
+
+`Elite.files.download()` accepts strings, `Blob` objects, or ordinary JavaScript values. Non-string values are serialized as JSON. The optional `options.type` sets the MIME type and `options.compact` removes JSON indentation.
+
+Saved and preview tabs run with the browser sandbox permission required for user-initiated downloads. The sandbox still withholds general filesystem access.
+
+### `Elite.net.fetch(url, options)`
+
+JACoB can make a bounded outbound API request on behalf of a custom tab. This avoids browser CORS restrictions that otherwise make many public APIs unreliable from sandboxed tabs.
+
+```js
+const result = await Elite.net.fetch(
+  'https://spansh.co.uk/api/systems/field_values/system_names?q=Sol'
+);
+
+console.log(result.status);
+console.log(result.json ?? result.body);
+```
+
+POST example:
+
+```js
+const result = await Elite.net.fetch('https://example.org/api/query', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+  },
+  body: { system: 'Sol' }
+});
+```
+
+Result shape:
+
+```json
+{
+  "url": "https://example.org/api/query",
+  "status": 200,
+  "statusText": "200 OK",
+  "headers": {"Content-Type":"application/json"},
+  "contentType": "application/json",
+  "body": "{...}",
+  "json": {},
+  "bytes": 1234
+}
+```
+
+Network limits:
+
+- `GET` and `POST` only;
+- `http://` and `https://` only;
+- loopback, LAN/private, link-local and local-name targets are blocked;
+- non-standard ports are blocked;
+- redirects are rechecked and limited;
+- request bodies are limited to 1 MiB;
+- responses are limited to 8 MiB;
+- requests time out;
+- JACoB supplies its own `User-Agent`;
+- accepted request headers are limited to `Accept`, `Content-Type`, `Authorization`, `X-API-Key`, `If-None-Match`, and `If-Modified-Since`.
+
+A custom tab with `net.fetch` can transmit information to a public service. Install tabs from sources you trust and inspect tabs that request credentials or send journal/state data away from the computer.
 
 ---
 
@@ -1046,10 +1126,13 @@ core.ping
 core.shutdown
 state.get
 system.health
+update.check
+update.install
 appearance.get
 appearance.save
 appearance.reset
 tabs.list
+tabs.layout.save
 tabs.get
 tabs.save
 tabs.delete
@@ -1070,11 +1153,14 @@ overlay.info
 overlay.set
 overlay.clear
 video.info
+net.fetch
 ```
+
+`core.shutdown`, `update.check`, `update.install`, tab-layout storage, and appearance storage are host/UI concerns. `update.install` is additionally limited to a loopback browser.
 
 `core.shutdown` is host-UI only and is accepted only from a loopback browser. It is not exposed through the custom-tab SDK.
 
-The sandbox SDK intentionally exposes only the methods appropriate for a custom tab. Tab storage and appearance management remain host/UI concerns.
+The sandbox SDK exposes the game-facing primitives and `net.fetch`. Tab storage, navigation layout, update installation, shutdown, and appearance management remain host/UI concerns. `Elite.files` is implemented inside the injected SDK and does not require a WebSocket method.
 
 ---
 
@@ -1104,10 +1190,11 @@ Representative shape:
 
 ```json
 {
-  "prototype": "Alpha 0.2.2",
+  "prototype": "Alpha 0.2.4",
+  "version": "0.2.4-alpha",
   "product": "JACoB",
   "name": "Journal Aligned Control Bridge",
-  "apiVersion": 1,
+  "apiVersion": 2,
   "os": "windows",
   "arch": "amd64",
   "goRuntime": "go1.x",
@@ -1208,6 +1295,10 @@ Recorder:
 LAN clients require the pairing token for WebSocket and video access.
 
 ---
+
+### External API boundary
+
+`Elite.net.fetch` is an outbound public-network bridge. JACoB rejects loopback, private/LAN, link-local and local-name destinations so a custom tab cannot use the bridge to probe services on the host or local network. Public API access still gives the tab a route to transmit data off the computer; treat third-party tabs accordingly.
 
 ## 18. Platform capability summary
 

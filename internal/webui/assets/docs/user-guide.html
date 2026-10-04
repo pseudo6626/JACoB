@@ -1,40 +1,110 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Field Guide — JACoB</title><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="stylesheet" href="/docs/docs.css"></head><body><main class="doc"><h1>JACoB Field Guide</h1>
-<blockquote>
-<p><strong>GALNET SERVICE NOTICE // COMMANDER SYSTEMS</strong><br />
-Operating notes for JACoB Alpha 0.2.2.</p>
-</blockquote>
-<h2>Start sequence</h2>
-<ol>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<title>JACoB User Guide</title>
+<link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+<header><div class="inner"><strong>JACoB</strong><nav><a href="/">App</a><a href="/docs/index.html">Docs</a><a href="/docs/developer-reference.html">Developer Reference</a></nav></div></header>
+<main><h1 id="jacob-user-guide">JACoB User Guide</h1>
+<h2 id="start">Start</h2>
+<ol type="1">
 <li>Start Elite Dangerous.</li>
 <li>Start JACoB.</li>
-<li>On Windows, JACoB opens <code>http://127.0.0.1:4510/</code> in the default browser.</li>
-<li>Check <strong>Home</strong>. The bridge reports <strong>READY</strong>, <strong>WARNING</strong>, or <strong>BLOCKED</strong> with the current condition.</li>
+<li>JACoB opens <code>http://127.0.0.1:4510/</code> in the default
+browser on Windows.</li>
+<li>Home reports <strong>READY</strong>, <strong>WARNING</strong>, or
+<strong>BLOCKED</strong> with the current operational note.</li>
 </ol>
-<h2>Install a custom tab</h2>
+<h2 id="add-a-custom-tab">Add a custom tab</h2>
 <p>Open <strong>Tab Manager</strong>.</p>
-<ol>
+<ol type="1">
 <li>Paste HTML or choose <strong>Upload HTML</strong>.</li>
-<li>Enter a tab name.</li>
+<li>Give the tab a name.</li>
 <li>Choose <strong>Preview</strong>.</li>
 <li>Choose <strong>Save tab</strong>.</li>
 </ol>
-<p>Saved tabs join the main navigation and return after JACoB restarts.</p>
-<h2>Control bindings</h2>
-<p>Custom tabs should call Elite action names such as <code>UI_Select</code> and <code>GalaxyMapOpen</code>. Physical-key calls remain available for cases that require a specific key.</p>
-<p>If an action has no usable binding, close Elite and open <strong>Settings → Elite bindings → Clone / fill unbound</strong>. JACoB copies the current preset to a JACoB user preset, then fills commands with empty Primary and Secondary slots. The source preset remains unchanged.</p>
-<p>During execution, JACoB uses an injectable Secondary keyboard binding first. Primary is used when no suitable Secondary exists.</p>
-<h2>Phone or tablet console</h2>
-<p>Open <strong>Settings → LAN access</strong>. Use one of the listed LAN addresses on the second device, enter the pairing token, and reconnect.</p>
-<h2>HUD overlays</h2>
-<p>Custom tabs may draw text, lines, polylines, polygons, rectangles, and circles over Elite. Each tab receives its own overlay layer. Track maps, race markers, navigation cues, and other HUD logic stay inside the tab.</p>
-<h2>Action Recorder</h2>
-<p>The Windows installer offers the Action Recorder as an optional component. When installed, a recorder tab may capture keyboard actions and timing while recording is armed and Elite is the foreground window.</p>
-<h2>Technical library</h2>
+<p>The saved tab joins the navigation manifest and persists across JACoB
+restarts.</p>
+<h2 id="arrange-the-navigation">Arrange the navigation</h2>
+<p>Tab Manager includes <strong>Navigation manifest</strong>.</p>
 <ul>
-<li><strong>Custom Tab Developer Reference</strong> — complete SDK, schemas, events, input, overlays, video, recorder, storage, WebSocket protocol, and examples.</li>
-<li><strong>Theming</strong> — host appearance file format.</li>
-<li><strong>Compatibility</strong> — current Windows and Steam Deck/Linux capability notes.</li>
+<li>Use the arrow controls to move any default or custom tab.</li>
+<li>Home, Tutorial and Settings may be hidden from the navigation
+bar.</li>
+<li>Tab Manager remains visible as the recovery point.</li>
+<li>Hidden default pages keep their settings and may be restored at any
+time.</li>
 </ul>
-<h2>Shutdown</h2>
-<p>Use <strong>Quit JACoB</strong> at the upper-right of the host console. The local service closes cleanly. Saved tabs and settings remain on disk. LAN clients do not receive the quit control.</p>
-</main></body></html>
+<p>The manifest is stored with the saved-tab data and is shared by
+browsers connected to the same JACoB instance.</p>
+<h2 id="updates">Updates</h2>
+<p>Open <strong>Settings → Software updates</strong> and choose
+<strong>Check for updates</strong>.</p>
+<p>JACoB reads the public releases from the project GitHub repository.
+If a newer release has a matching package, <strong>Install
+update</strong> becomes available on the host browser.</p>
+<p>On Windows, JACoB downloads the newer setup package, closes the
+running core, updates the existing installation, and relaunches. A
+manually downloaded newer setup also detects the installed release and
+offers an in-place update.</p>
+<p>On Linux / Steam Deck, JACoB can replace the running binary when the
+executable location is writable. If the location cannot be changed by
+the current user, use the published release asset manually.</p>
+<h2 id="bindings">Bindings</h2>
+<p>Most tabs should use Elite action names such as
+<code>UI_Select</code> or <code>GalaxyMapOpen</code> rather than
+hard-coded physical keys.</p>
+<p>If a needed command has no binding, close Elite and open
+<strong>Settings → Elite bindings → Clone / fill unbound</strong>. JACoB
+copies the current preset into a JACoB user preset and fills only
+commands where both Primary and Secondary are empty.</p>
+<p>JACoB prefers Secondary keyboard bindings when executing commands and
+falls back to Primary when no injectable Secondary exists.</p>
+<h2 id="phone-or-tablet">Phone or tablet</h2>
+<p>Open <strong>Settings → LAN access</strong>.</p>
+<p>Use one of the shown LAN addresses from the other device. Enter the
+pairing token in that browser and reconnect.</p>
+<p>Software installation is restricted to a browser running on the host
+computer.</p>
+<h2 id="hud-overlays">HUD overlays</h2>
+<p>A custom tab can draw text, lines, polylines, polygons, rectangles,
+and circles over Elite. The overlay logic belongs in the tab. JACoB
+supplies the native transparent overlay surface.</p>
+<h2 id="file-exports">File exports</h2>
+<p>Custom tabs can hand generated files to the browser. Track
+recordings, JSON exports and other tab-owned data use the ordinary
+browser download destination. The sandbox does not grant general
+filesystem access.</p>
+<h2 id="public-api-access">Public API access</h2>
+<p>Custom tabs can make bounded <code>GET</code> and <code>POST</code>
+requests to public HTTP/HTTPS APIs through JACoB. This is useful for
+services such as Spansh where browser CORS rules may otherwise block a
+sandboxed tab.</p>
+<p>Localhost, LAN/private addresses, link-local addresses, local
+hostnames and non-standard ports are refused by the network bridge.</p>
+<h2 id="action-recorder">Action Recorder</h2>
+<p>The Windows installer offers the Action Recorder as an optional
+component. If installed, a custom recorder tab can capture keyboard
+actions and timing while recording is explicitly active and Elite is
+foreground.</p>
+<h2 id="documentation">Documentation</h2>
+<ul>
+<li><strong>Custom Tab Developer Reference:</strong> complete SDK,
+schemas, runtime rules, overlays, input, events, video, recorder,
+downloads, public API requests, WebSocket protocol, and examples.</li>
+<li><strong>Theming:</strong> host appearance file format.</li>
+<li><strong>Compatibility:</strong> current Windows and Steam Deck/Linux
+behavior.</li>
+</ul>
+<h2 id="closing-jacob">Closing JACoB</h2>
+<p>Use <strong>Quit JACoB</strong> in the top-right corner of the web
+app on the host computer. JACoB stops the local service cleanly and
+leaves saved tabs and settings untouched. The quit control is
+unavailable to LAN clients.</p>
+</main>
+</body>
+</html>

@@ -1,12 +1,41 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Compatibility Report — JACoB</title><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="stylesheet" href="/docs/docs.css"></head><body><main class="doc"><h1>JACoB Compatibility Report</h1>
-<blockquote>
-<p><strong>GALNET TECHNICAL REPORT // PLATFORM STATUS</strong></p>
-</blockquote>
-<p>JACoB keeps host-specific input, capture, recorder, and overlay code behind platform adapters. Custom tabs use the same SDK on supported systems.</p>
-<h2>Windows</h2>
-<p>The standard alpha build targets current Windows systems capable of running the current Elite Dangerous client. Input uses scan-code <code>SendInput</code>. HUD output uses a native layered window. Game View uses a compatibility capture path.</p>
-<p>A separate Windows build can be produced without the Action Recorder component.</p>
-<h2>Steam Deck / Linux</h2>
-<p>The Linux build shares the browser console, tab runtime, journal/status handling, binding parser, storage model, and overlay scene protocol. Input uses <code>/dev/uinput</code> when available. HUD output uses the Gamescope/XWayland external-overlay path when available.</p>
-<p>Optional platform features report availability through their SDK capability calls. An unavailable optional driver does not stop the remaining bridge services.</p>
-</main></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<title>JACoB Compatibility</title>
+<link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+<header><div class="inner"><strong>JACoB</strong><nav><a href="/">App</a><a href="/docs/index.html">Docs</a><a href="/docs/developer-reference.html">Developer Reference</a></nav></div></header>
+<main><h1 id="jacob-compatibility">JACoB compatibility</h1>
+<p>JACoB keeps platform-specific input, capture, recorder, overlay, and
+update work behind adapters so custom tabs can use one SDK on Windows
+and Steam Deck/Linux.</p>
+<h2 id="windows">Windows</h2>
+<p>The normal alpha build targets current Windows systems capable of
+running the current Elite client. Input uses scan-code
+<code>SendInput</code>; the overlay uses a native layered window; video
+uses a compatibility capture path.</p>
+<p>The installer is per-user and supports in-place updates. The in-app
+updater stages the published Windows setup asset and hands control to
+that installer after the running JACoB process closes.</p>
+<h2 id="steam-deck--linux">Steam Deck / Linux</h2>
+<p>The Linux build shares the same web UI, custom-tab runtime,
+journal/status handling, binding parser, network bridge, file-export
+helpers, and overlay scene protocol. Input uses <code>/dev/uinput</code>
+when available. The overlay uses the Gamescope/XWayland external-overlay
+path when available.</p>
+<p>The Linux updater can replace the current executable only when the
+containing directory is writable by the current user.</p>
+<h2 id="public-web-apis">Public web APIs</h2>
+<p><code>Elite.net.fetch</code> behaves the same on supported platforms.
+Requests leave from the computer running JACoB rather than from the
+browser. Public HTTP/HTTPS targets on standard ports are available;
+local/private network targets are refused.</p>
+<p>Optional platform features report capability through the SDK rather
+than preventing the rest of JACoB from starting.</p>
+</main>
+</body>
+</html>

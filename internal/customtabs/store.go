@@ -16,6 +16,9 @@ import (
 
 const maxHTMLBytes = 1024 * 1024
 
+var defaultNavIDs = []string{"dashboard", "tabmanager", "tutorial", "settings"}
+var hideableDefaultNavIDs = map[string]bool{"dashboard": true, "tutorial": true, "settings": true}
+
 type Tab struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -24,16 +27,23 @@ type Tab struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
+type Layout struct {
+	Order          []string `json:"order,omitempty"`
+	HiddenDefaults []string `json:"hiddenDefaults,omitempty"`
+}
+
 type fileData struct {
-	SchemaVersion int   `json:"schemaVersion"`
-	Tabs          []Tab `json:"tabs"`
+	SchemaVersion int    `json:"schemaVersion"`
+	Tabs          []Tab  `json:"tabs"`
+	Layout        Layout `json:"layout,omitempty"`
 }
 
 type Store struct {
-	mu   sync.RWMutex
-	dir  string
-	path string
-	tabs map[string]Tab
+	mu     sync.RWMutex
+	dir    string
+	path   string
+	tabs   map[string]Tab
+	layout Layout
 }
 
 func DefaultDirectory() string {
@@ -72,18 +82,35 @@ func (s *Store) Path() string      { return s.path }
 func (s *Store) List() []Tab {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.listLocked()
+}
+
+func (s *Store) listLocked() []Tab {
 	out := make([]Tab, 0, len(s.tabs))
-	for _, t := range s.tabs {
-		out = append(out, t)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		leftName, rightName := strings.ToLower(out[i].Name), strings.ToLower(out[j].Name)
-		if leftName == rightName {
-			return out[i].CreatedAt < out[j].CreatedAt
+	seen := map[string]bool{}
+	for _, navID := range s.normalizedLayoutLocked().Order {
+		if !strings.HasPrefix(navID, "custom-") {
+			continue
 		}
-		return leftName < rightName
+		id := strings.TrimPrefix(navID, "custom-")
+		if t, ok := s.tabs[id]; ok {
+			out = append(out, t)
+			seen[id] = true
+		}
+	}
+	remaining := make([]Tab, 0, len(s.tabs)-len(out))
+	for id, t := range s.tabs {
+		if !seen[id] {
+			remaining = append(remaining, t)
+		}
+	}
+	sort.Slice(remaining, func(i, j int) bool {
+		if remaining[i].CreatedAt == remaining[j].CreatedAt {
+			return strings.ToLower(remaining[i].Name) < strings.ToLower(remaining[j].Name)
+		}
+		return remaining[i].CreatedAt < remaining[j].CreatedAt
 	})
-	return out
+	return append(out, remaining...)
 }
 
 func (s *Store) Get(id string) (Tab, bool) {
@@ -91,6 +118,25 @@ func (s *Store) Get(id string) (Tab, bool) {
 	defer s.mu.RUnlock()
 	t, ok := s.tabs[id]
 	return t, ok
+}
+
+func (s *Store) Layout() Layout {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneLayout(s.normalizedLayoutLocked())
+}
+
+func (s *Store) SaveLayout(order, hiddenDefaults []string) (Layout, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.layout
+	s.layout = Layout{Order: append([]string(nil), order...), HiddenDefaults: append([]string(nil), hiddenDefaults...)}
+	s.layout = s.normalizedLayoutLocked()
+	if err := s.persistLocked(); err != nil {
+		s.layout = old
+		return Layout{}, err
+	}
+	return cloneLayout(s.layout), nil
 }
 
 func (s *Store) Save(id, name, html string) (Tab, error) {
@@ -122,6 +168,7 @@ func (s *Store) Save(id, name, html string) (Tab, error) {
 		}
 		t := Tab{ID: id, Name: name, HTML: html, CreatedAt: now, UpdatedAt: now}
 		s.tabs[id] = t
+		s.layout = s.normalizedLayoutLocked()
 		if err := s.persistLocked(); err != nil {
 			delete(s.tabs, id)
 			return Tab{}, err
@@ -152,9 +199,12 @@ func (s *Store) Delete(id string) error {
 	if !ok {
 		return errors.New("saved tab not found")
 	}
+	oldLayout := s.layout
 	delete(s.tabs, id)
+	s.layout = s.normalizedLayoutLocked()
 	if err := s.persistLocked(); err != nil {
 		s.tabs[id] = old
+		s.layout = oldLayout
 		return err
 	}
 	return nil
@@ -178,7 +228,78 @@ func (s *Store) load() error {
 		}
 		s.tabs[t.ID] = t
 	}
+	s.layout = f.Layout
+	s.layout = s.normalizedLayoutLocked()
 	return nil
+}
+
+func (s *Store) normalizedLayoutLocked() Layout {
+	valid := map[string]bool{}
+	for _, id := range defaultNavIDs {
+		valid[id] = true
+	}
+	for id := range s.tabs {
+		valid["custom-"+id] = true
+	}
+
+	order := make([]string, 0, len(valid))
+	seen := map[string]bool{}
+	for _, id := range s.layout.Order {
+		id = strings.TrimSpace(id)
+		if valid[id] && !seen[id] {
+			order = append(order, id)
+			seen[id] = true
+		}
+	}
+	// New installs keep custom tools between Home and the management pages.
+	if len(order) == 0 {
+		order = append(order, "dashboard")
+		seen["dashboard"] = true
+		ids := make([]string, 0, len(s.tabs))
+		for id := range s.tabs {
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return s.tabs[ids[i]].CreatedAt < s.tabs[ids[j]].CreatedAt })
+		for _, id := range ids {
+			navID := "custom-" + id
+			order = append(order, navID)
+			seen[navID] = true
+		}
+	}
+	// Append anything not yet represented. This also handles tabs created after a saved layout.
+	remainingCustom := make([]Tab, 0)
+	for id, t := range s.tabs {
+		if !seen["custom-"+id] {
+			remainingCustom = append(remainingCustom, t)
+		}
+	}
+	sort.Slice(remainingCustom, func(i, j int) bool { return remainingCustom[i].CreatedAt < remainingCustom[j].CreatedAt })
+	for _, t := range remainingCustom {
+		navID := "custom-" + t.ID
+		order = append(order, navID)
+		seen[navID] = true
+	}
+	for _, id := range defaultNavIDs {
+		if !seen[id] {
+			order = append(order, id)
+			seen[id] = true
+		}
+	}
+
+	hidden := make([]string, 0, len(s.layout.HiddenDefaults))
+	hiddenSeen := map[string]bool{}
+	for _, id := range s.layout.HiddenDefaults {
+		id = strings.TrimSpace(id)
+		if hideableDefaultNavIDs[id] && !hiddenSeen[id] {
+			hidden = append(hidden, id)
+			hiddenSeen[id] = true
+		}
+	}
+	return Layout{Order: order, HiddenDefaults: hidden}
+}
+
+func cloneLayout(in Layout) Layout {
+	return Layout{Order: append([]string(nil), in.Order...), HiddenDefaults: append([]string(nil), in.HiddenDefaults...)}
 }
 
 func (s *Store) persistLocked() error {
@@ -187,7 +308,7 @@ func (s *Store) persistLocked() error {
 		tabs = append(tabs, t)
 	}
 	sort.Slice(tabs, func(i, j int) bool { return tabs[i].CreatedAt < tabs[j].CreatedAt })
-	b, err := json.MarshalIndent(fileData{SchemaVersion: 1, Tabs: tabs}, "", "  ")
+	b, err := json.MarshalIndent(fileData{SchemaVersion: 2, Tabs: tabs, Layout: s.normalizedLayoutLocked()}, "", "  ")
 	if err != nil {
 		return err
 	}

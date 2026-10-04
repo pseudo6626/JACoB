@@ -1,20 +1,55 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Installation Notice — JACoB</title><link rel="icon" href="/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="stylesheet" href="/docs/docs.css"></head><body><main class="doc"><h1>JACoB Installation Notice</h1>
-<blockquote>
-<p><strong>GALNET SERVICE BULLETIN // LOCAL SYSTEMS</strong><br />
-Installation procedure for JACoB Alpha 0.2.2.</p>
-</blockquote>
-<h2>Windows</h2>
-<p>Run the JACoB Alpha installer from the release page.</p>
-<p>The current-user installation path is:</p>
-<pre><code class="language-text">%LOCALAPPDATA%\Programs\JACoB
-</code></pre>
-<p>Setup creates Start Menu entries and registers an uninstaller.</p>
-<p>The <strong>Action Recorder</strong> is optional. Clearing that option installs the Windows build without the recorder hook.</p>
-<p>Commander data is normally stored at:</p>
-<pre><code class="language-text">%APPDATA%\JACoB
-</code></pre>
-<p>Uninstall leaves that data in place. Saved tabs and appearance settings can therefore return after reinstall.</p>
-<h2>Steam Deck / Linux</h2>
-<p>The Linux release uses the same browser console, custom-tab runtime, journal/status reader, binding parser, and SDK. Input, capture, recorder, and overlay support depend on the host session. Check the corresponding capability call before enabling an optional feature.</p>
-<p>For Steam Deck, Gaming Mode support is expected to pass through Gamescope/XWayland where available.</p>
-</main></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<title>JACoB Installation</title>
+<link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+<header><div class="inner"><strong>JACoB</strong><nav><a href="/">App</a><a href="/docs/index.html">Docs</a><a href="/docs/developer-reference.html">Developer Reference</a></nav></div></header>
+<main><h1 id="jacob-installation">JACoB installation</h1>
+<h2 id="windows">Windows</h2>
+<p>Run <code>JACoB-Alpha-0.2.4-Setup.exe</code>.</p>
+<p>The installer uses the current Windows account and installs
+under:</p>
+<pre class="text"><code>%LOCALAPPDATA%\Programs\JACoB</code></pre>
+<p>It creates Start Menu shortcuts and registers an uninstaller.</p>
+<p>On a first installation, setup asks whether to include the optional
+Action Recorder. Choosing <strong>No</strong> installs the Windows build
+that does not contain the recorder hook.</p>
+<p>If JACoB is already installed, setup reads the installed version. A
+newer setup offers an in-place update, closes the running JACoB process
+if necessary, preserves the existing Action Recorder choice, and keeps
+user data.</p>
+<p>JACoB user data is normally stored under:</p>
+<pre class="text"><code>%APPDATA%\JACoB</code></pre>
+<p>Uninstall keeps user data so saved tabs, navigation settings and
+appearance files can survive a reinstall.</p>
+<h3 id="in-app-update-check">In-app update check</h3>
+<p>Open <strong>Settings → Software updates</strong> and choose
+<strong>Check for updates</strong>. JACoB reads published releases from
+<code>pseudo6626/JACoB</code>, including prereleases while the project
+remains in alpha.</p>
+<p>When a newer Windows release contains a matching setup asset,
+<strong>Install update</strong> downloads that setup package, closes
+JACoB, performs the in-place update, and relaunches the application.
+Update installation is available only from a browser running on the host
+computer.</p>
+<h2 id="steam-deck--linux">Steam Deck / Linux</h2>
+<p>The release package includes
+<code>JACoB-Alpha-0.2.4-SteamDeck-linux-amd64</code>.</p>
+<p>The browser UI, custom tabs, journal/status reader, bindings layer,
+public API bridge and core SDK are shared with Windows.
+Platform-specific input, capture, recorder, and overlay capability can
+vary; query the relevant SDK capability before depending on an optional
+feature.</p>
+<p>The in-app updater can replace the current Linux executable when the
+directory containing it is writable by the current user. A
+<code>.previous</code> binary is left beside the updated executable for
+recovery. If the executable location is read-only, use the published
+release asset manually.</p>
+</main>
+</body>
+</html>

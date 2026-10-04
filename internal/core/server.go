@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"net/textproto"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -22,10 +24,13 @@ import (
 
 	"jacob/internal/appearance"
 	"jacob/internal/bindings"
+	"jacob/internal/buildinfo"
 	"jacob/internal/control"
 	"jacob/internal/customtabs"
 	"jacob/internal/journal"
 	"jacob/internal/platform"
+	"jacob/internal/updater"
+	"jacob/internal/webfetch"
 	"jacob/internal/webui"
 )
 
@@ -52,6 +57,8 @@ type Server struct {
 	overlay       platform.OverlayDriver
 	tabs          *customtabs.Store
 	appearance    *appearance.Store
+	updater       *updater.Client
+	webfetch      *webfetch.Client
 	clientsMu     sync.RWMutex
 	recorderMu    sync.Mutex
 	clients       map[*wsClient]struct{}
@@ -82,7 +89,7 @@ func New(cfg Config) *Server {
 	if cfg.LANEnabled && cfg.PairToken == "" {
 		cfg.PairToken = randomToken()
 	}
-	s := &Server{cfg: cfg, input: platform.NewInputDriver(), recorder: platform.NewInputRecorder(), capture: platform.NewCaptureDriver(), overlay: platform.NewOverlayDriver(), clients: map[*wsClient]struct{}{}, started: time.Now(), shutdown: make(chan struct{})}
+	s := &Server{cfg: cfg, input: platform.NewInputDriver(), recorder: platform.NewInputRecorder(), capture: platform.NewCaptureDriver(), overlay: platform.NewOverlayDriver(), updater: updater.New(), webfetch: webfetch.New(), clients: map[*wsClient]struct{}{}, started: time.Now(), shutdown: make(chan struct{})}
 	themeStore, themeErr := appearance.New(cfg.DataDir)
 	if themeErr != nil {
 		log.Printf("JACoB appearance store unavailable: %v", themeErr)
@@ -155,7 +162,7 @@ func (s *Server) Run(ctx context.Context) error {
 		defer cancel()
 		_ = httpServer.Shutdown(c)
 	}()
-	log.Printf("JACoB Alpha 0.2.2 listening on http://%s", s.cfg.Bind)
+	log.Printf("JACoB %s listening on http://%s", buildinfo.Display, s.cfg.Bind)
 	if s.cfg.LANEnabled {
 		log.Printf("LAN pairing token: %s", s.cfg.PairToken)
 	}
@@ -295,7 +302,21 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			_ = s.sendError(c, req.ID, "TAB_STORE_UNAVAILABLE", "custom tab storage is unavailable")
 			return
 		}
-		s.sendResult(c, req.ID, map[string]any{"directory": s.tabs.Directory(), "tabs": s.tabs.List()})
+		s.sendResult(c, req.ID, map[string]any{"directory": s.tabs.Directory(), "tabs": s.tabs.List(), "layout": s.tabs.Layout()})
+	case "tabs.layout.save":
+		if s.tabs == nil {
+			_ = s.sendError(c, req.ID, "TAB_STORE_UNAVAILABLE", "custom tab storage is unavailable")
+			return
+		}
+		order := stringSliceParam(req.Params, "order")
+		hidden := stringSliceParam(req.Params, "hiddenDefaults")
+		layout, err := s.tabs.SaveLayout(order, hidden)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "TAB_LAYOUT_SAVE_FAILED", err.Error())
+			return
+		}
+		s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "layout", "layout": layout}})
+		s.sendResult(c, req.ID, layout)
 	case "tabs.get":
 		if s.tabs == nil {
 			_ = s.sendError(c, req.ID, "TAB_STORE_UNAVAILABLE", "custom tab storage is unavailable")
@@ -346,6 +367,84 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		}
 		s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "deleted", "id": id}})
 		s.sendResult(c, req.ID, map[string]any{"id": id, "deleted": true})
+	case "update.check":
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		info, err := s.updater.Check(ctx)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "UPDATE_CHECK_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, info)
+	case "update.install":
+		if !c.local {
+			_ = s.sendError(c, req.ID, "LOCAL_ONLY", "software updates can only be installed from a browser running on the host computer")
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		info, err := s.updater.Check(ctx)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "UPDATE_CHECK_FAILED", err.Error())
+			return
+		}
+		if !info.Available {
+			_ = s.sendError(c, req.ID, "NO_UPDATE", "this JACoB build is already current")
+			return
+		}
+		if !info.Installable || info.Asset == nil {
+			msg := info.InstallNote
+			if msg == "" {
+				msg = "automatic installation is unavailable for this release"
+			}
+			_ = s.sendError(c, req.ID, "UPDATE_NOT_INSTALLABLE", msg)
+			return
+		}
+		path, err := s.updater.Download(ctx, *info.Asset, filepath.Join(s.cfg.DataDir, "updates"))
+		if err != nil {
+			_ = s.sendError(c, req.ID, "UPDATE_DOWNLOAD_FAILED", err.Error())
+			return
+		}
+		switch runtime.GOOS {
+		case "windows":
+			args := []string{"--update", "--wait-pid", strconv.Itoa(os.Getpid()), fmt.Sprintf("--recorder=%t", s.recorder.Available())}
+			cmd := exec.Command(path, args...)
+			if err := cmd.Start(); err != nil {
+				_ = s.sendError(c, req.ID, "UPDATE_LAUNCH_FAILED", err.Error())
+				return
+			}
+		case "linux":
+			if _, err := updater.ReplaceLinuxExecutable(path); err != nil {
+				_ = s.sendError(c, req.ID, "UPDATE_INSTALL_FAILED", err.Error())
+				return
+			}
+		default:
+			_ = s.sendError(c, req.ID, "UPDATE_NOT_INSTALLABLE", "automatic installation is unavailable on this operating system")
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"installing": true, "version": info.LatestVersion, "asset": info.Asset.Name})
+		s.broadcast(envelope{Type: "event", Event: "core.update", Data: map[string]any{"installing": true, "version": info.LatestVersion}})
+		go func() {
+			time.Sleep(180 * time.Millisecond)
+			s.shutdownOnce.Do(func() { close(s.shutdown) })
+		}()
+	case "net.fetch":
+		if s.webfetch == nil {
+			_ = s.sendError(c, req.ID, "NET_FETCH_UNAVAILABLE", "outbound API access is unavailable")
+			return
+		}
+		urlValue, _ := req.Params["url"].(string)
+		method, _ := req.Params["method"].(string)
+		body, _ := req.Params["body"].(string)
+		headers := stringMapParam(req.Params, "headers")
+		ctx, cancel := context.WithTimeout(context.Background(), 22*time.Second)
+		defer cancel()
+		result, err := s.webfetch.Fetch(ctx, webfetch.Request{URL: urlValue, Method: method, Headers: headers, Body: body})
+		if err != nil {
+			_ = s.sendError(c, req.ID, "NET_FETCH_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
 	case "bindings.diagnostics":
 		s.sendResult(c, req.ID, s.bindings.Diagnostics())
 	case "bindings.list":
@@ -584,6 +683,20 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 	}
 }
 
+func stringMapParam(params map[string]any, key string) map[string]string {
+	out := map[string]string{}
+	raw, ok := params[key].(map[string]any)
+	if !ok {
+		return out
+	}
+	for k, v := range raw {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
+}
+
 func (s *Server) systemInfo(includeSecret bool) map[string]any {
 	host, _ := os.Hostname()
 	lan := map[string]any{"enabled": s.cfg.LANEnabled}
@@ -595,12 +708,14 @@ func (s *Server) systemInfo(includeSecret bool) map[string]any {
 		}
 	}
 	return map[string]any{
-		"prototype": "Alpha 0.2.2", "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 1, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()),
+		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 2, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()),
 		"journalDir": s.cfg.JournalDir, "bindingsDir": s.bindings.Directory(), "bindingsFile": s.bindings.ActiveFile(), "bindingsFiles": s.bindings.ActiveFiles(), "bindingsSource": s.bindings.ActiveSource(), "bindingsCount": len(s.bindings.ListActions()), "autoBind": s.autoBind,
 		"input": map[string]any{"enabled": s.cfg.EnableInput, "available": s.input.Available(), "driver": s.input.Name()}, "recorder": s.recorder.Status(), "capture": map[string]any{"available": s.capture.Available(), "driver": s.capture.Name()}, "overlay": s.overlay.Info(), "lan": lan,
 		"health":      s.healthReport(),
 		"localClient": includeSecret,
 		"appearance":  map[string]any{"available": s.appearance != nil, "custom": s.appearance != nil && strings.TrimSpace(s.appearance.Get()) != ""},
+		"updates":     map[string]any{"repository": buildinfo.Repository, "checkAvailable": true, "installAvailable": runtime.GOOS == "windows" || runtime.GOOS == "linux"},
+		"network":     map[string]any{"fetchAvailable": s.webfetch != nil, "publicHTTPOnly": true},
 		"customTabs": map[string]any{"available": s.tabs != nil, "directory": func() string {
 			if s.tabs != nil {
 				return s.tabs.Directory()

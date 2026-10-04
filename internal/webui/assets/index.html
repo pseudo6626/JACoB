@@ -14,16 +14,12 @@
 <header class="topbar">
   <div id="brand-slot" class="brand"><strong>JACoB</strong><span>Journal Aligned Control Bridge</span></div>
   <div id="header-extra"></div>
-  <a class="top-link" href="/docs/index.html" target="_blank" rel="noopener">Technical Library</a>
-  <button id="quit-jacob" class="quit-button" hidden>Shut Down</button>
+  <a class="top-link" href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>
+  <button id="quit-jacob" class="quit-button" hidden>Quit JACoB</button>
   <div id="connection" class="status-mark offline">OFFLINE</div>
 </header>
 <nav id="main-nav">
-  <button class="nav active" data-tab="dashboard">Bridge</button>
-  <span id="custom-nav" class="nav-group"></span>
-  <button class="nav" data-tab="tabmanager">Tab Manager</button>
-  <button class="nav" data-tab="tutorial">Field Guide</button>
-  <button class="nav" data-tab="settings">Settings</button>
+  <span id="nav-items" class="nav-group"></span>
   <span id="nav-extra"></span>
 </nav>
 <main>
@@ -31,73 +27,74 @@
   <div id="home-extra"></div>
   <div class="home-grid">
     <article class="card home-status">
-      <div class="section-kicker">BRIDGE STATUS</div>
-      <div class="home-status-line"><span id="health-state" class="status-mark offline">UNKNOWN</span><strong id="home-health-message">Checking Elite link…</strong></div>
+      <div class="section-kicker">STATUS</div>
+      <div class="home-status-line"><span id="health-state" class="status-mark offline">UNKNOWN</span><strong id="home-health-message">Checking Elite connection…</strong></div>
       <dl class="facts home-facts">
-        <dt>Latest journal event</dt><dd id="home-event-name">Waiting…</dd>
-        <dt>Journal</dt><dd id="home-journal-state">Awaiting journal link…</dd>
+        <dt>Latest event</dt><dd id="home-event-name">Waiting…</dd>
+        <dt>Journal</dt><dd id="home-journal-state">Waiting for JACoB…</dd>
         <dt>Saved tabs</dt><dd id="home-tab-count">0</dd>
       </dl>
     </article>
     <article class="card home-start">
-      <div class="section-kicker">OPERATIONS</div>
-      <h2>Bridge Console</h2>
-      <p>Load a custom tool, review the field guide, or open the technical library.</p>
+      <div class="section-kicker">START HERE</div>
+      <h2>Use JACoB</h2>
+      <p>Add a custom tab, load one you already have, or run through the short setup guide.</p>
       <div class="row">
-        <button id="home-add-tab" class="primary">Install tool</button>
-        <button id="home-tutorial" class="secondary">Field Guide</button>
-        <a class="button-link secondary" href="/docs/index.html" target="_blank" rel="noopener">Technical Library</a>
+        <button id="home-add-tab" class="primary">Add a tab</button>
+        <button id="home-tutorial" class="secondary">Tutorial</button>
+        <a class="button-link secondary" href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>
       </div>
     </article>
   </div>
   <article class="card home-note">
-    <div class="section-kicker">BRIDGE FUNCTION</div>
-    <p>JACoB maintains the link to Elite and exposes state, journal, input, Game View, HUD, and storage interfaces. Custom HTML tabs define the tools carried on that bridge.</p>
+    <div class="section-kicker">HOW IT WORKS</div>
+    <p>JACoB stays small on purpose. Your saved HTML tabs provide the controls, automation, displays, and HUDs you want. JACoB supplies the game state, input, journal, video, overlay, and storage interfaces underneath them.</p>
   </article>
 </section>
 
 <section id="tabmanager" class="panel-page">
   <div class="page-head">
-    <div><div class="section-kicker">CUSTOM TOOLS</div><h1>Tab Manager</h1><p>Load a self-contained HTML tool, inspect it in Preview, then add it to the console.</p></div>
-    <a class="button-link secondary" href="/docs/developer-reference.html" target="_blank" rel="noopener">Interface reference</a>
+    <div><div class="section-kicker">CUSTOM TOOLS</div><h1>Tab Manager</h1><p>Paste or upload a self-contained HTML tab, preview it, then save it into the main navigation.</p></div>
+    <a class="button-link secondary" href="/docs/developer-reference.html" target="_blank" rel="noopener">Tab reference</a>
   </div>
   <div class="grid editor-grid">
     <article class="card">
       <div class="card-head"><div><h2>HTML</h2></div><label class="file-button">Upload HTML<input id="upload-html" type="file" accept=".html,text/html"></label></div>
-      <div class="row tab-name-row"><input id="custom-tab-name" placeholder="Tab name" maxlength="80"><span id="editing-tab-label" class="muted">New tool</span></div>
+      <div class="row tab-name-row"><input id="custom-tab-name" placeholder="Tab name" maxlength="80"><span id="editing-tab-label" class="muted">New tab</span></div>
       <textarea id="custom-html" spellcheck="false"></textarea>
-      <div class="row"><button id="run-tab" class="primary">Preview</button><button id="save-tab">Save tool</button><button id="new-tab" class="secondary">New tool</button><button id="reset-tab" class="secondary">Reset example</button></div>
-      <pre id="tab-manager-result" class="output small">Saved tools are held locally and return after restart.</pre>
+      <div class="row"><button id="run-tab" class="primary">Preview</button><button id="save-tab">Save tab</button><button id="new-tab" class="secondary">New</button><button id="reset-tab" class="secondary">Reset example</button></div>
+      <pre id="tab-manager-result" class="output small">Saved tabs are stored locally and survive restarts.</pre>
     </article>
-    <article class="card preview-card"><h2>Preview</h2><iframe id="custom-frame" class="jacob-sdk-frame" sandbox="allow-scripts"></iframe></article>
+    <article class="card preview-card"><h2>Preview</h2><iframe id="custom-frame" class="jacob-sdk-frame" sandbox="allow-scripts allow-downloads"></iframe></article>
   </div>
-  <article class="card"><div class="card-head"><h2>Installed tools</h2><span id="saved-tab-count" class="counter">0</span></div><div id="saved-tab-list" class="saved-tab-list"></div></article>
+  <article class="card"><div class="card-head"><div><h2>Navigation manifest</h2><p class="muted">Set the order of every tab. Default pages may be taken off the navigation bar; Tab Manager remains available for recovery.</p></div></div><div id="navigation-list" class="saved-tab-list"></div><pre id="navigation-result" class="output small">Navigation changes are stored with the tab manifest.</pre></article>
+  <article class="card"><div class="card-head"><h2>Saved tabs</h2><span id="saved-tab-count" class="counter">0</span></div><div id="saved-tab-list" class="saved-tab-list"></div></article>
 </section>
 
 <div id="custom-pages"></div>
 
 <section id="tutorial" class="panel-page">
-  <div class="page-head"><div><div class="section-kicker">FIELD GUIDE</div><h1>JACoB Field Guide</h1><p>Commissioning notes for the bridge, controls, and custom tools.</p></div><a class="button-link primary" href="/docs/index.html" target="_blank" rel="noopener">Open technical library</a></div>
+  <div class="page-head"><div><div class="section-kicker">QUICK GUIDE</div><h1>Tutorial</h1><p>The shortest path from install to a useful custom tab.</p></div><a class="button-link primary" href="/docs/index.html" target="_blank" rel="noopener">Open full documentation</a></div>
   <div class="tutorial-list">
-    <article class="tutorial-step"><div class="step-no">01</div><div><h2>Establish the Elite link</h2><p>Start Elite, then JACoB. The bridge watches the active journal and Status.json. Bridge should report READY when the host checks are clear.</p></div></article>
-    <article class="tutorial-step"><div class="step-no">02</div><div><h2>Verify controls when required</h2><p>If a tool calls an unbound action, close Elite and open Settings → Elite bindings → Clone / fill unbound. JACoB creates a separate custom preset. The source preset is left unchanged.</p></div></article>
-    <article class="tutorial-step"><div class="step-no">03</div><div><h2>Install a custom tool</h2><p>Open Tab Manager, load the HTML, inspect Preview, and save it. The tool joins the main navigation and returns after restart.</p><button id="tutorial-tab-manager" class="secondary">Open Tab Manager</button></div></article>
-    <article class="tutorial-step"><div class="step-no">04</div><div><h2>Deploy HUD overlays</h2><p>Custom tabs can place text and basic geometry over Elite through the HUD interface. Every saved tab receives its own overlay layer.</p></div></article>
-    <article class="tutorial-step"><div class="step-no">05</div><div><h2>Open a secondary console</h2><p>A phone or tablet on the same network can open JACoB through a listed LAN address. Pair the browser with the token shown under Settings → LAN access.</p></div></article>
-    <article class="tutorial-step"><div class="step-no">06</div><div><h2>Build or revise a tool</h2><p>The Custom Tab Technical Reference records the complete SDK, message protocol, schemas, HUD scene format, lifecycle rules, and working examples.</p><div class="row"><a class="button-link primary" href="/docs/developer-reference.html" target="_blank" rel="noopener">Technical Reference</a><a class="button-link secondary" href="/docs/JACOB_CUSTOM_TAB_REFERENCE.md" target="_blank" rel="noopener">Markdown reference</a></div></div></article>
+    <article class="tutorial-step"><div class="step-no">01</div><div><h2>Run Elite, then JACoB</h2><p>Leave Elite running normally. JACoB watches the current journal and Status.json automatically. Home should show READY or a specific warning that needs attention.</p></div></article>
+    <article class="tutorial-step"><div class="step-no">02</div><div><h2>Check controls only if needed</h2><p>If a tab needs a command that is not bound, open Settings → Elite bindings and use Clone / fill unbound while Elite is closed. JACoB creates a separate custom preset instead of editing the source preset.</p></div></article>
+    <article class="tutorial-step"><div class="step-no">03</div><div><h2>Add a custom tab</h2><p>Open Tab Manager, paste or upload HTML, preview it, then save. Saved tabs become normal navigation tabs and persist across restarts.</p><button id="tutorial-tab-manager" class="secondary">Open Tab Manager</button></div></article>
+    <article class="tutorial-step"><div class="step-no">04</div><div><h2>Use HUD overlays</h2><p>Custom tabs can draw text and basic geometry over Elite with the overlay API. Each tab gets its own isolated layer, so several HUD tools can run together.</p></div></article>
+    <article class="tutorial-step"><div class="step-no">05</div><div><h2>Use another screen</h2><p>JACoB can be opened from a phone or tablet on the same network. Pair that browser from Settings → LAN access using the displayed token.</p></div></article>
+    <article class="tutorial-step"><div class="step-no">06</div><div><h2>Build or edit a tab</h2><p>The Custom Tab Developer Reference contains the complete SDK, message protocol, schemas, overlay scene format, lifecycle rules, and examples in one document.</p><div class="row"><a class="button-link primary" href="/docs/developer-reference.html" target="_blank" rel="noopener">Developer Reference</a><a class="button-link secondary" href="/docs/JACOB_CUSTOM_TAB_REFERENCE.md" target="_blank" rel="noopener">Plain-text reference</a></div></div></article>
   </div>
 </section>
 
 <section id="settings" class="panel-page">
-  <div class="page-head"><div><div class="section-kicker">CONFIGURATION</div><h1>Settings</h1><p>Routine settings are shown first. Engineering panels remain folded until opened.</p></div></div>
+  <div class="page-head"><div><div class="section-kicker">CONFIGURATION</div><h1>Settings</h1><p>Normal setup first. Diagnostics and low-level tools stay out of the way until you need them.</p></div></div>
 
   <div class="grid two settings-primary">
     <article class="card">
-      <div class="card-head"><div><h2>Appearance</h2><p class="muted">Load an HTML appearance file for the JACoB console.</p></div><label class="file-button">Load appearance<input id="upload-theme" type="file" accept=".html,text/html"></label></div>
-      <textarea id="theme-html" class="theme-editor" spellcheck="false" placeholder="Appearance HTML"></textarea>
-      <div class="row"><button id="save-theme" class="primary">Apply appearance</button><button id="reset-theme" class="secondary">Restore standard</button><a class="button-link secondary" href="/docs/theming.html" target="_blank" rel="noopener">Appearance format</a></div>
-      <pre id="theme-result" class="output small">Standard appearance active.</pre>
-      <details class="theme-help"><summary>Appearance file structure</summary><pre class="output small">&lt;style&gt;/* override JACoB CSS */&lt;/style&gt;
+      <div class="card-head"><div><h2>Appearance</h2><p class="muted">Upload an HTML theme to restyle the JACoB shell.</p></div><label class="file-button">Upload theme<input id="upload-theme" type="file" accept=".html,text/html"></label></div>
+      <textarea id="theme-html" class="theme-editor" spellcheck="false" placeholder="Paste theme HTML here"></textarea>
+      <div class="row"><button id="save-theme" class="primary">Apply theme</button><button id="reset-theme" class="secondary">Use default</button><a class="button-link secondary" href="/docs/theming.html" target="_blank" rel="noopener">Theme format</a></div>
+      <pre id="theme-result" class="output small">Default appearance is active.</pre>
+      <details class="theme-help"><summary>Theme file structure</summary><pre class="output small">&lt;style&gt;/* override JACoB CSS */&lt;/style&gt;
 &lt;template data-jacob-slot="brand"&gt;...&lt;/template&gt;
 &lt;template data-jacob-slot="header-extra"&gt;...&lt;/template&gt;
 &lt;template data-jacob-slot="nav-extra"&gt;...&lt;/template&gt;
@@ -106,17 +103,23 @@
     </article>
     <article class="card">
       <h2>LAN access</h2>
-      <p class="muted">Open a secondary console on the local network.</p>
+      <p class="muted">Open JACoB from another browser on the same network.</p>
       <dl class="facts"><dt>LAN</dt><dd id="lan-enabled">—</dd><dt>Addresses</dt><dd id="lan-addresses" class="mono wrap">—</dd><dt>Pair token</dt><dd id="pair-token" class="mono">—</dd></dl>
       <div class="row"><input id="remote-token" placeholder="Pair token"><button id="save-token">Pair / reconnect</button></div>
-      <pre id="network-result" class="output small">The host browser does not require a token.</pre>
+      <pre id="network-result" class="output small">Local browsers do not need a token.</pre>
+    </article>
+    <article class="card">
+      <div class="card-head"><div><h2>Software updates</h2><p class="muted">Check the project release channel and stage a newer build on this computer.</p></div></div>
+      <dl class="facts"><dt>Installed</dt><dd id="update-current">—</dd><dt>Published</dt><dd id="update-latest">Not checked</dd><dt>Channel</dt><dd class="mono">github.com/pseudo6626/JACoB</dd></dl>
+      <div class="row"><button id="check-update" class="secondary">Check for updates</button><button id="install-update" class="primary" disabled hidden>Install update</button></div>
+      <pre id="update-result" class="output small">Release channel has not been queried.</pre>
     </article>
   </div>
 
   <details class="settings-block">
     <summary>Game view</summary>
     <article class="card nested-card">
-      <div class="card-head"><div><h2>Game View</h2><p class="muted">Low-rate preview of the Elite window for local or LAN consoles.</p></div><span id="video-state" class="status-mark offline">STOPPED</span></div>
+      <div class="card-head"><div><h2>Game View</h2><p class="muted">Low-frame-rate local/LAN preview of the Elite window.</p></div><span id="video-state" class="status-mark offline">STOPPED</span></div>
       <div class="video-shell"><img id="game-view-img" alt="Elite game view"></div>
       <div class="row video-controls">
         <label>Width <select id="video-width"><option>640</option><option selected>960</option><option>1280</option></select></label>
@@ -131,11 +134,11 @@
   <details class="settings-block">
     <summary>Elite bindings</summary>
     <article class="card nested-card">
-      <div class="card-head"><div><h2>Bindings</h2><p class="muted">Inspect Elite controls or create a JACoB preset containing fallback bindings for unbound commands.</p></div><div class="row"><button id="autofill-bindings">Clone / fill unbound</button><button id="reload-bindings" class="secondary">Reload</button></div></div>
+      <div class="card-head"><div><h2>Bindings</h2><p class="muted">Inspect controls or create a JACoB copy with fallback bindings for completely unbound commands.</p></div><div class="row"><button id="autofill-bindings">Clone / fill unbound</button><button id="reload-bindings" class="secondary">Reload</button></div></div>
       <dl class="facts"><dt>Directory</dt><dd id="binding-dir" class="mono wrap">—</dd><dt>Active file</dt><dd id="binding-active" class="mono wrap">—</dd><dt>Source</dt><dd id="binding-source">—</dd><dt>Actions</dt><dd id="binding-count">—</dd><dt>Auto-fill</dt><dd id="binding-autofill">—</dd></dl>
-      <pre id="binding-health" class="output small">Diagnostics not loaded.</pre>
+      <pre id="binding-health" class="output small">No diagnostics loaded.</pre>
       <div class="row"><input id="binding-filter" placeholder="Filter actions"><select id="binding-action"></select><button id="press-binding" class="danger">Press binding</button></div>
-      <pre id="binding-detail" class="output small">Select a binding action.</pre>
+      <pre id="binding-detail" class="output small">Select an action.</pre>
     </article>
   </details>
 
@@ -146,17 +149,17 @@
         <div class="card-head"><h2>Core</h2><div class="row"><button id="ping" class="secondary">Ping</button><span id="ping-result" class="muted"></span></div></div>
         <dl class="facts"><dt>System</dt><dd id="core-os">—</dd><dt>Version</dt><dd id="core-api">—</dd><dt>Input</dt><dd id="input-driver">—</dd><dt>Capture</dt><dd id="capture-driver">—</dd><dt>Overlay</dt><dd id="overlay-driver">—</dd><dt>Journal</dt><dd id="journal-dir" class="mono wrap">—</dd><dt>Bindings</dt><dd id="bindings-file" class="mono wrap">—</dd></dl>
       </article>
-      <article class="card nested-card"><div class="card-head"><div><h2>Preflight</h2></div><button id="refresh-health" class="secondary">Refresh</button></div><pre id="health-detail" class="output small">Awaiting bridge report…</pre></article>
+      <article class="card nested-card"><div class="card-head"><div><h2>Preflight</h2></div><button id="refresh-health" class="secondary">Refresh</button></div><pre id="health-detail" class="output small">Waiting for core…</pre></article>
     </div>
     <div class="grid two nested-grid">
       <article class="card nested-card"><h2>Latest journal event: <span id="event-name" class="accent-text">Waiting…</span></h2><pre id="journal-json" class="output">{}</pre></article>
       <article class="card nested-card"><h2>Status.json</h2><pre id="status-json" class="output">{}</pre></article>
     </div>
-    <article class="card nested-card"><h2>Bridge event stream</h2><div id="stream" class="stream"></div></article>
+    <article class="card nested-card"><h2>Event stream</h2><div id="stream" class="stream"></div></article>
   </details>
 </section>
 </main>
-<div id="shutdown-screen" class="shutdown-screen" hidden><div><strong>JACoB offline</strong><span>Local bridge service has stopped. This browser tab may be closed.</span></div></div>
-<footer id="footer-slot"><span>JACoB Alpha 0.2.2</span><a href="/docs/index.html" target="_blank" rel="noopener">Technical Library</a></footer>
+<div id="shutdown-screen" class="shutdown-screen" hidden><div><strong>JACoB closed</strong><span>You can close this browser tab.</span></div></div>
+<footer id="footer-slot"><span>JACoB Alpha 0.2.4</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a></footer>
 <script src="/app.js"></script>
 </body></html>

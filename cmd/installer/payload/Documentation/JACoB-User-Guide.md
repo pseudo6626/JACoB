@@ -1,52 +1,84 @@
-# JACoB Field Guide
+# JACoB User Guide
 
-> **GALNET SERVICE NOTICE // COMMANDER SYSTEMS**  
-> Operating notes for JACoB Alpha 0.2.2.
-
-## Start sequence
+## Start
 
 1. Start Elite Dangerous.
 2. Start JACoB.
-3. On Windows, JACoB opens `http://127.0.0.1:4510/` in the default browser.
-4. Check **Home**. The bridge reports **READY**, **WARNING**, or **BLOCKED** with the current condition.
+3. JACoB opens `http://127.0.0.1:4510/` in the default browser on Windows.
+4. Home reports **READY**, **WARNING**, or **BLOCKED** with the current operational note.
 
-## Install a custom tab
+## Add a custom tab
 
 Open **Tab Manager**.
 
 1. Paste HTML or choose **Upload HTML**.
-2. Enter a tab name.
+2. Give the tab a name.
 3. Choose **Preview**.
 4. Choose **Save tab**.
 
-Saved tabs join the main navigation and return after JACoB restarts.
+The saved tab joins the navigation manifest and persists across JACoB restarts.
 
-## Control bindings
+## Arrange the navigation
 
-Custom tabs should call Elite action names such as `UI_Select` and `GalaxyMapOpen`. Physical-key calls remain available for cases that require a specific key.
+Tab Manager includes **Navigation manifest**.
 
-If an action has no usable binding, close Elite and open **Settings → Elite bindings → Clone / fill unbound**. JACoB copies the current preset to a JACoB user preset, then fills commands with empty Primary and Secondary slots. The source preset remains unchanged.
+- Use the arrow controls to move any default or custom tab.
+- Home, Tutorial and Settings may be hidden from the navigation bar.
+- Tab Manager remains visible as the recovery point.
+- Hidden default pages keep their settings and may be restored at any time.
 
-During execution, JACoB uses an injectable Secondary keyboard binding first. Primary is used when no suitable Secondary exists.
+The manifest is stored with the saved-tab data and is shared by browsers connected to the same JACoB instance.
 
-## Phone or tablet console
+## Updates
 
-Open **Settings → LAN access**. Use one of the listed LAN addresses on the second device, enter the pairing token, and reconnect.
+Open **Settings → Software updates** and choose **Check for updates**.
+
+JACoB reads the public releases from the project GitHub repository. If a newer release has a matching package, **Install update** becomes available on the host browser.
+
+On Windows, JACoB downloads the newer setup package, closes the running core, updates the existing installation, and relaunches. A manually downloaded newer setup also detects the installed release and offers an in-place update.
+
+On Linux / Steam Deck, JACoB can replace the running binary when the executable location is writable. If the location cannot be changed by the current user, use the published release asset manually.
+
+## Bindings
+
+Most tabs should use Elite action names such as `UI_Select` or `GalaxyMapOpen` rather than hard-coded physical keys.
+
+If a needed command has no binding, close Elite and open **Settings → Elite bindings → Clone / fill unbound**. JACoB copies the current preset into a JACoB user preset and fills only commands where both Primary and Secondary are empty.
+
+JACoB prefers Secondary keyboard bindings when executing commands and falls back to Primary when no injectable Secondary exists.
+
+## Phone or tablet
+
+Open **Settings → LAN access**.
+
+Use one of the shown LAN addresses from the other device. Enter the pairing token in that browser and reconnect.
+
+Software installation is restricted to a browser running on the host computer.
 
 ## HUD overlays
 
-Custom tabs may draw text, lines, polylines, polygons, rectangles, and circles over Elite. Each tab receives its own overlay layer. Track maps, race markers, navigation cues, and other HUD logic stay inside the tab.
+A custom tab can draw text, lines, polylines, polygons, rectangles, and circles over Elite. The overlay logic belongs in the tab. JACoB supplies the native transparent overlay surface.
+
+## File exports
+
+Custom tabs can hand generated files to the browser. Track recordings, JSON exports and other tab-owned data use the ordinary browser download destination. The sandbox does not grant general filesystem access.
+
+## Public API access
+
+Custom tabs can make bounded `GET` and `POST` requests to public HTTP/HTTPS APIs through JACoB. This is useful for services such as Spansh where browser CORS rules may otherwise block a sandboxed tab.
+
+Localhost, LAN/private addresses, link-local addresses, local hostnames and non-standard ports are refused by the network bridge.
 
 ## Action Recorder
 
-The Windows installer offers the Action Recorder as an optional component. When installed, a recorder tab may capture keyboard actions and timing while recording is armed and Elite is the foreground window.
+The Windows installer offers the Action Recorder as an optional component. If installed, a custom recorder tab can capture keyboard actions and timing while recording is explicitly active and Elite is foreground.
 
-## Technical library
+## Documentation
 
-- **Custom Tab Developer Reference** — complete SDK, schemas, events, input, overlays, video, recorder, storage, WebSocket protocol, and examples.
-- **Theming** — host appearance file format.
-- **Compatibility** — current Windows and Steam Deck/Linux capability notes.
+- **Custom Tab Developer Reference:** complete SDK, schemas, runtime rules, overlays, input, events, video, recorder, downloads, public API requests, WebSocket protocol, and examples.
+- **Theming:** host appearance file format.
+- **Compatibility:** current Windows and Steam Deck/Linux behavior.
 
-## Shutdown
+## Closing JACoB
 
-Use **Quit JACoB** at the upper-right of the host console. The local service closes cleanly. Saved tabs and settings remain on disk. LAN clients do not receive the quit control.
+Use **Quit JACoB** in the top-right corner of the web app on the host computer. JACoB stops the local service cleanly and leaves saved tabs and settings untouched. The quit control is unavailable to LAN clients.

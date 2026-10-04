@@ -1,17 +1,21 @@
-# JACoB Compatibility Report
+# JACoB compatibility
 
-
-
-JACoB keeps host-specific input, capture, recorder, and overlay code behind platform adapters. Custom tabs use the same SDK on supported systems.
+JACoB keeps platform-specific input, capture, recorder, overlay, and update work behind adapters so custom tabs can use one SDK on Windows and Steam Deck/Linux.
 
 ## Windows
 
-The standard alpha build targets current Windows systems capable of running the current Elite Dangerous client. Input uses scan-code `SendInput`. HUD output uses a native layered window. Game View uses a compatibility capture path.
+The normal alpha build targets current Windows systems capable of running the current Elite client. Input uses scan-code `SendInput`; the overlay uses a native layered window; video uses a compatibility capture path.
 
-A separate Windows build can be produced without the Action Recorder component.
+The installer is per-user and supports in-place updates. The in-app updater stages the published Windows setup asset and hands control to that installer after the running JACoB process closes.
 
 ## Steam Deck / Linux
 
-The Linux build shares the browser console, tab runtime, journal/status handling, binding parser, storage model, and overlay scene protocol. Input uses `/dev/uinput` when available. HUD output uses the Gamescope/XWayland external-overlay path when available.
+The Linux build shares the same web UI, custom-tab runtime, journal/status handling, binding parser, network bridge, file-export helpers, and overlay scene protocol. Input uses `/dev/uinput` when available. The overlay uses the Gamescope/XWayland external-overlay path when available.
 
-Optional platform features report availability through their SDK capability calls. An unavailable optional driver does not stop the remaining bridge services.
+The Linux updater can replace the current executable only when the containing directory is writable by the current user.
+
+## Public web APIs
+
+`Elite.net.fetch` behaves the same on supported platforms. Requests leave from the computer running JACoB rather than from the browser. Public HTTP/HTTPS targets on standard ports are available; local/private network targets are refused.
+
+Optional platform features report capability through the SDK rather than preventing the rest of JACoB from starting.

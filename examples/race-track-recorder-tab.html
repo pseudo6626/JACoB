@@ -1,0 +1,106 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JACoB Race Track Recorder</title>
+<style>
+:root{--bg:#07090a;--panel:#101416;--panel2:#0b0e10;--line:#3c454a;--orange:#ff8a1f;--amber:#ffb347;--text:#e8ecee;--muted:#8e989d;--good:#63e889;--bad:#ff5a4f}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:920px;margin:0 auto;padding:18px}.mast{border-top:3px solid var(--orange);border-bottom:1px solid var(--line);padding:12px 0 10px;margin-bottom:14px;display:flex;justify-content:space-between;gap:12px;align-items:end}.mast h1{font-size:22px;letter-spacing:.08em;margin:0}.eyebrow{font:11px ui-monospace,Consolas,monospace;letter-spacing:.14em;color:var(--orange);text-transform:uppercase}.state{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.panel{background:var(--panel);border:1px solid var(--line);padding:14px}.panel.wide{grid-column:1/-1}h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin:0 0 12px;color:var(--amber)}label{display:block;color:var(--muted);font-size:12px;margin-bottom:10px}input[type=text],input[type=number],textarea{width:100%;margin-top:5px;background:#050708;color:var(--text);border:1px solid #4a555b;padding:9px;font:13px ui-monospace,Consolas,monospace;outline:none}input:focus,textarea:focus{border-color:var(--orange)}.check{display:flex;gap:8px;align-items:flex-start;color:var(--text)}.check input{margin-top:3px}.controls{display:flex;gap:8px;flex-wrap:wrap}.btn{background:#171d20;color:var(--text);border:1px solid #59656b;padding:9px 13px;cursor:pointer;font:600 12px system-ui;text-transform:uppercase;letter-spacing:.06em}.btn.primary{border-color:var(--orange);color:#ffd0a0}.btn.danger{border-color:var(--bad)}.btn:disabled{opacity:.38;cursor:default}.stats{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line)}.stat{padding:10px;border-right:1px solid var(--line);min-width:0}.stat:last-child{border-right:0}.stat b{display:block;font:18px ui-monospace,Consolas,monospace;color:#fff;overflow:hidden;text-overflow:ellipsis}.stat span{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}.notice{margin-top:12px;padding:10px;border-left:3px solid var(--orange);background:#0b0d0e;color:#cbd1d4}.notice.good{border-color:var(--good)}.notice.bad{border-color:var(--bad)}textarea{height:190px;resize:vertical}.log{height:110px;overflow:auto;background:#050708;border:1px solid #2f373b;padding:8px;white-space:pre-wrap;font:11px ui-monospace,Consolas,monospace;color:#adb6ba}.fileline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}.fileline code{color:var(--amber)}@media(max-width:700px){main{padding:10px}.grid{grid-template-columns:1fr}.panel.wide{grid-column:auto}.stats{grid-template-columns:1fr 1fr}.stat:nth-child(2){border-right:0}.stat:nth-child(-n+2){border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<main>
+  <header class="mast">
+    <div><div class="eyebrow">Pilots Federation // Course Survey</div><h1>RACE TRACK RECORDER</h1></div>
+    <div id="state" class="state">SURVEY STANDBY</div>
+  </header>
+
+  <section class="grid">
+    <article class="panel">
+      <h2>Course record</h2>
+      <label>Track designation
+        <input id="trackName" type="text" value="Untitled Course" maxlength="80">
+      </label>
+      <label>Course radius — maximum permitted distance from the surveyed line (m)
+        <input id="radius" type="number" value="75" min="1" max="10000" step="1">
+      </label>
+      <label class="check"><input id="altitude" type="checkbox"><span>Include altitude in the course line and off-course distance.</span></label>
+      <div class="controls">
+        <button id="start" class="btn primary">Begin survey</button>
+        <button id="stop" class="btn danger" disabled>End survey</button>
+        <button id="reset" class="btn">Reset</button>
+      </div>
+    </article>
+
+    <article class="panel">
+      <h2>Live survey</h2>
+      <div class="stats">
+        <div class="stat"><b id="samples">0</b><span>Samples</span></div>
+        <div class="stat"><b id="length">0 m</b><span>Route</span></div>
+        <div class="stat"><b id="gap">—</b><span>Max gap</span></div>
+        <div class="stat"><b id="rate">—</b><span>Feed</span></div>
+      </div>
+      <div id="body" class="notice">Waiting for planetary position data.</div>
+    </article>
+
+    <article class="panel wide">
+      <h2>Survey instructions</h2>
+      <div class="notice">Move to the intended start line, begin the survey, then fly the course in race direction. End the survey at the finish line. The first recorded point becomes the start; the final point becomes the finish.</div>
+      <div id="quality" class="notice">No survey on record.</div>
+    </article>
+
+    <article class="panel wide">
+      <h2>Course file</h2>
+      <textarea id="fileOut" readonly spellcheck="false" placeholder="Completed survey data will appear here."></textarea>
+      <div class="fileline">
+        <button id="download" class="btn primary" disabled>Download track file</button>
+        <button id="copy" class="btn" disabled>Copy track file</button>
+        <code id="filename"></code>
+        <span class="muted">Direct file export requires JACoB Alpha 0.2.3 or later.</span>
+      </div>
+    </article>
+
+    <article class="panel wide">
+      <h2>Field log</h2>
+      <div id="log" class="log"></div>
+    </article>
+  </section>
+</main>
+<script>
+(()=>{
+'use strict';
+const $=s=>document.querySelector(s);
+const ui={state:$('#state'),name:$('#trackName'),radius:$('#radius'),alt:$('#altitude'),start:$('#start'),stop:$('#stop'),reset:$('#reset'),samples:$('#samples'),length:$('#length'),gap:$('#gap'),rate:$('#rate'),body:$('#body'),quality:$('#quality'),out:$('#fileOut'),download:$('#download'),copy:$('#copy'),filename:$('#filename'),log:$('#log')};
+const RAD=Math.PI/180;
+let recording=false, origin=null, bodyName='', planetR=0, raw=[], receiptTimes=[], fileText='', fileName='', abortReason='';
+
+function log(s){const t=new Date().toLocaleTimeString();ui.log.textContent+=`[${t}] ${s}\n`;ui.log.scrollTop=ui.log.scrollHeight}
+function fmtM(m){if(!Number.isFinite(m))return '—';return m>=1000?`${(m/1000).toFixed(m>=10000?1:2)} km`:`${m.toFixed(m<100?1:0)} m`}
+function safeName(s){return (s||'course').trim().replace(/[^a-z0-9._-]+/gi,'-').replace(/^-+|-+$/g,'').slice(0,64)||'course'}
+function wrapLon(d){return ((d+540)%360)-180}
+function statusOkay(s,needAlt){return s&&Number.isFinite(s.Latitude)&&Number.isFinite(s.Longitude)&&Number.isFinite(s.PlanetRadius)&&s.PlanetRadius>0&&(!needAlt||Number.isFinite(s.Altitude))}
+function localFromStatus(s){const dLat=(s.Latitude-origin.lat)*RAD,dLon=wrapLon(s.Longitude-origin.lon)*RAD;return {e:dLon*planetR*Math.cos(origin.lat*RAD),n:dLat*planetR,u:origin.useAlt?(Number(s.Altitude)-origin.alt):0}}
+function d3(a,b,useAlt=origin?.useAlt){const de=b.e-a.e,dn=b.n-a.n,du=useAlt?(b.u-a.u):0;return Math.hypot(de,dn,du)}
+function routeLength(points,useAlt){let x=0;for(let i=1;i<points.length;i++)x+=d3(points[i-1],points[i],useAlt);return x}
+function percentile(a,p){if(!a.length)return 0;const b=[...a].sort((x,y)=>x-y);return b[Math.min(b.length-1,Math.floor((b.length-1)*p))]}
+function pointSegmentDistance(p,a,b,useAlt){const ab={e:b.e-a.e,n:b.n-a.n,u:useAlt?b.u-a.u:0},ap={e:p.e-a.e,n:p.n-a.n,u:useAlt?p.u-a.u:0};const den=ab.e*ab.e+ab.n*ab.n+ab.u*ab.u;if(den<1e-12)return Math.hypot(ap.e,ap.n,ap.u);let t=(ap.e*ab.e+ap.n*ab.n+ap.u*ab.u)/den;t=Math.max(0,Math.min(1,t));return Math.hypot(ap.e-ab.e*t,ap.n-ab.n*t,ap.u-ab.u*t)}
+function rdp(points,eps,useAlt){if(points.length<=2)return points.slice();let max=-1,idx=-1;const a=points[0],b=points[points.length-1];for(let i=1;i<points.length-1;i++){const d=pointSegmentDistance(points[i],a,b,useAlt);if(d>max){max=d;idx=i}}if(max>eps){const l=rdp(points.slice(0,idx+1),eps,useAlt),r=rdp(points.slice(idx),eps,useAlt);return l.slice(0,-1).concat(r)}return [a,b]}
+function headingOf(a,b){const de=b.e-a.e,dn=b.n-a.n;return (Math.atan2(de,dn)/RAD+360)%360}
+function setState(s){ui.state.textContent=s}
+function liveStats(){ui.samples.textContent=raw.length;ui.length.textContent=fmtM(routeLength(raw,origin?.useAlt));const gaps=[];for(let i=1;i<raw.length;i++)gaps.push(d3(raw[i-1],raw[i],origin?.useAlt));ui.gap.textContent=gaps.length?fmtM(Math.max(...gaps)):'—';if(receiptTimes.length>2){const span=(receiptTimes.at(-1)-receiptTimes[0])/1000;ui.rate.textContent=span>0?`${((receiptTimes.length-1)/span).toFixed(1)} Hz`:'—'}else ui.rate.textContent='—'}
+function updateBody(s){if(statusOkay(s,false)){ui.body.className='notice good';ui.body.textContent=`${s.BodyName||'PLANETARY BODY'} // radius ${fmtM(Number(s.PlanetRadius))} // lat ${Number(s.Latitude).toFixed(6)} // lon ${Number(s.Longitude).toFixed(6)}${Number.isFinite(s.Altitude)?` // alt ${fmtM(Number(s.Altitude))}`:''}`}else{ui.body.className='notice bad';ui.body.textContent='Planetary latitude/longitude and body radius are required.'}}
+function addSample(s,force=false){if(!recording)return;if(!statusOkay(s,origin.useAlt))return;if(bodyName&&s.BodyName&&s.BodyName!==bodyName){abortReason=`Body changed from ${bodyName} to ${s.BodyName}. Survey halted.`;recording=false;ui.stop.disabled=true;ui.start.disabled=false;setState('SURVEY HALTED');ui.quality.className='notice bad';ui.quality.textContent=abortReason;log(abortReason);return}const p=localFromStatus(s);p.received=performance.now();p.statusTime=s.timestamp||'';const last=raw.at(-1);if(!force&&last&&d3(last,p,origin.useAlt)<0.25)return;raw.push(p);receiptTimes.push(p.received);liveStats()}
+async function begin(){try{const r=Math.max(1,Number(ui.radius.value)||0),snap=await Elite.state.get(),s=snap.status||{};if(!statusOkay(s,ui.alt.checked)){throw new Error(ui.alt.checked?'Altitude, latitude, longitude and PlanetRadius are required before survey start.':'Latitude, longitude and PlanetRadius are required before survey start.')}planetR=Number(s.PlanetRadius);bodyName=s.BodyName||'';origin={lat:Number(s.Latitude),lon:Number(s.Longitude),alt:Number.isFinite(s.Altitude)?Number(s.Altitude):0,useAlt:!!ui.alt.checked};raw=[];receiptTimes=[];fileText='';fileName='';abortReason='';ui.out.value='';ui.filename.textContent='';ui.download.disabled=true;ui.copy.disabled=true;recording=true;ui.start.disabled=true;ui.stop.disabled=false;ui.reset.disabled=true;ui.name.disabled=true;ui.radius.disabled=true;ui.alt.disabled=true;setState('SURVEY ACTIVE');ui.quality.className='notice';ui.quality.textContent=`Course radius ${fmtM(r)}. Position feed armed.`;addSample(s,true);log(`Survey started on ${bodyName||'unnamed body'}; altitude ${origin.useAlt?'included':'ignored'}.`)}catch(e){setState('SURVEY BLOCKED');ui.quality.className='notice bad';ui.quality.textContent=e.message||String(e);log(`BLOCKED: ${e.message||e}`)}}
+async function finish(){if(!recording&&abortReason)return;try{const snap=await Elite.state.get();if(recording)addSample(snap.status||{},false)}catch{}recording=false;ui.stop.disabled=true;ui.start.disabled=false;ui.reset.disabled=false;ui.name.disabled=false;ui.radius.disabled=false;ui.alt.disabled=false;if(raw.length<3){setState('SURVEY INCOMPLETE');ui.quality.className='notice bad';ui.quality.textContent='At least three distinct position samples are required.';log('Survey ended without enough route data.');return}const radius=Math.max(1,Number(ui.radius.value)||75);const eps=Math.max(.25,Math.min(2,radius*.03));const clean=rdp(raw,eps,origin.useAlt);const len=routeLength(clean,origin.useAlt);const gaps=[];for(let i=1;i<raw.length;i++)gaps.push(d3(raw[i-1],raw[i],origin.useAlt));const dts=[];for(let i=1;i<receiptTimes.length;i++)dts.push((receiptTimes[i]-receiptTimes[i-1])/1000);const maxGap=gaps.length?Math.max(...gaps):0,p95Gap=percentile(gaps,.95),meanDt=dts.length?dts.reduce((a,b)=>a+b,0)/dts.length:0;const h0=clean.length>1?headingOf(clean[0],clean[1]):0,h1=clean.length>1?headingOf(clean.at(-2),clean.at(-1)):h0;const pts=clean.map(p=>origin.useAlt?[Math.round(p.e*10),Math.round(p.n*10),Math.round(p.u*10)]:[Math.round(p.e*10),Math.round(p.n*10)]);const track={fmt:'jacob-race-track',v:1,name:(ui.name.value||'Untitled Course').trim(),body:bodyName,R:Math.round(planetR*100)/100,alt:origin.useAlt?1:0,radius:Math.round(radius*10)/10,o:origin.useAlt?[+origin.lat.toFixed(7),+origin.lon.toFixed(7),Math.round(origin.alt*10)/10]:[+origin.lat.toFixed(7),+origin.lon.toFixed(7)],p:pts,len:Math.round(len*10)/10,h0:Math.round(h0*10)/10,h1:Math.round(h1*10)/10,q:{raw:raw.length,pts:clean.length,maxGap:Math.round(maxGap*10)/10,p95Gap:Math.round(p95Gap*10)/10,meanDt:+meanDt.toFixed(2)},created:new Date().toISOString()};fileText=JSON.stringify(track);fileName=`${safeName(track.name)}.jacobtrack.json`;ui.out.value=fileText;ui.filename.textContent=fileName;ui.download.disabled=false;ui.copy.disabled=false;setState('SURVEY FILE READY');const ratio=radius>0?p95Gap/radius:Infinity;if(ratio>1){ui.quality.className='notice bad';ui.quality.textContent=`Telemetry spacing exceeds the course radius. P95 sample gap ${fmtM(p95Gap)}; course radius ${fmtM(radius)}. Tight bends may be undersampled.`}else if(ratio>.5){ui.quality.className='notice';ui.quality.textContent=`Survey complete. P95 sample gap ${fmtM(p95Gap)}. Review tight sections before distribution.`}else{ui.quality.className='notice good';ui.quality.textContent=`Survey complete. ${clean.length} route points, ${fmtM(len)} total length, P95 sample gap ${fmtM(p95Gap)}.`}log(`Survey complete: ${raw.length} raw samples reduced to ${clean.length}; route ${fmtM(len)}.`)}
+function reset(){recording=false;origin=null;bodyName='';planetR=0;raw=[];receiptTimes=[];fileText='';fileName='';abortReason='';ui.samples.textContent='0';ui.length.textContent='0 m';ui.gap.textContent='—';ui.rate.textContent='—';ui.out.value='';ui.filename.textContent='';ui.download.disabled=true;ui.copy.disabled=true;ui.start.disabled=false;ui.stop.disabled=true;ui.reset.disabled=false;ui.name.disabled=false;ui.radius.disabled=false;ui.alt.disabled=false;ui.quality.className='notice';ui.quality.textContent='No survey on record.';setState('SURVEY STANDBY');log('Survey buffer cleared.')}
+function download(){if(!fileText)return;const name=fileName||'course.jacobtrack.json';try{const blob=new Blob([fileText],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.rel='noopener';a.style.display='none';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(url);a.remove()},5000);log(`Track file handed to browser: ${name}`)}catch(e){log(`FILE EXPORT FAILED // ${e.message||e}`);ui.out.focus();ui.out.select()}}
+async function copy(){if(!fileText)return;try{await navigator.clipboard.writeText(fileText);log('Track file copied to clipboard.');return}catch{}ui.out.focus();ui.out.select();try{document.execCommand('copy');log('Track file copied to clipboard.')}catch{log('Clipboard access unavailable. Select the course file text and copy it manually.')}}
+ui.start.onclick=begin;ui.stop.onclick=finish;ui.reset.onclick=reset;ui.download.onclick=download;ui.copy.onclick=copy;
+Elite.state.subscribe(s=>{updateBody(s);addSample(s)});
+Elite.state.get().then(x=>updateBody(x.status||{})).catch(e=>{ui.body.className='notice bad';ui.body.textContent=`STATE FEED ERROR // ${e.message||e}`});
+log('Course survey station ready.');
+})();
+</script>
+</body>
+</html>
