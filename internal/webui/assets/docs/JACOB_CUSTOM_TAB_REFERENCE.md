@@ -1,7 +1,7 @@
 # JACoB Custom Tab Developer Reference
 
 Version: Alpha 0.2.8  
-SDK version: 5
+SDK version: 6
 
 This is the canonical reference for building JACoB custom HTML tabs. It describes the tab runtime, the browser SDK, the direct WebSocket protocol, state and event shapes, input behavior, overlays, video, recorder support, persistence, security boundaries, and platform limitations.
 
@@ -131,6 +131,7 @@ Elite.video
 Elite.net
 Elite.data
 Elite.store
+Elite.locale
 Elite.files
 Elite.events
 Elite.journal
@@ -139,7 +140,7 @@ Elite.journal
 The current SDK version is:
 
 ```js
-Elite.api.version === 5
+Elite.api.version === 6
 ```
 
 All command methods return Promises.
@@ -402,6 +403,7 @@ eliteFile
 journal
 tabs.changed
 appearance.changed
+locale.changed
 recorder.input
 core.update
 ```
@@ -1063,7 +1065,55 @@ await Elite.store.clear();
 
 ---
 
-## 11. Timing and sequencing patterns
+## 11. Language and localization
+
+JACoB has one host-level language setting shared by every connected browser. SDK v6 exposes that locale to saved custom tabs through `Elite.locale`.
+
+Supported locale codes are:
+
+```text
+en	ru	de	fr	zh-CN	es
+```
+
+Read the current locale:
+
+```js
+console.log(Elite.locale.language);
+console.log(Elite.locale.supported);
+
+const info = await Elite.locale.get();
+```
+
+React immediately when the user changes language in JACoB Settings:
+
+```js
+const off = Elite.locale.subscribe(info => {
+  document.documentElement.lang = info.language;
+  render();
+});
+```
+
+`Elite.locale.subscribe()` calls the callback once with the tab's current locale and then again for each `locale.changed` event.
+
+Tabs keep their own translations. `Elite.locale.t()` supplies current-language selection, English fallback, and `{name}`-style interpolation:
+
+```js
+const strings = {
+  en: { load: 'Load {count} orders', ready: 'Ready' },
+  de: { load: '{count} Aufträge laden', ready: 'Bereit' },
+  es: { load: 'Cargar {count} órdenes', ready: 'Listo' }
+};
+
+button.textContent = Elite.locale.t(strings, 'load', { count: 12 });
+```
+
+If the active language or requested key is absent, `Elite.locale.t()` falls back to the English entry and then to the key itself. Existing tabs that do not use `Elite.locale` continue to work unchanged and remain in whatever language their HTML contains.
+
+The global language is changed through the JACoB Settings UI. `locale.save` exists in the direct host protocol, while sandboxed custom tabs receive read-only locale access through `Elite.locale`.
+
+---
+
+## 12. Timing and sequencing patterns
 
 JACoB does not include a procedure engine. Build sequences inside the custom tab.
 
@@ -1144,7 +1194,7 @@ function stop() {
 
 ---
 
-## 12. Appearance/theme files
+## 13. Appearance/theme files
 
 A JACoB shell theme is an HTML file uploaded under **Settings → Appearance**.
 
@@ -1183,7 +1233,7 @@ The selected theme is persisted by the core and is shared by browsers opening th
 
 ---
 
-## 13. Direct WebSocket protocol
+## 14. Direct WebSocket protocol
 
 Most custom tabs should use the injected SDK. The direct protocol is documented for external clients and debugging.
 
@@ -1259,6 +1309,8 @@ core.ping
 core.shutdown
 state.get
 system.health
+locale.get
+locale.save
 update.check
 update.install
 appearance.get
@@ -1299,15 +1351,15 @@ tabstate.delete
 tabstate.clear
 ```
 
-`core.shutdown`, `update.check`, `update.install`, tab-layout storage, and appearance storage are host/UI concerns. `update.install` is additionally limited to a loopback browser.
+`core.shutdown`, `update.check`, `update.install`, tab-layout storage, appearance storage, and changing the global locale are host/UI concerns. `update.install` is additionally limited to a loopback browser.
 
 `core.shutdown` is host-UI only and is accepted only from a loopback browser. It is not exposed through the custom-tab SDK.
 
-The sandbox SDK exposes the game-facing primitives, `net.fetch`, read-only Elite companion-file access through `Elite.data`, and the saved-tab-scoped `Elite.store` interface. Navigation layout, update installation, shutdown, and appearance management remain host/UI concerns. `Elite.files` is implemented inside the injected SDK and does not require a WebSocket method.
+The sandbox SDK exposes the game-facing primitives, `net.fetch`, read-only Elite companion-file access through `Elite.data`, and the saved-tab-scoped `Elite.store` interface. Navigation layout, update installation, shutdown, appearance management, and changing the global locale remain host/UI concerns. `Elite.files` is implemented inside the injected SDK and does not require a WebSocket method.
 
 ---
 
-## 14. HTTP media endpoints
+## 15. HTTP media endpoints
 
 Snapshot:
 
@@ -1325,7 +1377,7 @@ LAN requests must include the pairing token query parameter.
 
 ---
 
-## 15. Core hello structure
+## 16. Core hello structure
 
 When a browser connects, the host receives `core.hello`. Custom tabs receive it through the generic event bridge.
 
@@ -1337,7 +1389,7 @@ Representative shape:
   "version": "0.2.8-alpha",
   "product": "JACoB",
   "name": "Journal Aligned Control Bridge",
-  "apiVersion": 5,
+  "apiVersion": 6,
   "os": "windows",
   "arch": "amd64",
   "goRuntime": "go1.x",
@@ -1360,13 +1412,24 @@ Representative shape:
   "lan": {},
   "health": {},
   "appearance": {},
+  "locale": {
+    "language": "en",
+    "supported": [
+      {"code":"en","name":"English","nativeName":"English"},
+      {"code":"ru","name":"Russian","nativeName":"Русский"},
+      {"code":"de","name":"German","nativeName":"Deutsch"},
+      {"code":"fr","name":"French","nativeName":"Français"},
+      {"code":"zh-CN","name":"Simplified Chinese","nativeName":"简体中文"},
+      {"code":"es","name":"Spanish","nativeName":"Español"}
+    ]
+  },
   "customTabs": {}
 }
 ```
 
 ---
 
-## 16. Common error codes
+## 17. Common error codes
 
 The exact set can grow, but tabs should be prepared for at least:
 
@@ -1410,7 +1473,7 @@ Do not depend on error message wording. Use `error.code` for branching.
 
 ---
 
-## 17. Security and trust boundaries
+## 18. Security and trust boundaries
 
 Custom tabs:
 
@@ -1445,7 +1508,7 @@ LAN clients require the pairing token for WebSocket and video access.
 
 `Elite.net.fetch` is an outbound public-network bridge. JACoB rejects loopback, private/LAN, link-local and local-name destinations so a custom tab cannot use the bridge to probe services on the host or local network. Public API access still gives the tab a route to transmit data off the computer; treat third-party tabs accordingly.
 
-## 18. Platform capability summary
+## 19. Platform capability summary
 
 ### Windows
 
@@ -1494,7 +1557,7 @@ if (!recorder.available) {
 
 ---
 
-## 19. JSON schemas
+## 20. JSON schemas
 
 The release package contains machine-readable schemas under:
 
@@ -1656,7 +1719,7 @@ For exact machine-readable schemas, use the files in `docs/schemas/` shipped wit
 
 ---
 
-## 20. Complete custom-tab starter
+## 21. Complete custom-tab starter
 
 ```html
 <!doctype html>
@@ -1752,7 +1815,7 @@ Elite.state.subscribe(status => {
 
 ---
 
-## 21. Design guidance for durable tabs
+## 22. Design guidance for durable tabs
 
 - Prefer semantic Elite bindings over raw keys when the action name is known.
 - Use raw keys only when the physical key itself is part of the interaction.

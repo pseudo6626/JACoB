@@ -28,6 +28,7 @@ import (
 	"jacob/internal/control"
 	"jacob/internal/customtabs"
 	"jacob/internal/journal"
+	"jacob/internal/localization"
 	"jacob/internal/platform"
 	"jacob/internal/tabstate"
 	"jacob/internal/updater"
@@ -59,6 +60,7 @@ type Server struct {
 	tabs          *customtabs.Store
 	tabState      *tabstate.Store
 	appearance    *appearance.Store
+	locale        *localization.Store
 	updater       *updater.Client
 	webfetch      *webfetch.Client
 	clientsMu     sync.RWMutex
@@ -92,6 +94,13 @@ func New(cfg Config) *Server {
 		cfg.PairToken = randomToken()
 	}
 	s := &Server{cfg: cfg, input: platform.NewInputDriver(), recorder: platform.NewInputRecorder(), capture: platform.NewCaptureDriver(), overlay: platform.NewOverlayDriver(), updater: updater.New(), webfetch: webfetch.New(), clients: map[*wsClient]struct{}{}, started: time.Now(), shutdown: make(chan struct{})}
+	localeStore, localeErr := localization.New(cfg.DataDir)
+	if localeErr != nil {
+		log.Printf("JACoB locale store unavailable: %v", localeErr)
+	} else {
+		s.locale = localeStore
+		log.Printf("Locale store: %s", localeStore.Path())
+	}
 	themeStore, themeErr := appearance.New(cfg.DataDir)
 	if themeErr != nil {
 		log.Printf("JACoB appearance store unavailable: %v", themeErr)
@@ -299,6 +308,25 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		s.sendResult(c, req.ID, map[string]any{"events": events, "info": info})
 	case "system.health":
 		s.sendResult(c, req.ID, s.healthReport())
+	case "locale.get":
+		if s.locale == nil {
+			s.sendResult(c, req.ID, map[string]any{"language": localization.DefaultLanguage, "supported": localization.Supported()})
+			return
+		}
+		s.sendResult(c, req.ID, s.locale.Info())
+	case "locale.save":
+		if s.locale == nil {
+			_ = s.sendError(c, req.ID, "LOCALE_UNAVAILABLE", "language storage is unavailable")
+			return
+		}
+		language, _ := req.Params["language"].(string)
+		if err := s.locale.Set(language); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_LANGUAGE", err.Error())
+			return
+		}
+		info := s.locale.Info()
+		s.sendResult(c, req.ID, info)
+		s.broadcast(envelope{Type: "event", Event: "locale.changed", Data: info})
 	case "appearance.get":
 		if s.appearance == nil {
 			s.sendResult(c, req.ID, map[string]any{"html": "", "custom": false})
@@ -825,14 +853,20 @@ func (s *Server) systemInfo(includeSecret bool) map[string]any {
 		}
 	}
 	return map[string]any{
-		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 5, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()),
+		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 6, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()),
 		"journalDir": s.cfg.JournalDir, "bindingsDir": s.bindings.Directory(), "bindingsFile": s.bindings.ActiveFile(), "bindingsFiles": s.bindings.ActiveFiles(), "bindingsSource": s.bindings.ActiveSource(), "bindingsCount": len(s.bindings.ListActions()), "autoBind": s.autoBind,
 		"input": map[string]any{"enabled": s.cfg.EnableInput, "available": s.input.Available(), "driver": s.input.Name()}, "recorder": s.recorder.Status(), "capture": map[string]any{"available": s.capture.Available(), "driver": s.capture.Name()}, "overlay": s.overlay.Info(), "lan": lan,
 		"health":      s.healthReport(),
 		"localClient": includeSecret,
 		"appearance":  map[string]any{"available": s.appearance != nil, "custom": s.appearance != nil && strings.TrimSpace(s.appearance.Get()) != ""},
-		"updates":     map[string]any{"repository": buildinfo.Repository, "checkAvailable": true, "installAvailable": runtime.GOOS == "windows" || runtime.GOOS == "linux"},
-		"network":     map[string]any{"fetchAvailable": s.webfetch != nil, "publicHTTPOnly": true},
+		"locale": func() map[string]any {
+			if s.locale != nil {
+				return s.locale.Info()
+			}
+			return map[string]any{"language": localization.DefaultLanguage, "supported": localization.Supported()}
+		}(),
+		"updates": map[string]any{"repository": buildinfo.Repository, "checkAvailable": true, "installAvailable": runtime.GOOS == "windows" || runtime.GOOS == "linux"},
+		"network": map[string]any{"fetchAvailable": s.webfetch != nil, "publicHTTPOnly": true},
 		"customTabs": map[string]any{"available": s.tabs != nil, "directory": func() string {
 			if s.tabs != nil {
 				return s.tabs.Directory()

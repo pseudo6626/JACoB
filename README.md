@@ -30,7 +30,7 @@ The standard console carries:
 - **Custom tabs** — installed user tools
 - **Tab Manager** — install, edit, preview, remove, reorder, and manage navigation visibility
 - **Tutorial** — first-run operating notes
-- **Settings** — appearance, LAN access, software updates, bindings, capture, and diagnostics
+- **Settings** — language, appearance, LAN access, software updates, bindings, capture, and diagnostics
 
 Home, Tutorial, and Settings may be removed from the navigation bar through Tab Manager. Tab Manager remains present as the recovery point.
 
@@ -46,13 +46,14 @@ The full custom-tab contract is recorded in:
 
 [`docs/JACOB_CUSTOM_TAB_REFERENCE.md`](docs/JACOB_CUSTOM_TAB_REFERENCE.md)
 
-SDK / protocol version **5** provides:
+SDK / protocol version **6** provides:
 
 - `Elite.files.download()` and `Elite.files.json()` for browser file exports
 - `Elite.net.fetch()` for bounded `GET` and `POST` requests to public HTTP/HTTPS APIs
 - `Elite.data` for read-only access to Elite companion snapshots such as cargo, plotted route, modules, station services, Odyssey inventories, and Fleet Carrier material listings
 - `Elite.journal.files()` / `Elite.journal.read()` for bounded, paged access to journal-session history
 - `Elite.bindings.down()` / `Elite.bindings.up()` for cancelable continuous semantic holds without resetting Elite key-repeat acceleration
+- `Elite.locale` for the host-wide language setting, locale-change events, translation fallback, and interpolation in locale-aware custom tabs
 
 The network bridge refuses loopback, LAN/private, link-local and local-name targets. It is suitable for public services such as Spansh without requiring those services to permit the sandboxed browser origin through CORS.
 

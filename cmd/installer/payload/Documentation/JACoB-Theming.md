@@ -1,15 +1,15 @@
-# JACoB Console Appearance Specification
+# JACoB UI themes
 
-> **GALNET TECHNICAL CIRCULAR // DISPLAY SYSTEMS**
+Open **Settings → Appearance** and upload an HTML theme file.
 
-Open **Settings → Appearance** to load an HTML appearance file.
+A theme can override the entire visual presentation of the JACoB host using ordinary CSS. It can also replace documented shell regions.
 
-The file may contain CSS for the JACoB host console and replacement templates for documented shell regions.
+Language is configured separately under **Settings → Language**. Appearance HTML controls styling and documented shell slots; it does not translate arbitrary tab content. Locale-aware custom tabs should use SDK v6 `Elite.locale`.
 
 ```html
 <style>
 :root {
-  --accent: #ff8a00;
+  --accent: #7fd5ff;
 }
 
 body {
@@ -17,12 +17,12 @@ body {
 }
 
 .card {
-  border-color: #ff8a00;
+  border-color: #7fd5ff;
 }
 </style>
 
 <template data-jacob-slot="brand">
-  <strong>MY BRIDGE</strong><span>COMMAND CONSOLE</span>
+  <strong>MY BRIDGE</strong><span>Elite tools</span>
 </template>
 
 <template data-jacob-slot="header-extra">...</template>
@@ -37,6 +37,6 @@ Optional body class:
 <meta name="jacob-body-class" content="my-theme">
 ```
 
-JACoB stores the uploaded file locally and applies it to browsers connected to that instance.
+The uploaded HTML is persisted by JACoB and applied to browsers connected to that JACoB instance.
 
-Scripts contained in an appearance file are not executed in the host page. Interactive functions belong in sandboxed custom tabs.
+Theme scripts are not executed in the privileged host page. Interactive tools belong in custom tabs.

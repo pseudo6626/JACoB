@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://jacob.local/schemas/v2/websocket-message.schema.json",
+  "$id": "https://jacob.local/schemas/v3/websocket-message.schema.json",
   "title": "JACoB WebSocket Message",
   "oneOf": [
     {
@@ -22,6 +22,8 @@
             "core.ping",
             "state.get",
             "system.health",
+            "locale.save",
+            "locale.get",
             "appearance.get",
             "appearance.save",
             "appearance.reset",
@@ -49,7 +51,11 @@
             "update.check",
             "update.install",
             "tabs.layout.save",
-            "net.fetch"
+            "net.fetch",
+            "tabstate.get",
+            "tabstate.set",
+            "tabstate.delete",
+            "tabstate.clear"
           ]
         },
         "params": {
@@ -110,8 +116,10 @@
             "journal",
             "tabs.changed",
             "appearance.changed",
+            "locale.changed",
             "recorder.input",
-            "core.update"
+            "core.update",
+            "market"
           ]
         },
         "data": {}

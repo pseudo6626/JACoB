@@ -12,6 +12,7 @@ Alpha 0.2.8 is the recovered and validated baseline for the work developed acros
 - Adds isolated persistent saved-tab storage through `Elite.store`.
 - Advances the custom-tab SDK / WebSocket protocol to version 5.
 - SDK v5 adds `Elite.bindings.down()` / `Elite.bindings.up()` so tabs can perform one continuous semantic hold while still releasing immediately on Abort.
+- SDK v6 adds host-wide localization with English, Russian, German, French, Simplified Chinese, and Spanish plus `Elite.locale` for locale-aware custom tabs.
 - Retains the Spansh-backed Neutron Highway Control tab.
 - Fixes the Action Recorder HTML parser issue caused by a literal closing-script token in generated replay code.
 

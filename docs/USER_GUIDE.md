@@ -29,6 +29,12 @@ Tab Manager includes **Navigation manifest**.
 
 The manifest is stored with the saved-tab data and is shared by browsers connected to the same JACoB instance.
 
+## Language
+
+Open **Settings → Language**. JACoB supports English, Russian, German, French, Simplified Chinese, and Spanish. The selected language is stored by the JACoB host and is shared immediately with every connected browser.
+
+The built-in JACoB shell follows this setting. Custom tabs can follow it through SDK v6 `Elite.locale`; older tabs continue to work and keep the language written into their HTML.
+
 ## Updates
 
 Open **Settings → Software updates** and choose **Check for updates**.

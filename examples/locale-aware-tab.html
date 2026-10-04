@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Locale Example</title>
+<style>
+body{margin:0;padding:18px;background:#090d10;color:#edf1f3;font:14px system-ui}.card{border:1px solid #39434a;padding:16px;background:#11171b}h2{margin:0 0 8px}p{color:#aeb8bd}code{color:#ffd1a8}
+</style>
+</head>
+<body>
+<div class="card"><h2 id="title"></h2><p id="body"></p><code id="locale"></code></div>
+<script>
+const STRINGS={
+  en:{title:'Locale-aware custom tab',body:'Change Language in JACoB Settings. This tab updates immediately.'},
+  ru:{title:'Локализуемая пользовательская вкладка',body:'Измените язык в настройках JACoB. Эта вкладка обновится сразу.'},
+  de:{title:'Lokalisierter eigener Tab',body:'Ändere die Sprache in den JACoB-Einstellungen. Dieser Tab aktualisiert sich sofort.'},
+  fr:{title:'Onglet personnalisé localisé',body:'Changez la langue dans les paramètres JACoB. Cet onglet se met à jour immédiatement.'},
+  'zh-CN':{title:'支持本地化的自定义标签页',body:'在 JACoB 设置中更改语言。此标签页会立即更新。'},
+  es:{title:'Pestaña personalizada localizada',body:'Cambia el idioma en los ajustes de JACoB. Esta pestaña se actualiza al instante.'}
+};
+function render(){
+  document.documentElement.lang=Elite.locale.language;
+  document.querySelector('#title').textContent=Elite.locale.t(STRINGS,'title');
+  document.querySelector('#body').textContent=Elite.locale.t(STRINGS,'body');
+  document.querySelector('#locale').textContent=`Elite.locale.language = ${Elite.locale.language}`;
+}
+Elite.locale.subscribe(render);
+render();
+</script>
+</body>
+</html>

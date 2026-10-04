@@ -12,7 +12,7 @@
 <h1 id="jacob-custom-tab-developer-reference">JACoB Custom Tab Developer
 Reference</h1>
 <p>Version: Alpha 0.2.8<br />
-SDK version: 5</p>
+SDK version: 6</p>
 <p>This is the canonical reference for building JACoB custom HTML tabs.
 It describes the tab runtime, the browser SDK, the direct WebSocket
 protocol, state and event shapes, input behavior, overlays, video,
@@ -116,6 +116,7 @@ Elite.video
 Elite.net
 Elite.data
 Elite.store
+Elite.locale
 Elite.files
 Elite.events
 Elite.journal</code></pre>
@@ -341,6 +342,7 @@ eliteFile
 journal
 tabs.changed
 appearance.changed
+locale.changed
 recorder.input
 core.update</code></pre>
 <hr />
@@ -888,8 +890,27 @@ absent. Values must be JSON-serializable. A single value is limited to
 receive persistent storage; save the tab first when testing persistence.
 Removing a saved tab also removes its stored state.</p>
 <hr />
-<h2 id="11-timing-and-sequencing-patterns">11. Timing and sequencing
-patterns</h2>
+<h2 id="11-language-and-localization">11. Language and localization</h2>
+<p>JACoB has one host-level language setting shared by every connected browser. SDK v6 exposes that locale to saved custom tabs through <code>Elite.locale</code>.</p>
+<p>Supported locale codes:</p>
+<pre><code>en  ru  de  fr  zh-CN  es</code></pre>
+<p>Read and subscribe to the current locale:</p>
+<pre class="sourceCode javascript"><code class="sourceCode javascript">console.log(Elite.locale.language);
+console.log(Elite.locale.supported);
+const info = await Elite.locale.get();
+const off = Elite.locale.subscribe(info =&gt; {
+  document.documentElement.lang = info.language;
+  render();
+});</code></pre>
+<p>Tabs keep their own translation dictionaries. <code>Elite.locale.t()</code> selects the active language, falls back to English, then falls back to the key itself, and supports <code>{name}</code>-style interpolation.</p>
+<pre class="sourceCode javascript"><code class="sourceCode javascript">const strings = {
+  en: { load: 'Load {count} orders', ready: 'Ready' },
+  de: { load: '{count} Aufträge laden', ready: 'Bereit' },
+  es: { load: 'Cargar {count} órdenes', ready: 'Listo' }
+};
+button.textContent = Elite.locale.t(strings, 'load', { count: 12 });</code></pre>
+<p>The global language is changed in JACoB Settings. Existing tabs that do not use <code>Elite.locale</code> continue to work unchanged and keep the language written in their HTML.</p>
+<h2 id="12-timing-and-sequencing-patterns">12. Timing and sequencing patterns</h2>
 <p>JACoB does not include a procedure engine. Build sequences inside the
 custom tab.</p>
 <h3 id="sleep-helper">Sleep helper</h3>
@@ -954,7 +975,7 @@ class="sourceCode js"><code class="sourceCode javascript"><span id="cb77-1"><a h
 <span id="cb77-12"><a href="#cb77-12" aria-hidden="true" tabindex="-1"></a>  runId<span class="op">++;</span></span>
 <span id="cb77-13"><a href="#cb77-13" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
 <hr />
-<h2 id="12-appearancetheme-files">12. Appearance/theme files</h2>
+<h2 id="13-appearancetheme-files">13. Appearance/theme files</h2>
 <p>A JACoB shell theme is an HTML file uploaded under <strong>Settings →
 Appearance</strong>.</p>
 <p>Theme files can contain CSS:</p>
@@ -984,7 +1005,7 @@ custom tabs.</p>
 <p>The selected theme is persisted by the core and is shared by browsers
 opening the same JACoB instance.</p>
 <hr />
-<h2 id="13-direct-websocket-protocol">13. Direct WebSocket protocol</h2>
+<h2 id="14-direct-websocket-protocol">14. Direct WebSocket protocol</h2>
 <p>Most custom tabs should use the injected SDK. The direct protocol is
 documented for external clients and debugging.</p>
 <p>Endpoint:</p>
@@ -1036,6 +1057,8 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb86-1"><a href=
 core.shutdown
 state.get
 system.health
+locale.get
+locale.save
 update.check
 update.install
 appearance.get
@@ -1088,14 +1111,14 @@ installation, shutdown, and appearance management remain host/UI
 concerns. <code>Elite.files</code> is implemented inside the injected
 SDK and does not require a WebSocket method.</p>
 <hr />
-<h2 id="14-http-media-endpoints">14. HTTP media endpoints</h2>
+<h2 id="15-http-media-endpoints">15. HTTP media endpoints</h2>
 <p>Snapshot:</p>
 <pre class="text"><code>GET /api/video/frame.jpg?width=960&amp;quality=60</code></pre>
 <p>MJPEG:</p>
 <pre class="text"><code>GET /api/video.mjpeg?width=960&amp;fps=5&amp;quality=60</code></pre>
 <p>LAN requests must include the pairing token query parameter.</p>
 <hr />
-<h2 id="15-core-hello-structure">15. Core hello structure</h2>
+<h2 id="16-core-hello-structure">16. Core hello structure</h2>
 <p>When a browser connects, the host receives <code>core.hello</code>.
 Custom tabs receive it through the generic event bridge.</p>
 <p>Representative shape:</p>
@@ -1105,7 +1128,7 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb90-1"><a href=
 <span id="cb90-3"><a href="#cb90-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;version&quot;</span><span class="fu">:</span> <span class="st">&quot;0.2.8-alpha&quot;</span><span class="fu">,</span></span>
 <span id="cb90-4"><a href="#cb90-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;product&quot;</span><span class="fu">:</span> <span class="st">&quot;JACoB&quot;</span><span class="fu">,</span></span>
 <span id="cb90-5"><a href="#cb90-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;name&quot;</span><span class="fu">:</span> <span class="st">&quot;Journal Aligned Control Bridge&quot;</span><span class="fu">,</span></span>
-<span id="cb90-6"><a href="#cb90-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;apiVersion&quot;</span><span class="fu">:</span> <span class="dv">5</span><span class="fu">,</span></span>
+<span id="cb90-6"><a href="#cb90-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;apiVersion&quot;</span><span class="fu">:</span> <span class="dv">6</span><span class="fu">,</span></span>
 <span id="cb90-7"><a href="#cb90-7" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;os&quot;</span><span class="fu">:</span> <span class="st">&quot;windows&quot;</span><span class="fu">,</span></span>
 <span id="cb90-8"><a href="#cb90-8" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;arch&quot;</span><span class="fu">:</span> <span class="st">&quot;amd64&quot;</span><span class="fu">,</span></span>
 <span id="cb90-9"><a href="#cb90-9" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;goRuntime&quot;</span><span class="fu">:</span> <span class="st">&quot;go1.x&quot;</span><span class="fu">,</span></span>
@@ -1131,7 +1154,7 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb90-1"><a href=
 <span id="cb90-29"><a href="#cb90-29" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;customTabs&quot;</span><span class="fu">:</span> <span class="fu">{}</span></span>
 <span id="cb90-30"><a href="#cb90-30" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <hr />
-<h2 id="16-common-error-codes">16. Common error codes</h2>
+<h2 id="17-common-error-codes">17. Common error codes</h2>
 <p>The exact set can grow, but tabs should be prepared for at least:</p>
 <pre class="text"><code>OFFLINE
 TIMEOUT
@@ -1169,7 +1192,7 @@ APPEARANCE_RESET_FAILED</code></pre>
 <p>Do not depend on error message wording. Use <code>error.code</code>
 for branching.</p>
 <hr />
-<h2 id="17-security-and-trust-boundaries">17. Security and trust
+<h2 id="18-security-and-trust-boundaries">18. Security and trust
 boundaries</h2>
 <p>Custom tabs:</p>
 <ul>
@@ -1211,7 +1234,7 @@ destinations so a custom tab cannot use the bridge to probe services on
 the host or local network. Public API access still gives the tab a route
 to transmit data off the computer; treat third-party tabs
 accordingly.</p>
-<h2 id="18-platform-capability-summary">18. Platform capability
+<h2 id="19-platform-capability-summary">19. Platform capability
 summary</h2>
 <h3 id="windows">Windows</h3>
 <p>Expected capabilities:</p>
@@ -1247,7 +1270,7 @@ class="sourceCode js"><code class="sourceCode javascript"><span id="cb94-1"><a h
 <span id="cb94-8"><a href="#cb94-8" aria-hidden="true" tabindex="-1"></a>  <span class="co">// hide recorder-specific controls</span></span>
 <span id="cb94-9"><a href="#cb94-9" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
 <hr />
-<h2 id="19-json-schemas">19. JSON schemas</h2>
+<h2 id="20-json-schemas">20. JSON schemas</h2>
 <p>The release package contains machine-readable schemas under:</p>
 <pre class="text"><code>docs/schemas/</code></pre>
 <h3 id="binding-action">Binding action</h3>
@@ -1388,7 +1411,7 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb100-1"><a href
 <p>For exact machine-readable schemas, use the files in
 <code>docs/schemas/</code> shipped with the same release.</p>
 <hr />
-<h2 id="20-complete-custom-tab-starter">20. Complete custom-tab
+<h2 id="21-complete-custom-tab-starter">21. Complete custom-tab
 starter</h2>
 <div class="sourceCode" id="cb101"><pre
 class="sourceCode html"><code class="sourceCode html"><span id="cb101-1"><a href="#cb101-1" aria-hidden="true" tabindex="-1"></a><span class="dt">&lt;!doctype</span> html<span class="dt">&gt;</span></span>
@@ -1481,7 +1504,7 @@ class="sourceCode html"><code class="sourceCode html"><span id="cb101-1"><a href
 <span id="cb101-88"><a href="#cb101-88" aria-hidden="true" tabindex="-1"></a><span class="dt">&lt;/</span><span class="kw">body</span><span class="dt">&gt;</span></span>
 <span id="cb101-89"><a href="#cb101-89" aria-hidden="true" tabindex="-1"></a><span class="dt">&lt;/</span><span class="kw">html</span><span class="dt">&gt;</span></span></code></pre></div>
 <hr />
-<h2 id="21-design-guidance-for-durable-tabs">21. Design guidance for
+<h2 id="22-design-guidance-for-durable-tabs">22. Design guidance for
 durable tabs</h2>
 <ul>
 <li>Prefer semantic Elite bindings over raw keys when the action name is
