@@ -58,6 +58,36 @@ func (b *Bridge) PressBinding(action string) (Result, error) {
 	return Result{Name: "binding.press", Action: action, BindingSlot: slot, Key: key, Modifiers: mods, DurationMs: time.Since(started).Milliseconds()}, nil
 }
 
+func (b *Bridge) DownBinding(action string) (Result, error) {
+	started := time.Now()
+	key, mods, slot, err := b.resolveAction(action)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := b.input.FocusGame(); err != nil {
+		return Result{}, fmt.Errorf("could not target Elite Dangerous: %w", err)
+	}
+	if err := b.input.ChordDown(key, mods); err != nil {
+		return Result{}, err
+	}
+	return Result{Name: "binding.down", Action: action, BindingSlot: slot, Key: key, Modifiers: mods, DurationMs: time.Since(started).Milliseconds()}, nil
+}
+
+func (b *Bridge) UpBinding(action string) (Result, error) {
+	started := time.Now()
+	key, mods, slot, err := b.resolveAction(action)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := b.input.FocusGame(); err != nil {
+		return Result{}, fmt.Errorf("could not target Elite Dangerous: %w", err)
+	}
+	if err := b.input.ChordUp(key, mods); err != nil {
+		return Result{}, err
+	}
+	return Result{Name: "binding.up", Action: action, BindingSlot: slot, Key: key, Modifiers: mods, DurationMs: time.Since(started).Milliseconds()}, nil
+}
+
 func (b *Bridge) HoldBinding(action string, durationMs int) (Result, error) {
 	started := time.Now()
 	if durationMs < 20 {

@@ -19,3 +19,9 @@ func (u *unsupportedInput) TapChord(key string, modifiers []string) error {
 func (u *unsupportedInput) HoldChord(key string, modifiers []string, durationMs int) error {
 	return fmt.Errorf("input injection unsupported on this platform")
 }
+func (u *unsupportedInput) ChordDown(key string, modifiers []string) error {
+	return fmt.Errorf("input injection unsupported on this platform")
+}
+func (u *unsupportedInput) ChordUp(key string, modifiers []string) error {
+	return fmt.Errorf("input injection unsupported on this platform")
+}

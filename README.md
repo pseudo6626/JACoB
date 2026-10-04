@@ -1,8 +1,8 @@
 # JACoB — Journal Aligned Control Bridge
 
-> Current field build: **0.2.4 Alpha**
+> Current field build: **0.2.8 Alpha**
 
-JACoB is a local companion bridge for **Elite Dangerous**. It reads the live journal and `Status.json`, resolves control bindings, sends game input, hosts persistent custom HTML tabs, supplies a game-view stream, renders native HUD overlays, exports tab-generated files, and provides bounded access to public web APIs.
+JACoB is a local companion bridge for **Elite Dangerous**. It reads the live journal and Elite companion JSON snapshots, resolves control bindings, sends game input, hosts persistent custom HTML tabs, supplies a game-view stream, renders native HUD overlays, exports tab-generated files, and provides bounded access to public web APIs.
 
 The core carries the common interfaces. User tabs carry route queues, race systems, mining utilities, control panels, data lookups, and other commander tools.
 
@@ -46,12 +46,17 @@ The full custom-tab contract is recorded in:
 
 [`docs/JACOB_CUSTOM_TAB_REFERENCE.md`](docs/JACOB_CUSTOM_TAB_REFERENCE.md)
 
-SDK / protocol version **2** adds:
+SDK / protocol version **5** provides:
 
 - `Elite.files.download()` and `Elite.files.json()` for browser file exports
 - `Elite.net.fetch()` for bounded `GET` and `POST` requests to public HTTP/HTTPS APIs
+- `Elite.data` for read-only access to Elite companion snapshots such as cargo, plotted route, modules, station services, Odyssey inventories, and Fleet Carrier material listings
+- `Elite.journal.files()` / `Elite.journal.read()` for bounded, paged access to journal-session history
+- `Elite.bindings.down()` / `Elite.bindings.up()` for cancelable continuous semantic holds without resetting Elite key-repeat acceleration
 
 The network bridge refuses loopback, LAN/private, link-local and local-name targets. It is suitable for public services such as Spansh without requiring those services to permit the sandboxed browser origin through CORS.
+
+The companion-file bridge watches JSON files inside the detected Elite journal directory only. Known files receive stable SDK names, and newly introduced Elite JSON snapshots are surfaced automatically without granting custom tabs arbitrary filesystem access.
 
 The reference also covers the event model, state shapes, input calls, overlay scene schema, recorder interface, video interface, storage behavior, WebSocket protocol, platform notes, error codes, and working examples.
 
@@ -68,7 +73,7 @@ The reference also covers the event model, state shapes, input calls, overlay sc
 ```text
 cmd/                 application and installer entry points
 internal/core/       local service and WebSocket bridge
-internal/journal/    Elite journal and Status.json watch
+internal/journal/    journal context plus Elite companion-file watch
 internal/bindings/   Elite binding parser and resolver
 internal/platform/   Windows/Linux input, capture, overlay, recorder
 internal/updater/    GitHub release check and update staging

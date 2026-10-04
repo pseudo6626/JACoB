@@ -156,7 +156,8 @@
   }
   $('#generate').onclick=()=>{
     const html=generateHTML();
-    if(!html.includes('</script>') || html.includes('<\\/script>')){
+    const closeScript='<'+ '/script>';
+    if(!html.includes(closeScript+'>') || html.includes('<\\/script>')){
       log('ERROR: generated HTML failed script-tag validation.');
       return;
     }

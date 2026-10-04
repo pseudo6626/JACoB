@@ -1,14 +1,121 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://jacob.local/schemas/v1/state.schema.json",
+  "$id": "https://jacob.local/schemas/v4/state.schema.json",
   "title": "JACoB State Snapshot",
   "type": "object",
-  "required": ["journalDir", "journalFile", "status", "lastJournalEvent"],
+  "required": [
+    "journalDir",
+    "journalFile",
+    "status",
+    "lastJournalEvent"
+  ],
   "properties": {
-    "journalDir": { "type": "string" },
-    "journalFile": { "type": "string" },
-    "status": { "type": ["object", "null"], "additionalProperties": true },
-    "lastJournalEvent": { "type": ["object", "null"], "additionalProperties": true }
+    "journalDir": {
+      "type": "string"
+    },
+    "journalFile": {
+      "type": "string"
+    },
+    "status": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true
+    },
+    "lastJournalEvent": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true
+    },
+    "journalContext": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "currentSystem": {
+          "type": "string"
+        },
+        "maxJumpRange": {
+          "type": "number"
+        },
+        "ship": {
+          "type": "string"
+        },
+        "shipName": {
+          "type": "string"
+        },
+        "shipIdent": {
+          "type": "string"
+        },
+        "carrierID": {
+          "type": "number"
+        },
+        "carrierCallsign": {
+          "type": "string"
+        },
+        "carrierName": {
+          "type": "string"
+        },
+        "carrierTotalCapacity": {
+          "type": "number"
+        },
+        "carrierCargo": {
+          "type": "number"
+        },
+        "carrierCargoSpaceReserved": {
+          "type": "number"
+        },
+        "carrierFreeSpace": {
+          "type": "number"
+        },
+        "carrierAvailableBalance": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "market": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true
+    },
+    "eliteFiles": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "eliteFileNames": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "eliteFileUpdated": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
   },
   "additionalProperties": true
 }

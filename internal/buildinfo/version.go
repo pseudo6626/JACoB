@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	Version    = "0.2.4-alpha"
-	Display    = "Alpha 0.2.4"
+	Version    = "0.2.8-alpha"
+	Display    = "Alpha 0.2.8"
 	Repository = "pseudo6626/JACoB"
 )
 

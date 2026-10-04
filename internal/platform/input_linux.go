@@ -88,23 +88,31 @@ func (l *linuxInput) HoldChord(key string, modifiers []string, durationMs int) e
 	return l.holdChordFor(key, modifiers, time.Duration(durationMs)*time.Millisecond)
 }
 
-func (l *linuxInput) holdChordFor(key string, modifiers []string, hold time.Duration) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if err := l.ensureDeviceLocked(); err != nil {
-		return err
-	}
+func (l *linuxInput) resolveChordLocked(key string, modifiers []string) (uint16, []uint16, error) {
 	mods := make([]uint16, 0, len(modifiers))
 	for _, m := range modifiers {
 		code, ok := evdevKey(m)
 		if !ok {
-			return fmt.Errorf("unsupported Linux key %q", m)
+			return 0, nil, fmt.Errorf("unsupported Linux key %q", m)
 		}
 		mods = append(mods, code)
 	}
 	main, ok := evdevKey(key)
 	if !ok {
-		return fmt.Errorf("unsupported Linux key %q", key)
+		return 0, nil, fmt.Errorf("unsupported Linux key %q", key)
+	}
+	return main, mods, nil
+}
+
+func (l *linuxInput) ChordDown(key string, modifiers []string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.ensureDeviceLocked(); err != nil {
+		return err
+	}
+	main, mods, err := l.resolveChordLocked(key, modifiers)
+	if err != nil {
+		return err
 	}
 	for _, code := range mods {
 		if err := l.emitKey(code, 1); err != nil {
@@ -114,10 +122,19 @@ func (l *linuxInput) holdChordFor(key string, modifiers []string, hold time.Dura
 	if err := l.emitKey(main, 1); err != nil {
 		return err
 	}
-	if err := l.sync(); err != nil {
+	return l.sync()
+}
+
+func (l *linuxInput) ChordUp(key string, modifiers []string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.ensureDeviceLocked(); err != nil {
 		return err
 	}
-	time.Sleep(hold)
+	main, mods, err := l.resolveChordLocked(key, modifiers)
+	if err != nil {
+		return err
+	}
 	if err := l.emitKey(main, 0); err != nil {
 		return err
 	}
@@ -127,6 +144,14 @@ func (l *linuxInput) holdChordFor(key string, modifiers []string, hold time.Dura
 		}
 	}
 	return l.sync()
+}
+
+func (l *linuxInput) holdChordFor(key string, modifiers []string, hold time.Duration) error {
+	if err := l.ChordDown(key, modifiers); err != nil {
+		return err
+	}
+	time.Sleep(hold)
+	return l.ChordUp(key, modifiers)
 }
 
 func (l *linuxInput) ensureDeviceLocked() error {

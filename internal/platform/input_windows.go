@@ -76,79 +76,99 @@ func (w *windowsInput) HoldChord(key string, modifiers []string, durationMs int)
 	return w.holdChordFor(key, modifiers, time.Duration(durationMs)*time.Millisecond)
 }
 
-func (w *windowsInput) holdChordFor(key string, modifiers []string, hold time.Duration) error {
-	type resolved struct {
-		vk       uint16
-		scan     uint16
-		extended bool
-		name     string
-	}
+type resolvedWindowsKey struct {
+	vk       uint16
+	scan     uint16
+	extended bool
+	name     string
+}
 
-	resolve := func(k string) (resolved, error) {
-		vk, ext, ok := virtualKey(k)
-		if !ok {
-			return resolved{}, fmt.Errorf("unsupported key %q", k)
-		}
-		scan, _, callErr := procMapVirtualKeyW.Call(uintptr(vk), mapvkVkToVsc)
-		if scan == 0 {
-			if callErr != syscall.Errno(0) {
-				return resolved{}, fmt.Errorf("MapVirtualKeyW(%s) failed: %w", k, callErr)
-			}
-			return resolved{}, fmt.Errorf("MapVirtualKeyW(%s) returned scan code 0", k)
-		}
-		return resolved{vk: vk, scan: uint16(scan & 0xff), extended: ext, name: k}, nil
+func resolveWindowsKey(k string) (resolvedWindowsKey, error) {
+	vk, ext, ok := virtualKey(k)
+	if !ok {
+		return resolvedWindowsKey{}, fmt.Errorf("unsupported key %q", k)
 	}
+	scan, _, callErr := procMapVirtualKeyW.Call(uintptr(vk), mapvkVkToVsc)
+	if scan == 0 {
+		if callErr != syscall.Errno(0) {
+			return resolvedWindowsKey{}, fmt.Errorf("MapVirtualKeyW(%s) failed: %w", k, callErr)
+		}
+		return resolvedWindowsKey{}, fmt.Errorf("MapVirtualKeyW(%s) returned scan code 0", k)
+	}
+	return resolvedWindowsKey{vk: vk, scan: uint16(scan & 0xff), extended: ext, name: k}, nil
+}
 
-	mods := make([]resolved, 0, len(modifiers))
+func makeWindowsKeyEvent(r resolvedWindowsKey, up bool) winInput {
+	var in winInput
+	in.Type = inputKeyboard
+	ki := (*keyboardInput)(unsafe.Pointer(&in.Data[0]))
+	ki.Vk = 0
+	ki.Scan = r.scan
+	ki.ExtraInfo = jacobInputMarker
+	ki.Flags = keyeventfScanCode
+	if r.extended {
+		ki.Flags |= keyeventfExtendedKey
+	}
+	if up {
+		ki.Flags |= keyeventfKeyUp
+	}
+	return in
+}
+
+func resolveWindowsChord(key string, modifiers []string) (resolvedWindowsKey, []resolvedWindowsKey, error) {
+	mods := make([]resolvedWindowsKey, 0, len(modifiers))
 	for _, m := range modifiers {
-		r, err := resolve(m)
+		r, err := resolveWindowsKey(m)
 		if err != nil {
-			return err
+			return resolvedWindowsKey{}, nil, err
 		}
 		mods = append(mods, r)
 	}
-	main, err := resolve(key)
+	main, err := resolveWindowsKey(key)
+	if err != nil {
+		return resolvedWindowsKey{}, nil, err
+	}
+	return main, mods, nil
+}
+
+func (w *windowsInput) ChordDown(key string, modifiers []string) error {
+	main, mods, err := resolveWindowsChord(key, modifiers)
 	if err != nil {
 		return err
 	}
-
-	makeEvent := func(r resolved, up bool) winInput {
-		var in winInput
-		in.Type = inputKeyboard
-		ki := (*keyboardInput)(unsafe.Pointer(&in.Data[0]))
-		ki.Vk = 0
-		ki.Scan = r.scan
-		ki.ExtraInfo = jacobInputMarker
-		ki.Flags = keyeventfScanCode
-		if r.extended {
-			ki.Flags |= keyeventfExtendedKey
-		}
-		if up {
-			ki.Flags |= keyeventfKeyUp
-		}
-		return in
-	}
-
-	downs := make([]winInput, 0, len(mods)+1)
+	down := make([]winInput, 0, len(mods)+1)
 	for _, m := range mods {
-		downs = append(downs, makeEvent(m, false))
+		down = append(down, makeWindowsKeyEvent(m, false))
 	}
-	downs = append(downs, makeEvent(main, false))
-	if err := sendInputBatch(downs); err != nil {
+	down = append(down, makeWindowsKeyEvent(main, false))
+	if err := sendInputBatch(down); err != nil {
 		return fmt.Errorf("key-down phase failed: %w", err)
 	}
+	return nil
+}
 
-	time.Sleep(hold)
-
-	ups := make([]winInput, 0, len(mods)+1)
-	ups = append(ups, makeEvent(main, true))
-	for i := len(mods) - 1; i >= 0; i-- {
-		ups = append(ups, makeEvent(mods[i], true))
+func (w *windowsInput) ChordUp(key string, modifiers []string) error {
+	main, mods, err := resolveWindowsChord(key, modifiers)
+	if err != nil {
+		return err
 	}
-	if err := sendInputBatch(ups); err != nil {
+	up := make([]winInput, 0, len(mods)+1)
+	up = append(up, makeWindowsKeyEvent(main, true))
+	for i := len(mods) - 1; i >= 0; i-- {
+		up = append(up, makeWindowsKeyEvent(mods[i], true))
+	}
+	if err := sendInputBatch(up); err != nil {
 		return fmt.Errorf("key-up phase failed: %w", err)
 	}
 	return nil
+}
+
+func (w *windowsInput) holdChordFor(key string, modifiers []string, hold time.Duration) error {
+	if err := w.ChordDown(key, modifiers); err != nil {
+		return err
+	}
+	time.Sleep(hold)
+	return w.ChordUp(key, modifiers)
 }
 
 func sendInputBatch(inputs []winInput) error {

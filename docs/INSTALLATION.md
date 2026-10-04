@@ -2,7 +2,7 @@
 
 ## Windows
 
-Run `JACoB-Alpha-0.2.4-Setup.exe`.
+Run `JACoB-Alpha-0.2.8-Setup.exe`.
 
 The installer uses the current Windows account and installs under:
 
@@ -32,7 +32,7 @@ When a newer Windows release contains a matching setup asset, **Install update**
 
 ## Steam Deck / Linux
 
-The release package includes `JACoB-Alpha-0.2.4-SteamDeck-linux-amd64`.
+The release package includes `JACoB-Alpha-0.2.8-SteamDeck-linux-amd64`.
 
 The browser UI, custom tabs, journal/status reader, bindings layer, public API bridge and core SDK are shared with Windows. Platform-specific input, capture, recorder, and overlay capability can vary; query the relevant SDK capability before depending on an optional feature.
 
