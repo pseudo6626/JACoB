@@ -12,9 +12,14 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
-const wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+const (
+	wsGUID           = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+	wsMaxMessageSize = 16 * 1024 * 1024
+	wsWriteTimeout   = 5 * time.Second
+)
 
 type wsClient struct {
 	conn   net.Conn
@@ -58,13 +63,21 @@ func (c *wsClient) Close() error { return c.conn.Close() }
 func (c *wsClient) WriteText(payload []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return writeFrame(c.conn, 0x1, payload)
+	return c.writeWithDeadline(0x1, payload)
 }
 
 func (c *wsClient) WritePong(payload []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return writeFrame(c.conn, 0xA, payload)
+	return c.writeWithDeadline(0xA, payload)
+}
+
+func (c *wsClient) writeWithDeadline(opcode byte, payload []byte) error {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+		return err
+	}
+	defer c.conn.SetWriteDeadline(time.Time{})
+	return writeFrame(c.conn, opcode, payload)
 }
 
 func writeFrame(w io.Writer, opcode byte, payload []byte) error {
@@ -88,51 +101,123 @@ func writeFrame(w io.Writer, opcode byte, payload []byte) error {
 	return err
 }
 
+type wsFrame struct {
+	fin     bool
+	opcode  byte
+	payload []byte
+}
+
+func readFrame(r *bufio.Reader) (wsFrame, error) {
+	b1, err := r.ReadByte()
+	if err != nil {
+		return wsFrame{}, err
+	}
+	b2, err := r.ReadByte()
+	if err != nil {
+		return wsFrame{}, err
+	}
+	fin := b1&0x80 != 0
+	opcode := b1 & 0x0f
+	masked := b2&0x80 != 0
+	ln := uint64(b2 & 0x7f)
+	if ln == 126 {
+		var b [2]byte
+		if _, err := io.ReadFull(r, b[:]); err != nil {
+			return wsFrame{}, err
+		}
+		ln = uint64(binary.BigEndian.Uint16(b[:]))
+	} else if ln == 127 {
+		var b [8]byte
+		if _, err := io.ReadFull(r, b[:]); err != nil {
+			return wsFrame{}, err
+		}
+		ln = binary.BigEndian.Uint64(b[:])
+		if ln>>63 != 0 {
+			return wsFrame{}, errors.New("invalid websocket frame length")
+		}
+	}
+	if opcode >= 0x8 {
+		if !fin {
+			return wsFrame{}, errors.New("fragmented websocket control frame")
+		}
+		if ln > 125 {
+			return wsFrame{}, errors.New("websocket control frame too large")
+		}
+	}
+	if ln > wsMaxMessageSize {
+		return wsFrame{}, errors.New("websocket frame too large")
+	}
+	var mask [4]byte
+	if masked {
+		if _, err := io.ReadFull(r, mask[:]); err != nil {
+			return wsFrame{}, err
+		}
+	}
+	payload := make([]byte, int(ln))
+	if _, err := io.ReadFull(r, payload); err != nil {
+		return wsFrame{}, err
+	}
+	if masked {
+		for i := range payload {
+			payload[i] ^= mask[i%4]
+		}
+	}
+	return wsFrame{fin: fin, opcode: opcode, payload: payload}, nil
+}
+
+// ReadMessage reassembles RFC 6455 continuation frames into one logical
+// message. Control frames can appear between fragments; ping frames are
+// answered immediately without abandoning the in-progress message.
 func (c *wsClient) ReadMessage() (opcode byte, payload []byte, err error) {
-	r := c.reader
+	var messageOpcode byte
+	var message []byte
+	fragmented := false
+
 	for {
-		b1, readErr := r.ReadByte()
+		frame, readErr := readFrame(c.reader)
 		if readErr != nil {
 			return 0, nil, readErr
 		}
-		b2, readErr := r.ReadByte()
-		if readErr != nil {
-			return 0, nil, readErr
-		}
-		opcode = b1 & 0x0f
-		masked := b2&0x80 != 0
-		ln := uint64(b2 & 0x7f)
-		if ln == 126 {
-			var b [2]byte
-			if _, err = io.ReadFull(r, b[:]); err != nil {
-				return
+
+		switch frame.opcode {
+		case 0x8: // close
+			return frame.opcode, frame.payload, nil
+		case 0x9: // ping
+			if fragmented {
+				if err := c.WritePong(frame.payload); err != nil {
+					return 0, nil, err
+				}
+				continue
 			}
-			ln = uint64(binary.BigEndian.Uint16(b[:]))
-		} else if ln == 127 {
-			var b [8]byte
-			if _, err = io.ReadFull(r, b[:]); err != nil {
-				return
+			return frame.opcode, frame.payload, nil
+		case 0xA: // pong
+			if fragmented {
+				continue
 			}
-			ln = binary.BigEndian.Uint64(b[:])
-		}
-		if ln > 8*1024*1024 {
-			return 0, nil, errors.New("websocket message too large")
-		}
-		var mask [4]byte
-		if masked {
-			if _, err = io.ReadFull(r, mask[:]); err != nil {
-				return
+			return frame.opcode, frame.payload, nil
+		case 0x0: // continuation
+			if !fragmented {
+				return 0, nil, errors.New("unexpected websocket continuation frame")
 			}
-		}
-		payload = make([]byte, int(ln))
-		if _, err = io.ReadFull(r, payload); err != nil {
-			return
-		}
-		if masked {
-			for i := range payload {
-				payload[i] ^= mask[i%4]
+			if len(message)+len(frame.payload) > wsMaxMessageSize {
+				return 0, nil, errors.New("websocket message too large")
 			}
+			message = append(message, frame.payload...)
+			if frame.fin {
+				return messageOpcode, message, nil
+			}
+		case 0x1, 0x2: // text / binary
+			if fragmented {
+				return 0, nil, errors.New("new websocket data frame before fragmented message completed")
+			}
+			if frame.fin {
+				return frame.opcode, frame.payload, nil
+			}
+			fragmented = true
+			messageOpcode = frame.opcode
+			message = append(message[:0], frame.payload...)
+		default:
+			return 0, nil, fmt.Errorf("unsupported websocket opcode 0x%x", frame.opcode)
 		}
-		return opcode, payload, nil
 	}
 }

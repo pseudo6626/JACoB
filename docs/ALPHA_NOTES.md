@@ -15,6 +15,17 @@ Alpha 0.2.8 is the recovered and validated baseline for the work developed acros
 - Retains the Spansh-backed Neutron Highway Control tab.
 - Fixes the Action Recorder HTML parser issue caused by a literal closing-script token in generated replay code.
 
+## Networking and large-tab hardening
+
+- Retains the first-LAN-client pairing fix: remote browsers render navigation immediately, open Settings when no pair token is stored, and focus the pairing field before attempting the WebSocket connection.
+- Saved-tab HTML is stored as individual `custom-tabs/<id>.html` files; `custom-tabs.json` is now a small schema-3 metadata/navigation manifest.
+- Existing schema-2 inline saved tabs migrate automatically on startup with their tab IDs preserved, so isolated `Elite.store` data remains associated with the same tabs.
+- `tabs.list` and `tabs.changed` carry metadata only. Tab HTML is fetched with `tabs.get` only when a tab is opened or edited.
+- Tab Manager caches loaded tab bodies locally and gives `tabs.save` / `tabs.get` a longer request window for legitimate large transfers.
+- Saved-tab size limit increases from 1 MiB to 4 MiB.
+- WebSocket reads now reassemble continuation frames, and writes use deadlines so a stale LAN browser cannot indefinitely block another client's save path.
+- Tab save/layout/delete responses are sent before asynchronous metadata change broadcasts.
+
 ## Fleet Carrier Market Orders
 
 The included Carrier Market Orders tab is stamped `CMO-0.2.8-BASELINE-20261004.6`.

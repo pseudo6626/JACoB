@@ -74,25 +74,33 @@ Saved tabs are stored by the JACoB core, not browser local storage. On Windows t
 %APPDATA%\JACoB
 ```
 
-The tab database is:
+Saved-tab metadata and navigation order are stored in:
 
 ```text
 custom-tabs.json
 ```
 
-A saved tab record contains:
+Each tab body is stored separately under:
+
+```text
+custom-tabs/<tab-id>.html
+```
+
+The manifest therefore stays small even when individual tabs contain large datasets or complex UI. `tabs.list` returns metadata only; JACoB loads a tab's HTML on demand with `tabs.get` when the tab is opened or edited. Existing schema-2 stores with inline HTML are migrated automatically on startup without changing tab IDs or per-tab `Elite.store` state.
+
+A saved tab metadata record contains:
 
 ```json
 {
   "id": "tab-0123456789abcdef",
   "name": "Route Queue",
-  "html": "<!doctype html>...",
+  "sizeBytes": 182304,
   "createdAt": "2026-10-03T16:00:00Z",
   "updatedAt": "2026-10-03T16:10:00Z"
 }
 ```
 
-Maximum saved HTML size is 1 MiB per tab.
+Maximum saved HTML size is 4 MiB per tab.
 
 ### 2.4 Overlay isolation
 

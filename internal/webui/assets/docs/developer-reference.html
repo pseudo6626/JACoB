@@ -81,18 +81,20 @@ overlay layer.</p>
 <p>Saved tabs are stored by the JACoB core, not browser local storage.
 On Windows the default data directory is normally:</p>
 <pre class="text"><code>%APPDATA%\JACoB</code></pre>
-<p>The tab database is:</p>
+<p>Saved-tab metadata and navigation order are stored in:</p>
 <pre class="text"><code>custom-tabs.json</code></pre>
-<p>A saved tab record contains:</p>
-<div class="sourceCode" id="cb4"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;id&quot;</span><span class="fu">:</span> <span class="st">&quot;tab-0123456789abcdef&quot;</span><span class="fu">,</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;name&quot;</span><span class="fu">:</span> <span class="st">&quot;Route Queue&quot;</span><span class="fu">,</span></span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;html&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;!doctype html&gt;...&quot;</span><span class="fu">,</span></span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;createdAt&quot;</span><span class="fu">:</span> <span class="st">&quot;2026-10-03T16:00:00Z&quot;</span><span class="fu">,</span></span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updatedAt&quot;</span><span class="fu">:</span> <span class="st">&quot;2026-10-03T16:10:00Z&quot;</span></span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
-<p>Maximum saved HTML size is 1 MiB per tab.</p>
+<p>Each tab body is stored separately under:</p>
+<pre class="text"><code>custom-tabs/&lt;tab-id&gt;.html</code></pre>
+<p>The manifest therefore stays small even when individual tabs contain large datasets or complex UI. <code>tabs.list</code> returns metadata only; JACoB loads a tab's HTML on demand with <code>tabs.get</code> when the tab is opened or edited. Existing schema-2 stores with inline HTML are migrated automatically on startup without changing tab IDs or per-tab <code>Elite.store</code> state.</p>
+<p>A saved tab metadata record contains:</p>
+<div class="sourceCode"><pre class="sourceCode json"><code class="sourceCode json">{
+  &quot;id&quot;: &quot;tab-0123456789abcdef&quot;,
+  &quot;name&quot;: &quot;Route Queue&quot;,
+  &quot;sizeBytes&quot;: 182304,
+  &quot;createdAt&quot;: &quot;2026-10-03T16:00:00Z&quot;,
+  &quot;updatedAt&quot;: &quot;2026-10-03T16:10:00Z&quot;
+}</code></pre></div>
+<p>Maximum saved HTML size is 4 MiB per tab.</p>
 <h3 id="24-overlay-isolation">2.4 Overlay isolation</h3>
 <p>Each saved tab receives a separate overlay layer.
 <code>Elite.overlay.clear()</code> clears only the calling tab's layer.

@@ -2,7 +2,7 @@
   const $ = s => document.querySelector(s);
   const state = {
     socket:null,pending:new Map(),core:null,snapshot:null,seq:0,reconnectTimer:null,
-    bindings:[],savedTabs:[],navLayout:{order:[],hiddenDefaults:[]},editingTabId:'',activeTab:'dashboard',themeHTML:'',quitting:false,updating:false,updateInfo:null
+    bindings:[],savedTabs:[],tabHTMLCache:new Map(),tabLoadPromises:new Map(),navLayout:{order:[],hiddenDefaults:[]},editingTabId:'',activeTab:'dashboard',themeHTML:'',quitting:false,updating:false,updateInfo:null
   };
   const isLocal = ['127.0.0.1','localhost','::1'].includes(location.hostname);
 
@@ -103,7 +103,8 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
   function request(method,params={}){
     if(!state.socket||state.socket.readyState!==WebSocket.OPEN)return Promise.reject({code:'OFFLINE',message:'core is offline'});
     const id=`ui-${++state.seq}-${Date.now()}`;state.socket.send(JSON.stringify({type:'request',id,method,params}));
-    return new Promise((resolve,reject)=>{state.pending.set(id,{resolve,reject});setTimeout(()=>{if(state.pending.has(id)){state.pending.delete(id);reject({code:'TIMEOUT',message:'request timed out'})}},30000)});
+    const timeoutMs=(method==='tabs.save'||method==='tabs.get')?90000:30000;
+    return new Promise((resolve,reject)=>{state.pending.set(id,{resolve,reject});setTimeout(()=>{if(state.pending.has(id)){state.pending.delete(id);reject({code:'TIMEOUT',message:'request timed out'})}},timeoutMs)});
   }
   async function bootstrap(){try{await Promise.all([refreshHealth(),loadBindings(),loadSavedTabs(),loadAppearance()])}catch{}}
 
@@ -157,6 +158,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     state.activeTab=tabName;
     document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.tab===tabName));
     document.querySelectorAll('.panel-page').forEach(x=>x.classList.toggle('active',x.id===tabName));
+    if(tabName.startsWith('custom-'))ensureSavedTabLoaded(tabName.slice(7)).catch(e=>showSavedTabLoadError(tabName.slice(7),e));
   }
   function wireNavButton(btn){btn.onclick=()=>switchTab(btn.dataset.tab)}
 
@@ -193,7 +195,22 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
   }
 
   async function loadSavedTabs(){
-    const result=await request('tabs.list');state.savedTabs=result.tabs||[];state.navLayout=result.layout||{order:[],hiddenDefaults:[]};renderSavedTabs();return state.savedTabs;
+    const result=await request('tabs.list');state.savedTabs=result.tabs||[];state.navLayout=result.layout||{order:[],hiddenDefaults:[]};
+    const live=new Set(state.savedTabs.map(t=>t.id));
+    for(const id of [...state.tabHTMLCache.keys()])if(!live.has(id))state.tabHTMLCache.delete(id);
+    renderSavedTabs();return state.savedTabs;
+  }
+  function savedTabMeta(id){return state.savedTabs.find(t=>t.id===id)}
+  function savedTabFrame(id){return document.getElementById(`custom-${id}`)?.querySelector('iframe.jacob-sdk-frame')||null}
+  function showSavedTabLoadError(id,error){const frame=savedTabFrame(id);if(!frame)return;const msg=escapeHTML(error?.message||error?.code||'Could not load saved tab');frame.srcdoc=`<!doctype html><body style="background:#080b0d;color:#eee;font:14px system-ui;padding:20px"><h2>Tab load failed</h2><pre style="white-space:pre-wrap">${msg}</pre></body>`;frame.dataset.updatedAt=''}
+  function applySavedTabHTML(tab){const frame=savedTabFrame(tab.id);if(!frame)return;if(frame.dataset.updatedAt===String(tab.updatedAt||''))return;frame.dataset.updatedAt=tab.updatedAt||'';frame.srcdoc=composeTabHTML(tab.html||'')}
+  async function ensureSavedTabLoaded(id){
+    const meta=savedTabMeta(id);if(!meta)throw{code:'TAB_NOT_FOUND',message:'saved tab not found'};
+    const cached=state.tabHTMLCache.get(id);
+    if(cached&&cached.updatedAt===meta.updatedAt){const tab={...meta,html:cached.html};applySavedTabHTML(tab);return tab}
+    if(state.tabLoadPromises.has(id))return state.tabLoadPromises.get(id);
+    const task=request('tabs.get',{id}).then(tab=>{state.tabHTMLCache.set(id,{updatedAt:tab.updatedAt||meta.updatedAt||'',html:tab.html||''});applySavedTabHTML(tab);return tab}).finally(()=>state.tabLoadPromises.delete(id));
+    state.tabLoadPromises.set(id,task);return task;
   }
   function renderSavedTabs(){
     const pages=$('#custom-pages'),list=$('#saved-tab-list');
@@ -205,8 +222,10 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
       const pageID=`custom-${tab.id}`;
       let section=document.getElementById(pageID);let iframe=section?.querySelector('iframe.jacob-sdk-frame');
       if(!section){section=document.createElement('section');section.id=pageID;section.className='panel-page custom-user-page';iframe=document.createElement('iframe');iframe.className='jacob-sdk-frame saved-tab-frame';iframe.sandbox='allow-scripts allow-downloads';iframe.dataset.savedTabId=tab.id;section.appendChild(iframe);pages.appendChild(section)}
-      if(iframe.dataset.updatedAt!==tab.updatedAt){iframe.dataset.updatedAt=tab.updatedAt||'';iframe.srcdoc=composeTabHTML(tab.html)}
-      const row=document.createElement('div');row.className='saved-tab-row';const meta=document.createElement('div');meta.className='saved-tab-meta';meta.innerHTML=`<strong>${escapeHTML(tab.name)}</strong><span class="muted mono">${escapeHTML(tab.id)}</span>`;const actions=document.createElement('div');actions.className='row';const open=document.createElement('button');open.textContent='Open';open.onclick=()=>switchTab(pageID);const edit=document.createElement('button');edit.textContent='Edit';edit.className='secondary';edit.onclick=()=>editSavedTab(tab.id);const del=document.createElement('button');del.textContent='Remove';del.className='danger';del.onclick=()=>deleteSavedTab(tab.id);actions.append(open,edit,del);row.append(meta,actions);list.appendChild(row);
+      const cached=state.tabHTMLCache.get(tab.id);
+      if(cached&&cached.updatedAt===tab.updatedAt)applySavedTabHTML({...tab,html:cached.html});else if(iframe.dataset.updatedAt&&iframe.dataset.updatedAt!==String(tab.updatedAt||'')){iframe.removeAttribute('srcdoc');iframe.dataset.updatedAt=''}
+      const size=Number(tab.sizeBytes||0);const sizeLabel=size?` · ${size>=1024*1024?(size/1024/1024).toFixed(2)+' MB':(size/1024).toFixed(1)+' KB'}`:'';
+      const row=document.createElement('div');row.className='saved-tab-row';const meta=document.createElement('div');meta.className='saved-tab-meta';meta.innerHTML=`<strong>${escapeHTML(tab.name)}</strong><span class="muted mono">${escapeHTML(tab.id)}${sizeLabel}</span>`;const actions=document.createElement('div');actions.className='row';const open=document.createElement('button');open.textContent='Open';open.onclick=()=>switchTab(pageID);const edit=document.createElement('button');edit.textContent='Edit';edit.className='secondary';edit.onclick=()=>editSavedTab(tab.id);const del=document.createElement('button');del.textContent='Remove';del.className='danger';del.onclick=()=>deleteSavedTab(tab.id);actions.append(open,edit,del);row.append(meta,actions);list.appendChild(row);
     }
     if(!state.savedTabs.length)list.innerHTML='<div class="muted empty-state">No saved tabs in the manifest.</div>';
     renderNavigation();renderNavigationManager();
@@ -216,19 +235,19 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
 
   function previewCurrent(){request('overlay.clear',{layer:'preview'}).catch(()=>{});const frame=$('#custom-frame');frame.dataset.overlayLayer='preview';frame.srcdoc=composeTabHTML($('#custom-html').value)}
   function clearEditor(useExample=false){state.editingTabId='';$('#custom-tab-name').value=useExample?'Example Tab':'';$('#custom-html').value=useExample?exampleHTML:'';$('#editing-tab-label').textContent='New tab';$('#tab-manager-result').textContent='Editing a new tab.';previewCurrent()}
-  function editSavedTab(id){const tab=state.savedTabs.find(t=>t.id===id);if(!tab)return;state.editingTabId=id;$('#custom-tab-name').value=tab.name;$('#custom-html').value=tab.html;$('#editing-tab-label').textContent=`Editing ${tab.name}`;$('#tab-manager-result').textContent=`Loaded ${tab.name} for editing.`;previewCurrent();switchTab('tabmanager')}
+  async function editSavedTab(id){const meta=savedTabMeta(id);if(!meta)return;switchTab('tabmanager');$('#tab-manager-result').textContent=`Loading ${meta.name}…`;try{const tab=await ensureSavedTabLoaded(id);state.editingTabId=id;$('#custom-tab-name').value=tab.name;$('#custom-html').value=tab.html||'';$('#editing-tab-label').textContent=`Editing ${tab.name}`;$('#tab-manager-result').textContent=`Loaded ${tab.name} for editing.`;previewCurrent()}catch(e){$('#tab-manager-result').textContent=pretty(e)}}
   async function saveCurrentTab(){
     const name=$('#custom-tab-name').value.trim(),html=$('#custom-html').value;
     if(!name){$('#tab-manager-result').textContent='Give the tab a name before saving.';$('#custom-tab-name').focus();return}
     try{
-      const tab=await request('tabs.save',{id:state.editingTabId||'',name,html});request('overlay.clear',{layer:'preview'}).catch(()=>{});state.editingTabId=tab.id;$('#editing-tab-label').textContent=`Editing ${tab.name}`;$('#tab-manager-result').textContent=`Saved ${tab.name}. It is now a persistent JACoB tab.`;
+      const tab=await request('tabs.save',{id:state.editingTabId||'',name,html});request('overlay.clear',{layer:'preview'}).catch(()=>{});state.editingTabId=tab.id;state.tabHTMLCache.set(tab.id,{updatedAt:tab.updatedAt||'',html});$('#editing-tab-label').textContent=`Editing ${tab.name}`;$('#tab-manager-result').textContent=`Saved ${tab.name}. It is now a persistent JACoB tab.`;
       await loadSavedTabs();switchTab(`custom-${tab.id}`);
     }catch(e){$('#tab-manager-result').textContent=pretty(e)}
   }
   async function deleteSavedTab(id){
     const tab=state.savedTabs.find(t=>t.id===id);if(!tab)return;
     if(!confirm(`Remove saved tab "${tab.name}"?`))return;
-    try{await request('tabs.delete',{id});if(state.editingTabId===id)clearEditor(false);await loadSavedTabs();$('#tab-manager-result').textContent=`Removed ${tab.name}.`}catch(e){$('#tab-manager-result').textContent=pretty(e)}
+    try{await request('tabs.delete',{id});state.tabHTMLCache.delete(id);state.tabLoadPromises.delete(id);if(state.editingTabId===id)clearEditor(false);await loadSavedTabs();$('#tab-manager-result').textContent=`Removed ${tab.name}.`}catch(e){$('#tab-manager-result').textContent=pretty(e)}
   }
 
 
@@ -319,5 +338,4 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
   }
 
   connect();
-})();
 })();

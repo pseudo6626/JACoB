@@ -347,8 +347,8 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			_ = s.sendError(c, req.ID, "TAB_LAYOUT_SAVE_FAILED", err.Error())
 			return
 		}
-		s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "layout", "layout": layout}})
 		s.sendResult(c, req.ID, layout)
+		go s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "layout", "layout": layout}})
 	case "tabs.get":
 		if s.tabs == nil {
 			_ = s.sendError(c, req.ID, "TAB_STORE_UNAVAILABLE", "custom tab storage is unavailable")
@@ -378,8 +378,8 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			_ = s.sendError(c, req.ID, "TAB_SAVE_FAILED", err.Error())
 			return
 		}
-		s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "saved", "tab": tab}})
 		s.sendResult(c, req.ID, tab)
+		go s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "saved", "tab": tab}})
 	case "tabs.delete":
 		if s.tabs == nil {
 			_ = s.sendError(c, req.ID, "TAB_STORE_UNAVAILABLE", "custom tab storage is unavailable")
@@ -400,8 +400,8 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		if s.tabState != nil {
 			_ = s.tabState.Clear(id)
 		}
-		s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "deleted", "id": id}})
 		s.sendResult(c, req.ID, map[string]any{"id": id, "deleted": true})
+		go s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "deleted", "id": id}})
 	case "tabstate.get":
 		if s.tabState == nil {
 			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
