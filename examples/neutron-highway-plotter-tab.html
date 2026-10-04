@@ -1,0 +1,665 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Neutron Highway Control</title>
+<style>
+:root{color-scheme:dark;--bg:#080b0d;--panel:#10161b;--panel2:#0b1014;--line:#2c3941;--line2:#1e2a31;--accent:#ff8b2c;--accent2:#ffc078;--cyan:#62c8d5;--good:#55d78b;--bad:#ff6565;--warn:#ffc15c;--muted:#8d9aa3;--text:#edf2f4}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,-apple-system,Segoe UI,sans-serif;padding:14px}h1{font-size:20px;margin:0 0 3px;letter-spacing:.02em}h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:#c7d1d6;margin:0 0 10px}p{margin:0;color:var(--muted)}code{color:#d7e1e5}.top{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;margin-bottom:12px}.mark{font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--accent);letter-spacing:.12em}.grid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(300px,.8fr);gap:10px}.card{border:1px solid var(--line2);background:var(--panel);padding:12px}.route-card{min-height:390px}.formgrid{display:grid;grid-template-columns:142px minmax(0,1fr);gap:8px 10px;align-items:center}.label{color:var(--muted);font-size:12px}.readout{min-height:36px;display:flex;align-items:center;padding:7px 9px;background:#070a0c;border:1px solid var(--line);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}.readout.good{border-color:#2d6345}.readout.bad{border-color:#703c3c}.field{width:100%;min-height:36px;background:#070a0c;color:#fff;border:1px solid var(--line);padding:7px 9px;border-radius:0;font:inherit}.field:focus{outline:1px solid var(--accent);outline-offset:1px}.field[type=number]{font-variant-numeric:tabular-nums}.row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.actions{margin-top:11px}.btn{min-height:36px;background:#151e24;color:#fff;border:1px solid var(--line);padding:8px 11px;cursor:pointer;border-radius:0;font:inherit}.btn:hover:not(:disabled){border-color:#65757e}.btn.primary{border-color:var(--accent);color:#ffd8b8}.btn.good{border-color:#2e7650;color:#aef0c9}.btn.danger{border-color:#713c3c;color:#ffc0c0}.btn:disabled{opacity:.42;cursor:not-allowed}.notice{border-left:2px solid var(--warn);padding:7px 9px;background:#0a0e11;color:#bdc8cd;font-size:12px;line-height:1.45;margin-top:10px}.statusline{display:flex;align-items:center;gap:8px;min-height:30px;border-top:1px solid var(--line2);border-bottom:1px solid var(--line2);padding:6px 0;margin-top:11px}.lamp{width:8px;height:8px;border-radius:50%;background:#59666d;flex:none}.lamp.good{background:var(--good)}.lamp.warn{background:var(--warn)}.lamp.bad{background:var(--bad)}.state{font-weight:700}.muted{color:var(--muted)}.goodText{color:var(--good)}.warnText{color:var(--warn)}.badText{color:var(--bad)}.summary{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line2);border:1px solid var(--line2);margin-top:10px}.metric{background:var(--panel2);padding:8px 9px;min-width:0}.metric .k{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.metric .v{font:700 14px ui-monospace,SFMono-Regular,Consolas,monospace;margin-top:3px;overflow-wrap:anywhere}.route{margin-top:10px;border-top:1px solid var(--line2);max-height:410px;overflow:auto}.r{display:grid;grid-template-columns:34px minmax(0,1fr) 64px 62px 76px;gap:6px;align-items:center;padding:7px 5px;border-bottom:1px solid #1b252b;font-size:12px}.r.head{position:sticky;top:0;background:#0c1115;color:var(--muted);z-index:1;text-transform:uppercase;letter-spacing:.05em;font-size:10px}.r.done{color:#637078}.r.current{background:#171f24;color:#fff;border-left:2px solid var(--accent);padding-left:3px}.r.target{background:#102126;border-left:2px solid var(--cyan);padding-left:3px}.badge{display:inline-block;min-width:20px;text-align:center;border:1px solid #3a4b54;padding:1px 4px;font:700 10px ui-monospace,SFMono-Regular,Consolas,monospace}.badge.n{border-color:#3d7480;color:#86dce5}.badge.d{border-color:#89602e;color:#ffc17c}.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.sideStack{display:grid;gap:10px}.log{height:160px;overflow:auto;background:#06090b;border:1px solid #202b31;padding:8px;font:11px ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}.tiny{font-size:11px;color:var(--muted);line-height:1.4}.inlinecheck{display:flex;align-items:center;gap:7px}.inlinecheck input{accent-color:var(--accent)}details{border-top:1px solid var(--line2);margin-top:10px;padding-top:8px}summary{cursor:pointer;color:#c5d0d5}.timing{display:grid;grid-template-columns:1fr 88px;gap:6px 9px;align-items:center;margin-top:9px}.timing input{width:88px}.suggest{position:relative}.suggest small{display:block;color:var(--muted);margin-top:4px}.footer{margin-top:10px;font-size:11px;color:#68767e}.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:820px){body{padding:10px}.grid{grid-template-columns:1fr}.formgrid{grid-template-columns:115px minmax(0,1fr)}.r{grid-template-columns:30px minmax(0,1fr) 54px 58px}.r>*:nth-child(5){display:none}.summary{grid-template-columns:1fr 1fr}.top{display:block}.mark{margin-top:5px}}
+</style>
+</head>
+<body>
+<div class="top">
+  <div>
+    <h1>Neutron Highway Control</h1>
+    <p>Spansh route request, journal tracking and automatic GalMap waypoint handoff.</p>
+  </div>
+  <div class="mark">JACoB // NAVIGATION</div>
+</div>
+
+<div class="grid">
+  <main class="card route-card">
+    <h2>Route docket</h2>
+    <div class="formgrid">
+      <div class="label">Current system</div><div id="source" class="readout">Awaiting journal</div>
+      <div class="label">Ship jump range</div><div id="range" class="readout">Awaiting Loadout</div>
+      <label class="label" for="destination">Destination</label>
+      <div class="suggest">
+        <input id="destination" class="field" list="systemHints" autocomplete="off" spellcheck="false" placeholder="Colonia">
+        <datalist id="systemHints"></datalist>
+        <small id="lookupState">Spansh system lookup engages after 3 characters.</small>
+      </div>
+      <label class="label" for="efficiency">Efficiency</label>
+      <div>
+        <input id="efficiency" class="field" type="number" min="1" max="100" step="1" value="60">
+        <div class="tiny" style="margin-top:4px">Higher values stay nearer the direct line. 100% largely removes neutron detours.</div>
+      </div>
+    </div>
+
+    <div class="row actions">
+      <button id="calculate" class="btn primary">Calculate highway</button>
+      <button id="start" class="btn good" disabled>Engage guidance</button>
+      <button id="recalc" class="btn" disabled>Recalculate from here</button>
+      <button id="stop" class="btn danger" disabled>Stand down</button>
+    </div>
+
+    <div class="statusline">
+      <span id="lamp" class="lamp"></span>
+      <span id="state" class="state">Waiting for journal context</span>
+      <span id="detail" class="muted"></span>
+    </div>
+
+    <div class="summary">
+      <div class="metric"><div class="k">Current</div><div id="currentMetric" class="v">—</div></div>
+      <div class="metric"><div class="k">Target</div><div id="targetMetric" class="v">—</div></div>
+      <div class="metric"><div class="k">Route progress</div><div id="progressMetric" class="v">—</div></div>
+      <div class="metric"><div class="k">Remaining</div><div id="remainingMetric" class="v">—</div></div>
+      <div class="metric"><div class="k">Boost state</div><div id="boostMetric" class="v">—</div></div>
+      <div class="metric"><div class="k">Estimated jumps</div><div id="jumpsMetric" class="v">—</div></div>
+    </div>
+
+    <div id="route" class="route"><div class="tiny" style="padding:12px 4px">No route calculated.</div></div>
+  </main>
+
+  <aside class="sideStack">
+    <section class="card">
+      <h2>Guidance control</h2>
+      <div class="row">
+        <button id="plotNext" class="btn" disabled>Plot next now</button>
+        <button id="pause" class="btn" disabled>Pause automation</button>
+        <button id="resume" class="btn" disabled>Resume</button>
+      </div>
+      <label class="inlinecheck" style="margin-top:10px"><input id="hud" type="checkbox" checked> Compact in-game HUD status</label>
+      <div class="notice">At a neutron waypoint, JACoB waits for <code>JetConeBoost</code>. Once the FSD reports a completed cone charge, the next Spansh waypoint is plotted automatically.</div>
+      <div class="row" style="margin-top:10px">
+        <button id="export" class="btn" disabled>Export route JSON</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Journal fallback</h2>
+      <p class="tiny">Normally filled automatically. Use these only when this tab was installed after the current session's Location or Loadout records had already passed.</p>
+      <div class="formgrid" style="grid-template-columns:100px minmax(0,1fr);margin-top:9px">
+        <label class="label" for="manualSource">System</label><input id="manualSource" class="field" spellcheck="false" placeholder="Current system">
+        <label class="label" for="manualRange">Range LY</label><input id="manualRange" class="field" type="number" min="1" step="0.01" placeholder="65.40">
+      </div>
+      <div class="row"><button id="applyManual" class="btn">Use fallback values</button></div>
+    </section>
+
+    <section class="card">
+      <h2>Plotter log</h2>
+      <div id="log" class="log"></div>
+      <details>
+        <summary>GalMap calibration</summary>
+        <div class="timing">
+          <label>GalMap open</label><input id="mapDelay" class="field" type="number" value="1400" min="100" step="50">
+          <label>After UI up</label><input id="upDelay" class="field" type="number" value="180" min="0" step="25">
+          <label>First select</label><input id="firstSelectDelay" class="field" type="number" value="300" min="0" step="25">
+          <label>After typing</label><input id="textDelay" class="field" type="number" value="250" min="0" step="25">
+          <label>After UI down</label><input id="downDelay" class="field" type="number" value="180" min="0" step="25">
+          <label>Search result</label><input id="resultDelay" class="field" type="number" value="850" min="0" step="50">
+          <label>D nudge</label><input id="nudgeDelay" class="field" type="number" value="140" min="0" step="20">
+          <label>After UI right</label><input id="rightDelay" class="field" type="number" value="180" min="0" step="25">
+          <label>After arrival</label><input id="jumpDelay" class="field" type="number" value="1000" min="0" step="100">
+          <label>After boost</label><input id="boostDelay" class="field" type="number" value="700" min="0" step="100">
+          <label>Typing interval</label><input id="typeInterval" class="field" type="number" value="18" min="0" max="200" step="1">
+        </div>
+        <div class="tiny" style="margin-top:8px">Sequence: GalaxyMapOpen → UI_Up → UI_Select → type target → UI_Down → UI_Select → MoveFreeCamRight → UI_Right → 7× UI_Down → UI_Select → GalaxyMapOpen.</div>
+      </details>
+    </section>
+  </aside>
+</div>
+
+<div class="footer">Route service: Spansh Neutron Router. JACoB sends the source system, destination, stated maximum jump range and efficiency to Spansh when a route is requested.</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = s => document.querySelector(s);
+  const ui = {
+    source:$('#source'), range:$('#range'), destination:$('#destination'), systemHints:$('#systemHints'), lookupState:$('#lookupState'), efficiency:$('#efficiency'),
+    calculate:$('#calculate'), start:$('#start'), recalc:$('#recalc'), stop:$('#stop'), plotNext:$('#plotNext'), pause:$('#pause'), resume:$('#resume'), hud:$('#hud'), export:$('#export'),
+    lamp:$('#lamp'), state:$('#state'), detail:$('#detail'), route:$('#route'), log:$('#log'),
+    currentMetric:$('#currentMetric'), targetMetric:$('#targetMetric'), progressMetric:$('#progressMetric'), remainingMetric:$('#remainingMetric'), boostMetric:$('#boostMetric'), jumpsMetric:$('#jumpsMetric'),
+    manualSource:$('#manualSource'), manualRange:$('#manualRange'), applyManual:$('#applyManual')
+  };
+
+  const SPANSH_ROUTE = 'https://www.spansh.co.uk/api/route';
+  const SPANSH_RESULTS = 'https://www.spansh.co.uk/api/results';
+  const SPANSH_SYSTEMS = 'https://spansh.co.uk/api/systems/field_values/system_names';
+  const POLL_MS = 2000;
+  const POLL_LIMIT_MS = 10 * 60 * 1000;
+
+  let currentSystem = '';
+  let journalRange = 0;
+  let shipLabel = '';
+  let routeSource = '';
+  let routeDestination = '';
+  let routeRange = 0;
+  let routeEfficiency = 60;
+  let rawRoute = [];
+  let nodes = [];
+  let active = false;
+  let paused = false;
+  let plotting = false;
+  let currentIndex = -1;
+  let targetIndex = -1;
+  let waitingForCharge = false;
+  let routeToken = 0;
+  let calcToken = 0;
+  let lastBoostValue = null;
+  let destinationTimer = null;
+  let destinationLookupToken = 0;
+
+  const sleep = ms => new Promise(r => setTimeout(r, Math.max(0, Number(ms) || 0)));
+  const eq = (a,b) => String(a||'').trim().toLocaleLowerCase() === String(b||'').trim().toLocaleLowerCase();
+  const esc = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const num = id => { const el=$('#'+id); return el ? (Number(el.value)||0) : 0; };
+  const fmt = (v,d=1) => Number.isFinite(Number(v)) ? Number(v).toFixed(d) : '—';
+
+  function log(msg){
+    const t = new Date().toLocaleTimeString();
+    ui.log.textContent += `[${t}] ${msg}\n`;
+    ui.log.scrollTop = ui.log.scrollHeight;
+  }
+
+  function setState(text, kind='', detail=''){
+    ui.state.textContent = text;
+    ui.detail.textContent = detail || '';
+    ui.lamp.className = 'lamp' + (kind ? ' '+kind : '');
+  }
+
+  function journalReady(){ return !!currentSystem && journalRange > 0; }
+
+  function updateContextUI(){
+    ui.source.textContent = currentSystem || 'Awaiting journal';
+    ui.source.className = 'readout ' + (currentSystem ? 'good' : 'bad');
+    ui.range.textContent = journalRange > 0 ? `${journalRange.toFixed(2)} LY${shipLabel ? ' // '+shipLabel : ''}` : 'Awaiting Loadout';
+    ui.range.className = 'readout ' + (journalRange > 0 ? 'good' : 'bad');
+    ui.currentMetric.textContent = currentSystem || '—';
+    ui.calculate.disabled = !currentSystem || journalRange <= 0 || !ui.destination.value.trim() || active;
+    ui.recalc.disabled = !nodes.length || !currentSystem || journalRange <= 0 || active;
+    if(!nodes.length && !active){
+      if(journalReady()) setState('Ready','good','Enter a destination and calculate.');
+      else setState('Waiting for journal context','warn','Current system and Loadout.MaxJumpRange are required.');
+    }
+  }
+
+  function absorbJournal(ev, fromSnapshot=false){
+    if(!ev || typeof ev !== 'object') return;
+    const kind = ev.event;
+    if(kind === 'Location' || kind === 'FSDJump' || kind === 'CarrierJump'){
+      const name = String(ev.StarSystem || '').trim();
+      if(name){
+        const changed = !eq(name,currentSystem);
+        currentSystem = name;
+        if(changed) log(`${fromSnapshot?'Journal snapshot':'Location'}: ${name}`);
+      }
+    }
+    if(kind === 'Loadout'){
+      const r = Number(ev.MaxJumpRange);
+      if(Number.isFinite(r) && r > 0){
+        const changed = Math.abs(journalRange-r) > 0.001;
+        journalRange = r;
+        shipLabel = [ev.ShipName, ev.ShipIdent].filter(Boolean).join(' / ') || String(ev.Ship || '');
+        if(changed) log(`Ship range: ${r.toFixed(2)} LY${shipLabel?' // '+shipLabel:''}`);
+      }
+    }
+    updateContextUI();
+  }
+
+  async function seedContext(){
+    try{
+      const snap = await Elite.state.get();
+      const ctx = snap?.journalContext || snap?.context;
+      if(ctx){
+        if(ctx.currentSystem) currentSystem = String(ctx.currentSystem);
+        const r = Number(ctx.maxJumpRange);
+        if(Number.isFinite(r) && r > 0) journalRange = r;
+        shipLabel = String(ctx.shipName || ctx.ship || shipLabel || '');
+      }
+      absorbJournal(snap?.lastJournalEvent, true);
+      updateContextUI();
+    }catch(e){
+      log(`Journal snapshot unavailable: ${e?.message || e}`);
+      updateContextUI();
+    }
+  }
+
+  function routeIndexOf(system){
+    if(!system) return -1;
+    return nodes.findIndex(n => eq(n.system, system));
+  }
+
+  function normalizeRoute(list){
+    return (Array.isArray(list)?list:[]).map((entry,i)=>({
+      system:String(entry?.system || '').trim(),
+      distanceLeft:Number(entry?.distance_left),
+      jumps:Math.max(0, Math.round(Number(entry?.jumps) || 0)),
+      neutron:!!entry?.neutron_star,
+      raw:entry,
+      index:i
+    })).filter(n=>n.system);
+  }
+
+  function totalEstimatedJumps(){
+    return nodes.reduce((sum,n)=>sum + (Number.isFinite(n.jumps) ? n.jumps : 0),0);
+  }
+
+  function remainingDistance(){
+    const idx = currentIndex >= 0 ? currentIndex : 0;
+    const n = nodes[idx];
+    return Number.isFinite(n?.distanceLeft) ? n.distanceLeft : (Number.isFinite(nodes[0]?.distanceLeft) ? nodes[0].distanceLeft : NaN);
+  }
+
+  function renderRoute(){
+    if(!nodes.length){ ui.route.innerHTML='<div class="tiny" style="padding:12px 4px">No route calculated.</div>'; return; }
+    const rows = nodes.map((n,i)=>{
+      const cls = i < currentIndex ? 'done' : i===currentIndex ? 'current' : i===targetIndex ? 'target' : '';
+      const type = i===nodes.length-1 ? '<span class="badge d">DEST</span>' : n.neutron ? '<span class="badge n">N</span>' : '<span class="badge">LEG</span>';
+      return `<div class="r ${cls}"><div class="mono">${i+1}</div><div>${esc(n.system)}</div><div>${type}</div><div class="mono">${n.jumps||'—'}</div><div class="mono">${Number.isFinite(n.distanceLeft)?fmt(n.distanceLeft,0)+' LY':'—'}</div></div>`;
+    }).join('');
+    ui.route.innerHTML='<div class="r head"><div>#</div><div>System</div><div>Type</div><div>Jumps</div><div>Remain</div></div>'+rows;
+  }
+
+  function render(){
+    updateContextUI();
+    const target = targetIndex >= 0 && targetIndex < nodes.length ? nodes[targetIndex] : null;
+    ui.targetMetric.textContent = target?.system || '—';
+    ui.progressMetric.textContent = nodes.length ? `${Math.max(0,currentIndex+1)} / ${nodes.length}` : '—';
+    const rem = remainingDistance();
+    ui.remainingMetric.textContent = Number.isFinite(rem) ? `${fmt(rem,0)} LY` : '—';
+    ui.boostMetric.textContent = waitingForCharge ? 'CHARGE REQUIRED' : (lastBoostValue ? `CHARGED ×${fmt(lastBoostValue,1)}` : active ? 'TRANSIT' : '—');
+    ui.jumpsMetric.textContent = nodes.length ? String(totalEstimatedJumps()) : '—';
+    ui.start.disabled = !nodes.length || active;
+    ui.stop.disabled = !active;
+    ui.plotNext.disabled = !active || paused || plotting || targetIndex < 0 || targetIndex >= nodes.length;
+    ui.pause.disabled = !active || paused;
+    ui.resume.disabled = !active || !paused;
+    ui.export.disabled = !nodes.length;
+    ui.calculate.disabled = !currentSystem || journalRange <= 0 || !ui.destination.value.trim() || active;
+    ui.recalc.disabled = !nodes.length || !currentSystem || journalRange <= 0 || active;
+    renderRoute();
+    updateHUD();
+  }
+
+  async function spanshFetch(url, options={}){
+    const res = await Elite.net.fetch(url, options);
+    if(!res || Number(res.status) < 200 || Number(res.status) >= 300){
+      throw new Error(`Spansh HTTP ${res?.status || '?'}${res?.statusText ? ' '+res.statusText : ''}`);
+    }
+    if(res.json != null) return res.json;
+    try { return JSON.parse(res.body || ''); }
+    catch { throw new Error('Spansh returned a response that was not JSON'); }
+  }
+
+  async function requestRoute({source,destination,range,efficiency}, token){
+    const form = new URLSearchParams({
+      efficiency:String(efficiency),
+      range:String(range),
+      from:source,
+      to:destination
+    }).toString();
+    log(`Submitting Spansh route: ${source} → ${destination}, ${range.toFixed(2)} LY, ${efficiency}%`);
+    const started = await spanshFetch(SPANSH_ROUTE, {
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},
+      body:form
+    });
+    if(token !== calcToken) throw new Error('Route request cancelled');
+    if(started?.error) throw new Error(String(started.error));
+    const job = String(started?.job || '').trim();
+    if(!job) throw new Error('Spansh did not return a route job ID');
+    log(`Spansh job ${job} accepted.`);
+
+    const deadline = Date.now() + POLL_LIMIT_MS;
+    while(Date.now() < deadline){
+      if(token !== calcToken) throw new Error('Route request cancelled');
+      await sleep(POLL_MS);
+      const data = await spanshFetch(`${SPANSH_RESULTS}/${encodeURIComponent(job)}`, {headers:{'Accept':'application/json'}});
+      if(data?.status === 'error') throw new Error(String(data?.error || 'Spansh route calculation failed'));
+      if(data?.status === 'ok'){
+        const systems = data?.result?.system_jumps;
+        if(!Array.isArray(systems)) throw new Error('Spansh result did not contain system_jumps');
+        return systems;
+      }
+      const msg = data?.status ? String(data.status) : 'working';
+      setState('Calculating route','warn',`Spansh: ${msg}`);
+    }
+    throw new Error('Spansh route calculation timed out');
+  }
+
+  async function calculateRoute(forceCurrent=false){
+    if(active) return;
+    const source = String(currentSystem || '').trim();
+    const destination = String(ui.destination.value || routeDestination || '').trim();
+    const range = Number(journalRange);
+    const efficiency = Math.min(100,Math.max(1,Math.round(Number(ui.efficiency.value)||60)));
+    ui.efficiency.value = String(efficiency);
+    if(!source){ setState('Current system unavailable','bad','Use journal fallback if required.'); return; }
+    if(!Number.isFinite(range) || range <= 0){ setState('Jump range unavailable','bad','Loadout.MaxJumpRange is required.'); return; }
+    if(!destination){ setState('Destination required','bad'); return; }
+    if(eq(source,destination)){ setState('Already at destination','warn'); return; }
+
+    const token = ++calcToken;
+    ui.calculate.disabled = true;
+    ui.recalc.disabled = true;
+    setState('Submitting route','warn',`${source} → ${destination}`);
+    try{
+      const list = await requestRoute({source,destination,range,efficiency}, token);
+      if(token !== calcToken) return;
+      const normalized = normalizeRoute(list);
+      if(normalized.length < 2) throw new Error('Spansh returned fewer than two route waypoints');
+      rawRoute = list;
+      nodes = normalized;
+      routeSource = source;
+      routeDestination = destination;
+      routeRange = range;
+      routeEfficiency = efficiency;
+      currentIndex = routeIndexOf(currentSystem);
+      if(currentIndex < 0 && eq(nodes[0]?.system,source)) currentIndex = 0;
+      targetIndex = -1;
+      waitingForCharge = false;
+      lastBoostValue = null;
+      setState('Route received','good',`${nodes.length} intervention points // ${totalEstimatedJumps()} estimated jumps`);
+      log(`Route received: ${nodes.length} waypoints, ${totalEstimatedJumps()} estimated jumps.`);
+      render();
+    }catch(e){
+      if(token !== calcToken) return;
+      setState('Route request failed','bad',e?.message || String(e));
+      log(`ERROR: ${e?.message || e}`);
+      render();
+    }
+  }
+
+  async function press(action, token){
+    if(!active || token !== routeToken || paused) throw new Error('Guidance not active');
+    log(`Press ${action}`);
+    return Elite.bindings.press(action);
+  }
+
+  async function plotSystem(system, reason='waypoint'){
+    if(!active || paused || plotting || !system) return;
+    const token = routeToken;
+    plotting = true;
+    setState('Plotting waypoint','warn',system);
+    render();
+    try{
+      const health = await Elite.system.health();
+      if(health?.status === 'blocked') throw new Error((health.blockers||['JACoB input preflight blocked']).join('; '));
+      log(`Plotting ${system} (${reason})`);
+      await press('GalaxyMapOpen',token); await sleep(num('mapDelay'));
+      await press('UI_Up',token); await sleep(num('upDelay'));
+      await press('UI_Select',token); await sleep(num('firstSelectDelay'));
+      if(token !== routeToken || !active || paused) throw new Error('Guidance interrupted');
+      log(`Type "${system}"`);
+      await Elite.input.text(system,{intervalMs:num('typeInterval')}); await sleep(num('textDelay'));
+      await press('UI_Down',token); await sleep(num('downDelay'));
+      await press('UI_Select',token); await sleep(num('resultDelay'));
+      await press('MoveFreeCamRight',token); await sleep(num('nudgeDelay'));
+      await press('UI_Right',token); await sleep(num('rightDelay'));
+      for(let i=0;i<7;i++){ await press('UI_Down',token); await sleep(90); }
+      await press('UI_Select',token); await sleep(250);
+      await press('GalaxyMapOpen',token);
+      if(token !== routeToken || !active) return;
+      setState('Route plotted','good',system);
+      log(`Waypoint plotted: ${system}`);
+    }catch(e){
+      if(token === routeToken && active){
+        setState('Plotting error','bad',e?.message || String(e));
+        log(`ERROR: ${e?.message || e}`);
+      }
+    }finally{
+      plotting = false;
+      render();
+    }
+  }
+
+  async function chooseNextAction(reason='sync'){
+    if(!active || paused || !nodes.length) return;
+    let idx = routeIndexOf(currentSystem);
+    if(idx >= 0) currentIndex = idx;
+    if(currentIndex >= nodes.length-1){ finishRoute(); return; }
+    const here = currentIndex >= 0 ? nodes[currentIndex] : null;
+    if(here?.neutron){
+      waitingForCharge = true;
+      targetIndex = currentIndex + 1;
+      setState('Neutron charge required','warn',`Charge FSD in ${here.system}; next waypoint ${nodes[targetIndex].system}`);
+      log(`Holding for JetConeBoost in ${here.system}.`);
+      render();
+      return;
+    }
+    waitingForCharge = false;
+    targetIndex = Math.max(0,currentIndex+1);
+    if(targetIndex >= nodes.length){ finishRoute(); return; }
+    render();
+    await plotSystem(nodes[targetIndex].system, reason);
+  }
+
+  async function startGuidance(){
+    if(active || nodes.length < 2) return;
+    active = true;
+    paused = false;
+    routeToken++;
+    lastBoostValue = null;
+    currentIndex = routeIndexOf(currentSystem);
+    if(currentIndex < 0){
+      currentIndex = eq(nodes[0].system,routeSource) ? 0 : -1;
+      log(`Current system ${currentSystem || '?'} is not a Spansh intervention point; guidance will retain the next known waypoint.`);
+    }
+    setState('Guidance engaged','good');
+    log('Neutron highway guidance engaged.');
+    render();
+    await chooseNextAction('guidance start');
+  }
+
+  function finishRoute(){
+    active = false;
+    paused = false;
+    waitingForCharge = false;
+    targetIndex = -1;
+    routeToken++;
+    setState('Destination reached','good',routeDestination || nodes.at(-1)?.system || '');
+    log('Highway complete.');
+    render();
+  }
+
+  function stopGuidance(){
+    if(!active) return;
+    routeToken++;
+    active = false;
+    paused = false;
+    plotting = false;
+    waitingForCharge = false;
+    targetIndex = -1;
+    setState('Guidance stood down','');
+    log('Guidance stopped. Existing in-game route left unchanged.');
+    render();
+  }
+
+  async function onFSDJump(ev){
+    const system = String(ev?.StarSystem || '').trim();
+    if(system) currentSystem = system;
+    lastBoostValue = null;
+    updateContextUI();
+    if(!active || !system) { render(); return; }
+    log(`FSDJump: ${system}`);
+    const idx = routeIndexOf(system);
+    if(idx >= 0){
+      currentIndex = idx;
+      if(idx >= nodes.length-1){ finishRoute(); return; }
+      if(paused){
+        setState('Automation paused','warn',`At waypoint ${idx+1}/${nodes.length}`);
+        render();
+        return;
+      }
+      if(nodes[idx].neutron){
+        waitingForCharge = true;
+        targetIndex = idx+1;
+        setState('Neutron charge required','warn',`Supercharge FSD before ${nodes[targetIndex].system}`);
+        log(`Arrived neutron waypoint ${system}; waiting for JetConeBoost.`);
+        render();
+      }else{
+        waitingForCharge = false;
+        targetIndex = idx+1;
+        setState('Waypoint reached','good',`Preparing ${nodes[targetIndex].system}`);
+        render();
+        await sleep(num('jumpDelay'));
+        await plotSystem(nodes[targetIndex].system,'non-neutron waypoint');
+      }
+      return;
+    }
+
+    const target = targetIndex >= 0 ? nodes[targetIndex] : null;
+    if(target){
+      setState('Transit','good',`Current: ${system} // waypoint: ${target.system}`);
+      log(`Intermediate jump; continuing toward ${target.system}.`);
+    }else{
+      setState('Off route','warn','Recalculate from the current system if required.');
+    }
+    render();
+  }
+
+  async function onJetConeBoost(ev){
+    const boost = Number(ev?.BoostValue);
+    lastBoostValue = Number.isFinite(boost) ? boost : null;
+    log(`JetConeBoost${lastBoostValue ? ` ×${lastBoostValue}` : ''} in ${currentSystem || '?'}.`);
+    if(!active){ render(); return; }
+    const idx = routeIndexOf(currentSystem);
+    if(idx < 0 || !nodes[idx]?.neutron){
+      log('Boost event ignored for route advancement: current system is not a neutron waypoint in this route.');
+      render();
+      return;
+    }
+    currentIndex = idx;
+    if(idx >= nodes.length-1){ finishRoute(); return; }
+    targetIndex = idx+1;
+    waitingForCharge = false;
+    setState('FSD supercharged','good',`Next: ${nodes[targetIndex].system}`);
+    render();
+    if(paused){ log('Automation paused; next waypoint retained.'); return; }
+    await sleep(num('boostDelay'));
+    await plotSystem(nodes[targetIndex].system,'JetConeBoost');
+  }
+
+  async function manualPlotNext(){
+    if(!active || paused || plotting) return;
+    if(targetIndex < 0){ await chooseNextAction('manual'); return; }
+    waitingForCharge = false;
+    await plotSystem(nodes[targetIndex]?.system,'manual override');
+  }
+
+  function pauseAutomation(){
+    if(!active || paused) return;
+    paused = true;
+    routeToken++;
+    setState('Automation paused','warn','Journal tracking remains active.');
+    log('GalMap automation paused.');
+    render();
+  }
+
+  async function resumeAutomation(){
+    if(!active || !paused) return;
+    paused = false;
+    routeToken++;
+    setState('Automation resumed','good');
+    log('GalMap automation resumed.');
+    render();
+    await chooseNextAction('resume');
+  }
+
+  function updateHUD(){
+    if(!ui.hud.checked || !active || !nodes.length){
+      Elite.overlay.clear().catch(()=>{});
+      return;
+    }
+    const target = targetIndex >= 0 ? nodes[targetIndex] : null;
+    const status = paused ? 'PAUSED' : waitingForCharge ? 'CHARGE FSD' : plotting ? 'PLOTTING' : 'TRANSIT';
+    const progress = `${Math.max(1,currentIndex+1)}/${nodes.length}`;
+    const distance = remainingDistance();
+    const statusColor = waitingForCharge ? '#ffc15c' : paused ? '#8e9aa3' : '#ff8b2c';
+    const scene = {
+      z:18,
+      space:'normalized',
+      items:[
+        {type:'text',x:0.025,y:0.065,text:`NEUTRON HIGHWAY // ${progress}`,fontSize:17,color:'#ff8b2c',align:'left'},
+        {type:'text',x:0.025,y:0.092,text:`${status}`,fontSize:22,color:statusColor,align:'left'},
+        {type:'text',x:0.025,y:0.122,text:`TARGET  ${target?.system || '—'}`,fontSize:15,color:'#edf2f4',align:'left'},
+        {type:'text',x:0.025,y:0.148,text:`CURRENT ${currentSystem || '—'}`,fontSize:13,color:'#aebbc1',align:'left'},
+        {type:'text',x:0.025,y:0.172,text:`REMAIN  ${Number.isFinite(distance)?fmt(distance,0)+' LY':'—'}`,fontSize:13,color:'#aebbc1',align:'left'}
+      ]
+    };
+    Elite.overlay.set(scene).catch(()=>{});
+  }
+
+  function exportRoute(){
+    if(!nodes.length) return;
+    const safeDest = (routeDestination || 'route').replace(/[^a-z0-9._-]+/gi,'-').replace(/^-+|-+$/g,'');
+    const data = {
+      schema:'jacob.neutron-highway.v1',
+      createdAt:new Date().toISOString(),
+      source:routeSource,
+      destination:routeDestination,
+      jumpRange:routeRange,
+      efficiency:routeEfficiency,
+      systemJumps:rawRoute
+    };
+    Elite.files.json(`JACoB-Neutron-${safeDest}.json`,data,false);
+    log('Route export handed to browser.');
+  }
+
+  async function lookupDestination(){
+    const q = ui.destination.value.trim();
+    updateContextUI();
+    if(q.length < 3){ ui.systemHints.innerHTML=''; ui.lookupState.textContent='Spansh system lookup engages after 3 characters.'; return; }
+    const token=++destinationLookupToken;
+    ui.lookupState.textContent='Checking Spansh…';
+    try{
+      const data = await spanshFetch(`${SPANSH_SYSTEMS}?q=${encodeURIComponent(q)}`,{headers:{'Accept':'application/json'}});
+      if(token!==destinationLookupToken) return;
+      const values = Array.isArray(data?.values) ? data.values : Array.isArray(data?.min_max) ? data.min_max.map(x=>x?.name).filter(Boolean) : [];
+      ui.systemHints.innerHTML = values.slice(0,20).map(v=>`<option value="${esc(v)}"></option>`).join('');
+      ui.lookupState.textContent = values.length ? `${values.length} Spansh match${values.length===1?'':'es'} available.` : 'No Spansh matches.';
+    }catch(e){
+      if(token!==destinationLookupToken) return;
+      ui.lookupState.textContent = `Lookup unavailable: ${e?.message || e}`;
+    }
+  }
+
+  ui.destination.addEventListener('input',()=>{
+    clearTimeout(destinationTimer);
+    destinationTimer=setTimeout(lookupDestination,350);
+    updateContextUI();
+  });
+  ui.efficiency.addEventListener('change',()=>{ ui.efficiency.value=String(Math.min(100,Math.max(1,Math.round(Number(ui.efficiency.value)||60)))); });
+  ui.calculate.addEventListener('click',()=>calculateRoute(false));
+  ui.recalc.addEventListener('click',()=>calculateRoute(true));
+  ui.start.addEventListener('click',startGuidance);
+  ui.stop.addEventListener('click',stopGuidance);
+  ui.plotNext.addEventListener('click',manualPlotNext);
+  ui.pause.addEventListener('click',pauseAutomation);
+  ui.resume.addEventListener('click',resumeAutomation);
+  ui.hud.addEventListener('change',updateHUD);
+  ui.export.addEventListener('click',exportRoute);
+  ui.applyManual.addEventListener('click',()=>{
+    const s=ui.manualSource.value.trim(); const r=Number(ui.manualRange.value);
+    if(s){ currentSystem=s; log(`Fallback system: ${s}`); }
+    if(Number.isFinite(r)&&r>0){ journalRange=r; shipLabel='manual fallback'; log(`Fallback jump range: ${r.toFixed(2)} LY`); }
+    updateContextUI(); render();
+  });
+
+  Elite.journal.subscribe('*',ev=>{
+    absorbJournal(ev,false);
+    if(ev?.event==='FSDJump') onFSDJump(ev);
+    else if(ev?.event==='JetConeBoost') onJetConeBoost(ev);
+  });
+
+  seedContext();
+  render();
+  log('Neutron Highway Control ready.');
+  log('Awaiting Location/FSDJump and Loadout journal context.');
+})();
+</script>
+</body>
+</html>
