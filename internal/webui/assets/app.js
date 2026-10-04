@@ -304,5 +304,20 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
   $('#custom-html').value=localStorage.getItem('jacob-p2-custom-html')||exampleHTML;
   $('#custom-tab-name').value='Custom Tab';
   previewCurrent();
+
+  // Render built-in navigation before the core connection succeeds so a
+  // brand-new LAN client can reach Settings and enter its pairing token.
+  renderNavigation();
+
+  // New remote browsers have no token in localStorage yet. Open Settings
+  // immediately instead of leaving them on an unauthenticated shell.
+  if (!isLocal && !token()) {
+    switchTab('settings');
+    $('#network-result').textContent =
+      'Enter the pair token shown on the computer running JACoB.';
+    $('#remote-token').focus();
+  }
+
   connect();
+})();
 })();
