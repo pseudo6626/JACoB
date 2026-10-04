@@ -1,7 +1,7 @@
 # JACoB Custom Tab Developer Reference
 
-Version: Alpha 0.2.8  
-SDK version: 6
+Version: Alpha 0.2.4  
+SDK version: 2
 
 This is the canonical reference for building JACoB custom HTML tabs. It describes the tab runtime, the browser SDK, the direct WebSocket protocol, state and event shapes, input behavior, overlays, video, recorder support, persistence, security boundaries, and platform limitations.
 
@@ -74,33 +74,25 @@ Saved tabs are stored by the JACoB core, not browser local storage. On Windows t
 %APPDATA%\JACoB
 ```
 
-Saved-tab metadata and navigation order are stored in:
+The tab database is:
 
 ```text
 custom-tabs.json
 ```
 
-Each tab body is stored separately under:
-
-```text
-custom-tabs/<tab-id>.html
-```
-
-The manifest therefore stays small even when individual tabs contain large datasets or complex UI. `tabs.list` returns metadata only; JACoB loads a tab's HTML on demand with `tabs.get` when the tab is opened or edited. Existing schema-2 stores with inline HTML are migrated automatically on startup without changing tab IDs or per-tab `Elite.store` state.
-
-A saved tab metadata record contains:
+A saved tab record contains:
 
 ```json
 {
   "id": "tab-0123456789abcdef",
   "name": "Route Queue",
-  "sizeBytes": 182304,
+  "html": "<!doctype html>...",
   "createdAt": "2026-10-03T16:00:00Z",
   "updatedAt": "2026-10-03T16:10:00Z"
 }
 ```
 
-Maximum saved HTML size is 4 MiB per tab.
+Maximum saved HTML size is 1 MiB per tab.
 
 ### 2.4 Overlay isolation
 
@@ -129,9 +121,6 @@ Elite.recorder
 Elite.overlay
 Elite.video
 Elite.net
-Elite.data
-Elite.store
-Elite.locale
 Elite.files
 Elite.events
 Elite.journal
@@ -140,7 +129,7 @@ Elite.journal
 The current SDK version is:
 
 ```js
-Elite.api.version === 6
+Elite.api.version === 2
 ```
 
 All command methods return Promises.
@@ -236,87 +225,15 @@ Result:
     "Longitude": -67.89,
     "Heading": 142
   },
-  "market": {
-    "event": "Market",
-    "MarketID": 3700005632,
-    "StationName": "Fleet Carrier",
-    "StarSystem": "Sol",
-    "Items": []
-  },
-  "eliteFiles": {
-    "cargo": {"event":"Cargo","Inventory":[]},
-    "navRoute": {"event":"Route","Route":[]},
-    "modulesInfo": {"event":"ModuleInfo","Modules":[]}
-  },
-  "eliteFileNames": {
-    "cargo": "Cargo.json",
-    "navRoute": "NavRoute.json",
-    "modulesInfo": "ModulesInfo.json"
-  },
-  "eliteFileUpdated": {
-    "cargo": "2026-10-04T10:15:00Z"
-  },
   "lastJournalEvent": {
     "timestamp": "2026-10-03T19:59:58Z",
     "event": "FSDJump",
     "StarSystem": "Sol"
-  },
-  "journalContext": {
-    "currentSystem": "Sol",
-    "maxJumpRange": 65.43,
-    "ship": "krait_light",
-    "shipName": "Wayfarer",
-    "shipIdent": "NH-01",
-    "carrierCallsign": "ABC-123",
-    "carrierFreeSpace": 8800,
-    "carrierAvailableBalance": 123456789
   }
 }
 ```
 
-`status`, `market`, and `lastJournalEvent` may be empty when Elite has not produced those files or events yet. `market` remains the compatibility shortcut for the latest parsed `Market.json`. `journalContext` is recovered from the current journal when JACoB attaches and is maintained as new `Location`, `FSDJump`, `CarrierJump`, `Loadout`, and `CarrierStats` records arrive. Carrier context includes callsign/name plus capacity and available-balance fields when Elite has written them.
-
-`eliteFiles` contains every valid JSON snapshot currently present in Elite's journal directory. JACoB provides stable names for the documented files: `status`, `market`, `outfitting`, `shipyard`, `modulesInfo`, `cargo`, `navRoute`, `backpack`, `shipLocker`, and `fcMaterials`. Any future JSON file written into that directory is exposed automatically with a normalized filename key. JACoB reads only the detected Elite journal directory; this interface cannot browse arbitrary filesystem paths.
-
-### Elite companion-file access
-
-List available snapshots:
-
-```js
-const index = await Elite.data.list();
-console.log(index.files);
-```
-
-Read one snapshot by canonical name or filename:
-
-```js
-const cargo = await Elite.data.get('cargo');
-const route = await Elite.data.get('NavRoute.json');
-
-if (cargo.found) {
-  console.log(cargo.data.Inventory);
-}
-```
-
-Subscribe to one snapshot:
-
-```js
-const off = Elite.data.subscribe('navRoute', update => {
-  if (update.available) console.log(update.data.Route);
-});
-
-off();
-```
-
-Subscribe to all companion-file changes:
-
-```js
-Elite.data.subscribe('*', update => {
-  console.log(update.name, update.file, update.data);
-});
-```
-
-Each change is also available through `Elite.events.subscribe('eliteFile', ...)`. The event payload contains `name`, `file`, `updated`, `available`, and `data` when available. `Status.json` and `Market.json` continue to emit their existing `status` and `market` compatibility events as well.
+`status` and `lastJournalEvent` may be `null`/empty when Elite has not produced those files or events yet.
 
 ### Status subscription
 
@@ -356,29 +273,6 @@ Elite.journal.subscribe('*', event => {
 
 Journal objects are the parsed JSON objects written by Elite.
 
-### Journal-session history
-
-List journal session files inside the detected Elite journal directory:
-
-```js
-const index = await Elite.journal.files();
-console.log(index.files);
-```
-
-Read parsed records from the current journal, or name one of the files returned above:
-
-```js
-const page = await Elite.journal.read({offset: 0, limit: 1000});
-const jumps = await Elite.journal.read({
-  file: index.files[0].file,
-  event: 'FSDJump',
-  offset: 0,
-  limit: 500
-});
-```
-
-`limit` defaults to 1,000 and is capped at 5,000 parsed events per request. Use `offset` and the returned `info.nextOffset` when `info.truncated` is true to page through longer sessions. Filenames must be journal basenames from the detected Elite journal directory; path traversal and arbitrary filesystem reads are rejected. Live subscriptions remain the preferred interface when a tab only needs new events.
-
 ### Generic event subscription
 
 ```js
@@ -398,12 +292,9 @@ core.hello
 core.journalFile
 state
 status
-market
-eliteFile
 journal
 tabs.changed
 appearance.changed
-locale.changed
 recorder.input
 core.update
 ```
@@ -565,26 +456,13 @@ await Elite.bindings.press('UI_Select');
 
 JACoB focuses Elite and sends one semantic binding press.
 
-### `Elite.bindings.down(action)` / `Elite.bindings.up(action)`
-
-```js
-await Elite.bindings.down('UI_Right');
-try {
-  await new Promise(resolve => setTimeout(resolve, 1200));
-} finally {
-  await Elite.bindings.up('UI_Right');
-}
-```
-
-These calls keep one semantic Elite binding physically held across client-side work. They are useful when a tab needs to preserve Elite's native key-repeat acceleration while remaining able to release the key immediately on cancellation. Always pair `down()` with `up()` in a `finally` block.
-
 ### `Elite.bindings.hold(action, durationMs)`
 
 ```js
 await Elite.bindings.hold('MoveFreeCamRight', 240);
 ```
 
-`durationMs` range: 20 to 10,000 ms. This legacy convenience call blocks until the hold completes; use `down()` / `up()` when the hold must be interruptible.
+`durationMs` range: 20 to 10,000 ms.
 
 ---
 
@@ -1050,70 +928,9 @@ Network limits:
 
 A custom tab with `net.fetch` can transmit information to a public service. Install tabs from sources you trust and inspect tabs that request credentials or send journal/state data away from the computer.
 
-### `Elite.store`
-
-Saved custom tabs receive a small persistent JSON store scoped to that saved tab. The host supplies the tab identity; one tab cannot select another tab's storage namespace.
-
-```js
-const manifest = await Elite.store.get('manifest', []);
-await Elite.store.set('manifest', manifest);
-await Elite.store.delete('manifest');
-await Elite.store.clear();
-```
-
-`get(key, fallback)` returns the fallback when the key is absent. Values must be JSON-serializable. A single value is limited to 512 KiB and one saved tab is limited to 2 MiB total. Preview tabs do not receive persistent storage; save the tab first when testing persistence. Removing a saved tab also removes its stored state.
-
 ---
 
-## 11. Language and localization
-
-JACoB has one host-level language setting shared by every connected browser. SDK v6 exposes that locale to saved custom tabs through `Elite.locale`.
-
-Supported locale codes are:
-
-```text
-en	ru	de	fr	zh-CN	es
-```
-
-Read the current locale:
-
-```js
-console.log(Elite.locale.language);
-console.log(Elite.locale.supported);
-
-const info = await Elite.locale.get();
-```
-
-React immediately when the user changes language in JACoB Settings:
-
-```js
-const off = Elite.locale.subscribe(info => {
-  document.documentElement.lang = info.language;
-  render();
-});
-```
-
-`Elite.locale.subscribe()` calls the callback once with the tab's current locale and then again for each `locale.changed` event.
-
-Tabs keep their own translations. `Elite.locale.t()` supplies current-language selection, English fallback, and `{name}`-style interpolation:
-
-```js
-const strings = {
-  en: { load: 'Load {count} orders', ready: 'Ready' },
-  de: { load: '{count} Aufträge laden', ready: 'Bereit' },
-  es: { load: 'Cargar {count} órdenes', ready: 'Listo' }
-};
-
-button.textContent = Elite.locale.t(strings, 'load', { count: 12 });
-```
-
-If the active language or requested key is absent, `Elite.locale.t()` falls back to the English entry and then to the key itself. Existing tabs that do not use `Elite.locale` continue to work unchanged and remain in whatever language their HTML contains.
-
-The global language is changed through the JACoB Settings UI. `locale.save` exists in the direct host protocol, while sandboxed custom tabs receive read-only locale access through `Elite.locale`.
-
----
-
-## 12. Timing and sequencing patterns
+## 11. Timing and sequencing patterns
 
 JACoB does not include a procedure engine. Build sequences inside the custom tab.
 
@@ -1194,7 +1011,7 @@ function stop() {
 
 ---
 
-## 13. Appearance/theme files
+## 12. Appearance/theme files
 
 A JACoB shell theme is an HTML file uploaded under **Settings → Appearance**.
 
@@ -1233,7 +1050,7 @@ The selected theme is persisted by the core and is shared by browsers opening th
 
 ---
 
-## 14. Direct WebSocket protocol
+## 13. Direct WebSocket protocol
 
 Most custom tabs should use the injected SDK. The direct protocol is documented for external clients and debugging.
 
@@ -1309,8 +1126,6 @@ core.ping
 core.shutdown
 state.get
 system.health
-locale.get
-locale.save
 update.check
 update.install
 appearance.get
@@ -1327,8 +1142,6 @@ bindings.autofill
 bindings.reload
 bindings.get
 binding.press
-binding.down
-binding.up
 binding.hold
 input.tap
 input.hold
@@ -1341,25 +1154,17 @@ overlay.set
 overlay.clear
 video.info
 net.fetch
-elitefiles.list
-elitefiles.get
-journal.files
-journal.read
-tabstate.get
-tabstate.set
-tabstate.delete
-tabstate.clear
 ```
 
-`core.shutdown`, `update.check`, `update.install`, tab-layout storage, appearance storage, and changing the global locale are host/UI concerns. `update.install` is additionally limited to a loopback browser.
+`core.shutdown`, `update.check`, `update.install`, tab-layout storage, and appearance storage are host/UI concerns. `update.install` is additionally limited to a loopback browser.
 
 `core.shutdown` is host-UI only and is accepted only from a loopback browser. It is not exposed through the custom-tab SDK.
 
-The sandbox SDK exposes the game-facing primitives, `net.fetch`, read-only Elite companion-file access through `Elite.data`, and the saved-tab-scoped `Elite.store` interface. Navigation layout, update installation, shutdown, appearance management, and changing the global locale remain host/UI concerns. `Elite.files` is implemented inside the injected SDK and does not require a WebSocket method.
+The sandbox SDK exposes the game-facing primitives and `net.fetch`. Tab storage, navigation layout, update installation, shutdown, and appearance management remain host/UI concerns. `Elite.files` is implemented inside the injected SDK and does not require a WebSocket method.
 
 ---
 
-## 15. HTTP media endpoints
+## 14. HTTP media endpoints
 
 Snapshot:
 
@@ -1377,7 +1182,7 @@ LAN requests must include the pairing token query parameter.
 
 ---
 
-## 16. Core hello structure
+## 15. Core hello structure
 
 When a browser connects, the host receives `core.hello`. Custom tabs receive it through the generic event bridge.
 
@@ -1385,11 +1190,11 @@ Representative shape:
 
 ```json
 {
-  "prototype": "Alpha 0.2.8",
-  "version": "0.2.8-alpha",
+  "prototype": "Alpha 0.2.4",
+  "version": "0.2.4-alpha",
   "product": "JACoB",
   "name": "Journal Aligned Control Bridge",
-  "apiVersion": 6,
+  "apiVersion": 2,
   "os": "windows",
   "arch": "amd64",
   "goRuntime": "go1.x",
@@ -1412,24 +1217,13 @@ Representative shape:
   "lan": {},
   "health": {},
   "appearance": {},
-  "locale": {
-    "language": "en",
-    "supported": [
-      {"code":"en","name":"English","nativeName":"English"},
-      {"code":"ru","name":"Russian","nativeName":"Русский"},
-      {"code":"de","name":"German","nativeName":"Deutsch"},
-      {"code":"fr","name":"French","nativeName":"Français"},
-      {"code":"zh-CN","name":"Simplified Chinese","nativeName":"简体中文"},
-      {"code":"es","name":"Spanish","nativeName":"Español"}
-    ]
-  },
   "customTabs": {}
 }
 ```
 
 ---
 
-## 17. Common error codes
+## 16. Common error codes
 
 The exact set can grow, but tabs should be prepared for at least:
 
@@ -1473,7 +1267,7 @@ Do not depend on error message wording. Use `error.code` for branching.
 
 ---
 
-## 18. Security and trust boundaries
+## 17. Security and trust boundaries
 
 Custom tabs:
 
@@ -1504,11 +1298,9 @@ LAN clients require the pairing token for WebSocket and video access.
 
 ### External API boundary
 
-`Elite.data` is read-only and is restricted to JSON snapshots inside the detected Elite journal directory. `Elite.journal.files()` and `Elite.journal.read()` are similarly restricted to journal basenames from that directory and cap each historical read. Unknown future JSON filenames are exposed automatically, but custom tabs cannot supply filesystem paths.
-
 `Elite.net.fetch` is an outbound public-network bridge. JACoB rejects loopback, private/LAN, link-local and local-name destinations so a custom tab cannot use the bridge to probe services on the host or local network. Public API access still gives the tab a route to transmit data off the computer; treat third-party tabs accordingly.
 
-## 19. Platform capability summary
+## 18. Platform capability summary
 
 ### Windows
 
@@ -1557,7 +1349,7 @@ if (!recorder.available) {
 
 ---
 
-## 20. JSON schemas
+## 19. JSON schemas
 
 The release package contains machine-readable schemas under:
 
@@ -1719,7 +1511,7 @@ For exact machine-readable schemas, use the files in `docs/schemas/` shipped wit
 
 ---
 
-## 21. Complete custom-tab starter
+## 20. Complete custom-tab starter
 
 ```html
 <!doctype html>
@@ -1815,7 +1607,7 @@ Elite.state.subscribe(status => {
 
 ---
 
-## 22. Design guidance for durable tabs
+## 21. Design guidance for durable tabs
 
 - Prefer semantic Elite bindings over raw keys when the action name is known.
 - Use raw keys only when the physical key itself is part of the interaction.

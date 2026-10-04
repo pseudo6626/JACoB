@@ -77,9 +77,9 @@ func main() {
 		var prompt string
 		switch {
 		case cmp > 0:
-			prompt = fmt.Sprintf("JACoB %s is already installed.\n\nThis setup contains %s. Update the existing installation?\n\nSaved tabs, navigation, language settings and appearance files will be kept.", installed, buildinfo.Version)
+			prompt = fmt.Sprintf("JACoB %s is already installed.\n\nThis setup contains %s. Update the existing installation?\n\nSaved tabs, navigation settings and appearance files will be kept.", installed, buildinfo.Version)
 		case cmp == 0:
-			prompt = fmt.Sprintf("JACoB %s is already installed.\n\nReinstall this build?\n\nSaved tabs, navigation, language settings and appearance files will be kept.", installed)
+			prompt = fmt.Sprintf("JACoB %s is already installed.\n\nReinstall this build?\n\nSaved tabs, navigation settings and appearance files will be kept.", installed)
 		default:
 			prompt = fmt.Sprintf("JACoB %s is already installed.\n\nThis setup contains the older build %s. Replace the installed version?", installed, buildinfo.Version)
 		}
@@ -215,7 +215,7 @@ func install(includeRecorder bool) error {
 }
 
 func uninstall() {
-	if msg("Uninstall JACoB", "Remove JACoB from this Windows account?\n\nSaved tabs, navigation, language settings and appearance files in AppData will be kept.", mbYesNo|mbIconQuestion) != idYes {
+	if msg("Uninstall JACoB", "Remove JACoB from this Windows account?\n\nSaved tabs, navigation settings and appearance files in AppData will be kept.", mbYesNo|mbIconQuestion) != idYes {
 		return
 	}
 

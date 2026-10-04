@@ -28,9 +28,7 @@ import (
 	"jacob/internal/control"
 	"jacob/internal/customtabs"
 	"jacob/internal/journal"
-	"jacob/internal/localization"
 	"jacob/internal/platform"
-	"jacob/internal/tabstate"
 	"jacob/internal/updater"
 	"jacob/internal/webfetch"
 	"jacob/internal/webui"
@@ -58,9 +56,7 @@ type Server struct {
 	capture       platform.CaptureDriver
 	overlay       platform.OverlayDriver
 	tabs          *customtabs.Store
-	tabState      *tabstate.Store
 	appearance    *appearance.Store
-	locale        *localization.Store
 	updater       *updater.Client
 	webfetch      *webfetch.Client
 	clientsMu     sync.RWMutex
@@ -94,13 +90,6 @@ func New(cfg Config) *Server {
 		cfg.PairToken = randomToken()
 	}
 	s := &Server{cfg: cfg, input: platform.NewInputDriver(), recorder: platform.NewInputRecorder(), capture: platform.NewCaptureDriver(), overlay: platform.NewOverlayDriver(), updater: updater.New(), webfetch: webfetch.New(), clients: map[*wsClient]struct{}{}, started: time.Now(), shutdown: make(chan struct{})}
-	localeStore, localeErr := localization.New(cfg.DataDir)
-	if localeErr != nil {
-		log.Printf("JACoB locale store unavailable: %v", localeErr)
-	} else {
-		s.locale = localeStore
-		log.Printf("Locale store: %s", localeStore.Path())
-	}
 	themeStore, themeErr := appearance.New(cfg.DataDir)
 	if themeErr != nil {
 		log.Printf("JACoB appearance store unavailable: %v", themeErr)
@@ -113,13 +102,6 @@ func New(cfg Config) *Server {
 	} else {
 		s.tabs = tabStore
 		log.Printf("Custom tabs store: %s", tabStore.Path())
-	}
-	stateStore, stateErr := tabstate.New(cfg.DataDir)
-	if stateErr != nil {
-		log.Printf("JACoB tab state store unavailable: %v", stateErr)
-	} else {
-		s.tabState = stateStore
-		log.Printf("Tab state store: %s", stateStore.Path())
 	}
 	s.bindings = bindings.New(cfg.BindingsDir)
 	if cfg.AutoBind {
@@ -283,50 +265,8 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		}()
 	case "state.get":
 		s.sendResult(c, req.ID, s.watcher.Snapshot())
-	case "elitefiles.list":
-		s.sendResult(c, req.ID, map[string]any{"files": s.watcher.EliteFileIndex()})
-	case "elitefiles.get":
-		name, _ := req.Params["name"].(string)
-		if strings.TrimSpace(name) == "" {
-			_ = s.sendError(c, req.ID, "BAD_PARAMS", "name is required")
-			return
-		}
-		data, fileName, updated, found := s.watcher.EliteFile(name)
-		s.sendResult(c, req.ID, map[string]any{"found": found, "name": name, "file": fileName, "updated": updated, "data": data})
-	case "journal.files":
-		s.sendResult(c, req.ID, map[string]any{"files": s.watcher.JournalFiles()})
-	case "journal.read":
-		fileName, _ := req.Params["file"].(string)
-		eventName, _ := req.Params["event"].(string)
-		offset := intParam(req.Params, "offset", 0)
-		limit := intParam(req.Params, "limit", 1000)
-		events, info, err := s.watcher.ReadJournal(fileName, eventName, offset, limit)
-		if err != nil {
-			_ = s.sendError(c, req.ID, "JOURNAL_READ_FAILED", err.Error())
-			return
-		}
-		s.sendResult(c, req.ID, map[string]any{"events": events, "info": info})
 	case "system.health":
 		s.sendResult(c, req.ID, s.healthReport())
-	case "locale.get":
-		if s.locale == nil {
-			s.sendResult(c, req.ID, map[string]any{"language": localization.DefaultLanguage, "supported": localization.Supported()})
-			return
-		}
-		s.sendResult(c, req.ID, s.locale.Info())
-	case "locale.save":
-		if s.locale == nil {
-			_ = s.sendError(c, req.ID, "LOCALE_UNAVAILABLE", "language storage is unavailable")
-			return
-		}
-		language, _ := req.Params["language"].(string)
-		if err := s.locale.Set(language); err != nil {
-			_ = s.sendError(c, req.ID, "BAD_LANGUAGE", err.Error())
-			return
-		}
-		info := s.locale.Info()
-		s.sendResult(c, req.ID, info)
-		s.broadcast(envelope{Type: "event", Event: "locale.changed", Data: info})
 	case "appearance.get":
 		if s.appearance == nil {
 			s.sendResult(c, req.ID, map[string]any{"html": "", "custom": false})
@@ -375,8 +315,8 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			_ = s.sendError(c, req.ID, "TAB_LAYOUT_SAVE_FAILED", err.Error())
 			return
 		}
+		s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "layout", "layout": layout}})
 		s.sendResult(c, req.ID, layout)
-		go s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "layout", "layout": layout}})
 	case "tabs.get":
 		if s.tabs == nil {
 			_ = s.sendError(c, req.ID, "TAB_STORE_UNAVAILABLE", "custom tab storage is unavailable")
@@ -406,8 +346,8 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			_ = s.sendError(c, req.ID, "TAB_SAVE_FAILED", err.Error())
 			return
 		}
+		s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "saved", "tab": tab}})
 		s.sendResult(c, req.ID, tab)
-		go s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "saved", "tab": tab}})
 	case "tabs.delete":
 		if s.tabs == nil {
 			_ = s.sendError(c, req.ID, "TAB_STORE_UNAVAILABLE", "custom tab storage is unavailable")
@@ -425,63 +365,8 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		if s.overlay != nil {
 			_ = s.overlay.ClearLayer("tab:" + id)
 		}
-		if s.tabState != nil {
-			_ = s.tabState.Clear(id)
-		}
+		s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "deleted", "id": id}})
 		s.sendResult(c, req.ID, map[string]any{"id": id, "deleted": true})
-		go s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "deleted", "id": id}})
-	case "tabstate.get":
-		if s.tabState == nil {
-			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
-			return
-		}
-		tabID, _ := req.Params["tabId"].(string)
-		key, _ := req.Params["key"].(string)
-		if tabID == "" || key == "" {
-			_ = s.sendError(c, req.ID, "BAD_PARAMS", "tab id and state key are required")
-			return
-		}
-		value, ok := s.tabState.Get(tabID, key)
-		s.sendResult(c, req.ID, map[string]any{"found": ok, "value": value})
-	case "tabstate.set":
-		if s.tabState == nil {
-			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
-			return
-		}
-		tabID, _ := req.Params["tabId"].(string)
-		key, _ := req.Params["key"].(string)
-		if tabID == "" || key == "" {
-			_ = s.sendError(c, req.ID, "BAD_PARAMS", "tab id and state key are required")
-			return
-		}
-		if err := s.tabState.Set(tabID, key, req.Params["value"]); err != nil {
-			_ = s.sendError(c, req.ID, "TAB_STATE_SAVE_FAILED", err.Error())
-			return
-		}
-		s.sendResult(c, req.ID, map[string]any{"saved": true, "key": key})
-	case "tabstate.delete":
-		if s.tabState == nil {
-			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
-			return
-		}
-		tabID, _ := req.Params["tabId"].(string)
-		key, _ := req.Params["key"].(string)
-		if err := s.tabState.Delete(tabID, key); err != nil {
-			_ = s.sendError(c, req.ID, "TAB_STATE_DELETE_FAILED", err.Error())
-			return
-		}
-		s.sendResult(c, req.ID, map[string]any{"deleted": true, "key": key})
-	case "tabstate.clear":
-		if s.tabState == nil {
-			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
-			return
-		}
-		tabID, _ := req.Params["tabId"].(string)
-		if err := s.tabState.Clear(tabID); err != nil {
-			_ = s.sendError(c, req.ID, "TAB_STATE_CLEAR_FAILED", err.Error())
-			return
-		}
-		s.sendResult(c, req.ID, map[string]any{"cleared": true})
 	case "update.check":
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
@@ -773,36 +658,6 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			return
 		}
 		s.sendResult(c, req.ID, result)
-	case "binding.down":
-		if !s.requireInput(c, req.ID) {
-			return
-		}
-		action, _ := req.Params["action"].(string)
-		if action == "" {
-			_ = s.sendError(c, req.ID, "BAD_PARAMS", "params.action is required")
-			return
-		}
-		result, err := s.controls.DownBinding(action)
-		if err != nil {
-			_ = s.sendError(c, req.ID, "BINDING_DOWN_FAILED", err.Error())
-			return
-		}
-		s.sendResult(c, req.ID, result)
-	case "binding.up":
-		if !s.requireInput(c, req.ID) {
-			return
-		}
-		action, _ := req.Params["action"].(string)
-		if action == "" {
-			_ = s.sendError(c, req.ID, "BAD_PARAMS", "params.action is required")
-			return
-		}
-		result, err := s.controls.UpBinding(action)
-		if err != nil {
-			_ = s.sendError(c, req.ID, "BINDING_UP_FAILED", err.Error())
-			return
-		}
-		s.sendResult(c, req.ID, result)
 	case "binding.hold":
 		if !s.requireInput(c, req.ID) {
 			return
@@ -853,20 +708,14 @@ func (s *Server) systemInfo(includeSecret bool) map[string]any {
 		}
 	}
 	return map[string]any{
-		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 6, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()),
+		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 2, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()),
 		"journalDir": s.cfg.JournalDir, "bindingsDir": s.bindings.Directory(), "bindingsFile": s.bindings.ActiveFile(), "bindingsFiles": s.bindings.ActiveFiles(), "bindingsSource": s.bindings.ActiveSource(), "bindingsCount": len(s.bindings.ListActions()), "autoBind": s.autoBind,
 		"input": map[string]any{"enabled": s.cfg.EnableInput, "available": s.input.Available(), "driver": s.input.Name()}, "recorder": s.recorder.Status(), "capture": map[string]any{"available": s.capture.Available(), "driver": s.capture.Name()}, "overlay": s.overlay.Info(), "lan": lan,
 		"health":      s.healthReport(),
 		"localClient": includeSecret,
 		"appearance":  map[string]any{"available": s.appearance != nil, "custom": s.appearance != nil && strings.TrimSpace(s.appearance.Get()) != ""},
-		"locale": func() map[string]any {
-			if s.locale != nil {
-				return s.locale.Info()
-			}
-			return map[string]any{"language": localization.DefaultLanguage, "supported": localization.Supported()}
-		}(),
-		"updates": map[string]any{"repository": buildinfo.Repository, "checkAvailable": true, "installAvailable": runtime.GOOS == "windows" || runtime.GOOS == "linux"},
-		"network": map[string]any{"fetchAvailable": s.webfetch != nil, "publicHTTPOnly": true},
+		"updates":     map[string]any{"repository": buildinfo.Repository, "checkAvailable": true, "installAvailable": runtime.GOOS == "windows" || runtime.GOOS == "linux"},
+		"network":     map[string]any{"fetchAvailable": s.webfetch != nil, "publicHTTPOnly": true},
 		"customTabs": map[string]any{"available": s.tabs != nil, "directory": func() string {
 			if s.tabs != nil {
 				return s.tabs.Directory()
