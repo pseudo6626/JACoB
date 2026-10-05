@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JACoB // Ring Mining Companion</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#060809;--panel:#0c1113;--panel2:#11181b;--line:#253238;--line2:#36464d;
+  --text:#e7edef;--muted:#839198;--dim:#536168;--amber:#f39a3d;--amber2:#ffc273;
+  --cyan:#64cbd5;--green:#78d49d;--yellow:#e8c36c;--red:#e5756f;--blue:#7ea6df;
+}
+*{box-sizing:border-box}
+html{background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,Segoe UI,sans-serif}
+body{margin:0;min-height:100vh;background:
+ radial-gradient(circle at 72% -10%,rgba(56,112,122,.10),transparent 35rem),
+ linear-gradient(rgba(255,255,255,.011) 1px,transparent 1px),
+ linear-gradient(90deg,rgba(255,255,255,.008) 1px,transparent 1px),var(--bg);
+ background-size:auto,20px 20px,20px 20px,auto}
+button,input,select{font:inherit}
+button{cursor:pointer}
+.shell{max-width:1450px;margin:auto;padding:13px}
+header{display:flex;gap:14px;align-items:flex-start;justify-content:space-between;padding:8px 1px 12px;border-bottom:1px solid var(--line)}
+.brand{font-weight:900;font-size:27px;letter-spacing:.13em;line-height:1}.brand span{color:var(--amber)}
+.sub{font:10px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted);letter-spacing:.07em;text-transform:uppercase;margin-top:6px}
+.chips{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+.chip{display:inline-flex;align-items:center;border:1px solid var(--line);background:#090d0f;padding:4px 7px;color:#93a0a5;font:9px ui-monospace,Consolas,monospace;letter-spacing:.035em;text-transform:uppercase}
+.chip.good{border-color:#38694d;color:var(--green)}.chip.warn{border-color:#6b5833;color:var(--yellow)}.chip.bad{border-color:#713f3c;color:var(--red)}.chip.amber{border-color:#78532e;color:var(--amber2)}.chip.blue{border-color:#3b5577;color:#9dbbe6}
+nav{display:flex;gap:2px;overflow:auto;margin:10px 0;border-bottom:1px solid var(--line)}
+nav button{border:0;border-bottom:2px solid transparent;background:transparent;color:#92a0a6;padding:10px 13px;text-transform:uppercase;font-weight:800;font-size:10px;letter-spacing:.08em;white-space:nowrap}
+nav button.on{border-bottom-color:var(--amber);color:#f0f3f4}
+.view{display:none}.view.on{display:block}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:9px}.s12{grid-column:span 12}.s9{grid-column:span 9}.s8{grid-column:span 8}.s7{grid-column:span 7}.s6{grid-column:span 6}.s5{grid-column:span 5}.s4{grid-column:span 4}.s3{grid-column:span 3}
+.card{border:1px solid var(--line);background:linear-gradient(180deg,rgba(14,20,23,.97),rgba(9,13,15,.98));min-width:0}
+.ch{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--line);background:#101619}
+.ch h2{margin:0;font-size:11px;text-transform:uppercase;letter-spacing:.09em}.ch small{font:9px ui-monospace,Consolas,monospace;color:#69787e;text-transform:uppercase}
+.cb{padding:11px}
+.row{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.between{justify-content:space-between}.grow{flex:1}
+.field{min-width:125px;flex:1}.field.sm{max-width:190px}.field.xs{max-width:115px}
+label.lbl{display:block;margin-bottom:4px;color:#78868c;font-weight:800;font-size:8px;text-transform:uppercase;letter-spacing:.08em}
+input,select{width:100%;background:#070a0c;color:#e6ecee;border:1px solid #2d3a40;padding:8px;outline:none;border-radius:2px}
+input:focus,select:focus{border-color:#687c84}
+input[type=checkbox]{width:auto}
+.btn{border:1px solid #38464c;background:#11191c;color:#d8e0e2;padding:8px 10px;border-radius:2px;font-weight:800;text-transform:uppercase;font-size:9px;letter-spacing:.05em}
+.btn:hover{border-color:#61737b}.btn.primary{border-color:#80542c;color:#ffd3aa;background:#1b130d}.btn.good{border-color:#36664a;color:#b6edce}.btn.warn{border-color:#70582f;color:#efd18e}.btn.red{border-color:#70413e;color:#efaaa4}.btn:disabled{opacity:.4;cursor:not-allowed}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.metric{border:1px solid #202c31;background:#080c0e;padding:8px 9px;min-height:72px}.metric b{display:block;font-size:20px;line-height:1.05}.metric b.accent{color:var(--amber2)}.metric b.good{color:var(--green)}.metric label{display:block;margin-top:4px;color:#79878d;font-size:8px;font-weight:850;text-transform:uppercase;letter-spacing:.08em}.metric small{display:block;margin-top:2px;color:#4f5d62;font-size:8px}
+.note{border-left:3px solid #4d6169;background:#091013;padding:8px 10px;color:#aab7bc;font-size:10px;line-height:1.45}.note.good{border-color:#3d7655}.note.warn{border-color:#806332}.note.bad{border-color:#81423e}.note.amber{border-color:#8a5929}
+.sessionHero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center}.sessionTitle{font-size:21px;font-weight:900}.sessionMeta{font:10px ui-monospace,Consolas,monospace;color:#7f8d93;margin-top:4px}.timer{font:900 29px ui-monospace,Consolas,monospace;color:var(--amber2)}
+.prospector{border:1px solid #2c3a40;background:radial-gradient(circle at 92% 8%,rgba(243,154,61,.09),transparent 20rem),#080c0e;padding:12px;min-height:168px}
+.prospector.hit{border-color:#3f7656}.prospector.hot{box-shadow:inset 3px 0 0 var(--green)}.prospector.miss{box-shadow:inset 3px 0 0 #735c35}
+.prospTop{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.rockMain{font-size:26px;font-weight:900;letter-spacing:.01em}.rockMain.good{color:#9be2b7}.rockMain.warn{color:#f0c97c}.rockMain.dim{color:#9ba7ac}.rockFlag{font:900 11px ui-monospace,Consolas,monospace;border:1px solid #3f4e54;padding:5px 7px;color:#9aa8ae}.rockFlag.good{border-color:#39704f;color:#9be2b7}.rockFlag.warn{border-color:#755d32;color:#e6c47b}
+.materials{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px}.mat{border:1px solid #29383e;background:#0c1214;padding:5px 7px;font:10px ui-monospace,Consolas,monospace;color:#aebbc0}.mat b{color:#edf3f4}.mat.target{border-color:#6a5330;color:#dcb67a}.mat.hot{border-color:#38704f;color:#9be2b7}
+.prospFoot{margin-top:10px;color:#68777d;font:9px ui-monospace,Consolas,monospace}
+.progress{height:9px;background:#070a0c;border:1px solid #202a2e;position:relative;overflow:hidden}.progress i{display:block;height:100%;background:linear-gradient(90deg,#80532c,#e9983c);width:0}
+.tablewrap{overflow:auto;border:1px solid #202c31}table{width:100%;border-collapse:collapse;min-width:760px;font-size:10px}th{position:sticky;top:0;background:#11181b;color:#7e8d93;padding:7px;text-align:left;text-transform:uppercase;font-size:8px;letter-spacing:.05em}td{padding:7px;border-bottom:1px solid #1e292d;color:#b7c1c5;vertical-align:top}tr:hover td{background:#0d1214}
+.chart{border:1px solid #202c31;background:#060a0c;min-height:310px;overflow:hidden}.chart svg{display:block;width:100%;height:auto}.chartLegend{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;color:#6f7f85;font-size:8px;text-transform:uppercase}.swatch{display:inline-block;width:13px;height:2px;vertical-align:middle;margin-right:4px;background:#65ccd5}.swatch.amber{background:#f39a3d}.swatch.green{background:#78d49d}
+.kpiGrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px}.mini{border:1px solid #202c31;padding:7px;background:#080c0e}.mini b{display:block;font-size:14px}.mini span{display:block;color:#65747a;font-size:7px;text-transform:uppercase;margin-top:2px}
+.bars{display:grid;gap:5px}.barrow{display:grid;grid-template-columns:minmax(115px,1fr) 2fr 62px;gap:6px;align-items:center;font-size:9px}.barrow label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#98a5aa}.bar{height:10px;border:1px solid #202b2f;background:#070a0b;position:relative}.bar i{position:absolute;inset:0 auto 0 0;background:#385c65}.barrow b{text-align:right;font:9px ui-monospace,Consolas,monospace;color:#bac4c8}
+.rateStrip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}.rateBox{border:1px solid #28353a;background:#071012;padding:9px}.rateBox b{font:900 21px ui-monospace,Consolas,monospace}.rateBox span{display:block;font-size:8px;text-transform:uppercase;color:#63747a;margin-top:3px}
+.limpetButton{width:100%;min-height:74px;border:2px solid #a86b2e;background:linear-gradient(180deg,#291a0d,#171009);color:#ffd1a0;font-weight:950;font-size:22px;letter-spacing:.04em;text-transform:uppercase}.limpetButton:hover{border-color:#e89a47;background:#302012}.limpetState{text-align:center;margin-top:6px;font:9px ui-monospace,Consolas,monospace;color:#79878d}
+.log{height:180px;overflow:auto;background:#050708;border:1px solid #20292d;padding:7px;white-space:pre-wrap;font:9px ui-monospace,Consolas,monospace;color:#849399}
+.empty{padding:25px;text-align:center;color:#617077;border:1px dashed #263238}
+hr.sep{border:0;border-top:1px solid #202c31;margin:10px 0}
+.checkbox{display:flex;gap:7px;align-items:flex-start;color:#a8b3b7;font-size:10px}.checkbox input{margin-top:2px}
+.right{text-align:right}.mono{font-family:ui-monospace,Consolas,monospace}
+@media(max-width:1000px){.s9,.s8,.s7,.s6,.s5,.s4,.s3{grid-column:span 12}.metrics{grid-template-columns:repeat(2,1fr)}.kpiGrid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:620px){header{display:block}.chips{justify-content:flex-start;margin-top:8px}.brand{font-size:22px}.shell{padding:8px}.metrics,.kpiGrid,.rateStrip{grid-template-columns:repeat(2,1fr)}.sessionHero{display:block}.timer{margin-top:8px}.rockMain{font-size:21px}}
+</style>
+</head>
+<body>
+<div class="shell">
+<header>
+  <div>
+    <div class="brand">JACoB <span>// MINING</span></div>
+    <div class="sub">Ring Mining Companion · live telemetry / prospector statistics / CDF analysis · <span id="build"></span></div>
+  </div>
+  <div class="chips">
+    <span id="sdkChip" class="chip warn">SDK —</span>
+    <span id="sessionChip" class="chip">NO SESSION</span>
+    <span id="cargoChip" class="chip">CARGO —</span>
+    <span id="limpetChip" class="chip">LIMPETS —</span>
+    <span id="hudChip" class="chip">HUD OFF</span>
+  </div>
+</header>
+
+<nav>
+  <button class="on" data-view="live">Live</button>
+  <button data-view="distribution">CDF / CDFb</button>
+  <button data-view="session">Session</button>
+  <button data-view="prices">Prices</button>
+  <button data-view="history">History</button>
+  <button data-view="settings">Settings</button>
+</nav>
+
+<section id="view-live" class="view on">
+<div class="grid">
+  <div class="card s8">
+    <div class="ch"><h2>Current Mining Run</h2><small>journal-backed live rates</small></div>
+    <div class="cb">
+      <div class="sessionHero">
+        <div>
+          <div id="sessionTitle" class="sessionTitle">No active run</div>
+          <div id="sessionMeta" class="sessionMeta">Start a run manually or let the first prospector auto-start one.</div>
+        </div>
+        <div id="sessionTimer" class="timer">00:00:00</div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="startBtn" class="btn good">Start run</button>
+        <button id="pauseBtn" class="btn" disabled>Pause</button>
+        <button id="endBtn" class="btn red" disabled>End + archive</button>
+        <button id="hudBtn" class="btn primary">Enable quiet HUD</button>
+        <div class="field grow"><label class="lbl">Run label / ring</label><input id="runLabel" placeholder="e.g. Omicron Capricorni B B 1 A ring"></div>
+      </div>
+      <div class="rateStrip" style="margin-top:10px">
+        <div class="rateBox"><b id="liveTph" style="color:var(--green)">—</b><span id="liveRateLabel">Live t/hr</span></div>
+        <div class="rateBox"><b id="liveCrh" style="color:var(--amber2)">—</b><span>Live Cr/hr</span></div>
+        <div class="rateBox"><b id="sessionTph">—</b><span>Run avg t/hr</span></div>
+        <div class="rateBox"><b id="sessionCrh">—</b><span>Run avg Cr/hr</span></div>
+      </div>
+      <div class="metrics" style="margin-top:7px">
+        <div class="metric"><b id="mRefined" class="accent">0 t</b><label>Refined</label><small>MiningRefined events</small></div>
+        <div class="metric"><b id="mCargo">—</b><label>Cargo</label><small id="mCargoSub">live Status.json</small></div>
+        <div class="metric"><b id="mLimpets">—</b><label>Limpets aboard</label><small>from Cargo.json</small></div>
+        <div class="metric"><b id="mProspectors">0</b><label>Prospectors</label><small id="mProspectorSub">0 reports</small></div>
+        <div class="metric"><b id="mHitRate">—</b><label>Target hit rate</label><small id="mHitSub">target not selected</small></div>
+        <div class="metric"><b id="mHighRate">—</b><label>Mine-grade rate</label><small id="mHighSub">threshold —</small></div>
+        <div class="metric"><b id="mPriceCoverage">—</b><label>Price coverage</label><small>refined tonnes with known value</small></div>
+        <div class="metric"><b id="mValue">—</b><label>Run value</label><small>current price basis</small></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card s4">
+    <div class="ch"><h2>Limpet Check</h2><small>because somehow this is still necessary</small></div>
+    <div class="cb">
+      <button id="limpetBtn" class="limpetButton">DON'T FORGET LIMPETS</button>
+      <div id="limpetState" class="limpetState">Checks docking state and current limpet inventory.</div>
+      <div class="note warn" style="margin-top:9px">This build deliberately does not blindly navigate Station Services. If you are docked, the button verifies the situation and gives the exact refill target; if you are already out in the ring, JACoB will judge you appropriately.</div>
+    </div>
+  </div>
+
+  <div class="card s7">
+    <div class="ch"><h2>Latest Prospector</h2><small>HUD alert mirrors this card</small></div>
+    <div class="cb"><div id="prospectorCard" class="prospector"><div class="empty">Waiting for a ProspectedAsteroid event.</div></div></div>
+  </div>
+
+  <div class="card s5">
+    <div class="ch"><h2>Target Snapshot</h2><small>current run</small></div>
+    <div class="cb">
+      <div id="targetSnapshot" class="kpiGrid" style="grid-template-columns:repeat(3,minmax(0,1fr))"></div>
+      <div id="contentBars" class="bars" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <div class="card s12">
+    <div class="ch"><h2>Refined Cargo</h2><small>tonnage, value and production rate by commodity</small></div>
+    <div class="cb"><div id="commodityTable" class="tablewrap"></div></div>
+  </div>
+</div>
+</section>
+
+<section id="view-distribution" class="view">
+<div class="grid">
+  <div class="card s12">
+    <div class="ch"><h2>Prospector Distribution</h2><small>inspired by the Fank Mining Analyser CDF / CDFb views</small></div>
+    <div class="cb">
+      <div class="row">
+        <div class="field sm"><label class="lbl">Commodity</label><select id="distCommodity"></select></div>
+        <div class="field sm"><label class="lbl">Sample</label><select id="distSample"><option value="raw">Raw prospector events</option><option value="debounced">Debounced exact repeats</option></select></div>
+        <div class="field sm"><label class="lbl">Graph</label><select id="distGraph"><option value="both">CDF + CDFb</option><option value="cdf">CDF only</option><option value="cdfb">CDFb only</option></select></div>
+        <div class="grow note">CDF is the fraction of sampled rocks at or below X%. CDFb is its complement: the fraction at or above X%. For mining, CDFb makes “how often do I find rocks this good?” immediately visible.</div>
+      </div>
+      <div id="distKpis" class="kpiGrid" style="margin-top:10px"></div>
+      <div id="cdfChart" class="chart" style="margin-top:9px"></div>
+      <div class="chartLegend"><span><i class="swatch"></i>CDF ≤ X</span><span><i class="swatch amber"></i>CDFb ≥ X</span><span><i class="swatch green"></i>mine threshold</span></div>
+    </div>
+  </div>
+
+  <div class="card s6">
+    <div class="ch"><h2>CDFb Threshold Readout</h2><small>ring quality at practical cutoffs</small></div>
+    <div class="cb"><div id="cdfbThresholds" class="bars"></div></div>
+  </div>
+  <div class="card s6">
+    <div class="ch"><h2>Sampling Notes</h2><small>avoid fake precision</small></div>
+    <div class="cb">
+      <div id="sampleNote" class="note"></div>
+      <div class="note warn" style="margin-top:8px">Elite's prospector event has no asteroid ID or position. “Debounced” therefore removes only identical material signatures repeated inside the configured short time window. It is a conservative convenience filter, not proof that two matching reports were the same rock.</div>
+    </div>
+  </div>
+</div>
+</section>
+
+<section id="view-session" class="view">
+<div class="grid">
+  <div class="card s12"><div class="ch"><h2>Run Statistics</h2><small>live session totals</small></div><div class="cb"><div id="sessionKpis" class="kpiGrid"></div></div></div>
+  <div class="card s6"><div class="ch"><h2>Prospector Efficiency</h2><small>launches → reports → target rocks</small></div><div class="cb"><div id="prospectorStats"></div></div></div>
+  <div class="card s6"><div class="ch"><h2>Production</h2><small>refinery and value telemetry</small></div><div class="cb"><div id="productionStats"></div></div></div>
+  <div class="card s12"><div class="ch"><h2>Prospector Log</h2><small>newest first</small></div><div class="cb"><div id="prospectorTable" class="tablewrap"></div></div></div>
+</div>
+</section>
+
+<section id="view-prices" class="view">
+<div class="grid">
+  <div class="card s12">
+    <div class="ch"><h2>Commodity Value Basis</h2><small>manual → recent sale → Market.json sell → galactic mean</small></div>
+    <div class="cb">
+      <div class="row">
+        <button id="refreshPricesBtn" class="btn">Refresh Market.json</button>
+        <button id="clearManualPricesBtn" class="btn red">Clear manual prices</button>
+        <span id="priceState" class="chip">NO MARKET SNAPSHOT</span>
+        <div class="grow note">Cr/hr is an estimate of production value, not realized profit. Manual target-sale prices take priority. Recent actual MarketSell prices are next. The last local market snapshot is only a fallback and its source is always shown.</div>
+      </div>
+      <div id="priceTable" class="tablewrap" style="margin-top:9px"></div>
+    </div>
+  </div>
+</div>
+</section>
+
+<section id="view-history" class="view">
+<div class="grid">
+  <div class="card s12">
+    <div class="ch"><h2>Archived Mining Runs</h2><small>kept locally in this saved tab</small></div>
+    <div class="cb">
+      <div class="row" style="margin-bottom:9px"><button id="exportBtn" class="btn">Export mining JSON</button><button id="clearHistoryBtn" class="btn red">Clear archived runs</button></div>
+      <div id="historyTable" class="tablewrap"></div>
+    </div>
+  </div>
+</div>
+</section>
+
+<section id="view-settings" class="view">
+<div class="grid">
+  <div class="card s6">
+    <div class="ch"><h2>Target & Rate</h2><small>what counts as a useful rock</small></div>
+    <div class="cb">
+      <div class="field"><label class="lbl">Target commodity</label><select id="targetCommodity"></select></div>
+      <div class="field" style="margin-top:8px"><label class="lbl">Mine threshold (%)</label><input id="targetThreshold" type="number" min="0" max="100" step=".1" value="30"></div>
+      <div class="field" style="margin-top:8px"><label class="lbl">Live rate window</label><select id="rateWindow"><option value="5">5 minutes</option><option value="10">10 minutes</option><option value="15" selected>15 minutes</option><option value="30">30 minutes</option><option value="0">Whole run</option></select></div>
+      <label class="checkbox" style="margin-top:10px"><input id="autoStart" type="checkbox" checked><span>Automatically start a run on the first prospector/refinery event when no run is active.</span></label>
+      <label class="checkbox" style="margin-top:8px"><input id="freshOnly" type="checkbox" checked><span>Distribution graphs use fresh asteroid reports only (Remaining ≥ 99.5%). Raw event totals are still retained.</span></label>
+    </div>
+  </div>
+
+  <div class="card s6">
+    <div class="ch"><h2>Quiet HUD</h2><small>small by default</small></div>
+    <div class="cb">
+      <div class="field"><label class="lbl">HUD corner</label><select id="hudCorner"><option value="tr">Top right</option><option value="tl">Top left</option><option value="br">Bottom right</option><option value="bl">Bottom left</option></select></div>
+      <div class="field" style="margin-top:8px"><label class="lbl">Prospector alert duration</label><select id="alertSeconds"><option value="5">5 seconds</option><option value="8" selected>8 seconds</option><option value="12">12 seconds</option><option value="20">20 seconds</option></select></div>
+      <label class="checkbox" style="margin-top:10px"><input id="hideFocused" type="checkbox" checked><span>Hide HUD in Station Services, Galaxy Map, System Map, Orrery, FSS, SAA and Codex.</span></label>
+      <label class="checkbox" style="margin-top:8px"><input id="hudProspector" type="checkbox" checked><span>Show temporary prospector result card under the persistent rate strip.</span></label>
+    </div>
+  </div>
+
+  <div class="card s6">
+    <div class="ch"><h2>Sampling</h2><small>duplicate handling is explicit</small></div>
+    <div class="cb">
+      <div class="field"><label class="lbl">Exact-repeat debounce window (seconds)</label><input id="debounceSeconds" type="number" min="0" max="120" value="12"></div>
+      <div class="note" style="margin-top:8px">The raw dataset is never altered. Debouncing only changes the optional analysis view and suppresses an identical material signature when it repeats almost immediately.</div>
+    </div>
+  </div>
+
+  <div class="card s6">
+    <div class="ch"><h2>Persistence</h2><small>saved custom tab storage</small></div>
+    <div class="cb">
+      <button id="saveSettingsBtn" class="btn good">Save settings</button>
+      <button id="resetCurrentBtn" class="btn red">Discard current run</button>
+      <div class="note warn" style="margin-top:8px">Discard removes the active run without archiving it. Archived history is unaffected.</div>
+    </div>
+  </div>
+
+  <div class="card s12"><div class="ch"><h2>Diagnostics</h2><small>journal / cargo / market / overlay</small></div><div class="cb"><div id="log" class="log"></div></div></div>
+</div>
+</section>
+</div>
+
+<script>
+(()=>{
+'use strict';
+
+const BUILD='JACOB-RING-MINING-1.0.0-20261004';
+const STORE_KEY='jacob-ring-mining-v1';
+const SETTINGS_KEY='jacob-ring-mining-settings-v1';
+const HISTORY_LIMIT=60;
+const DEFAULT_SETTINGS={
+  target:'Platinum',threshold:30,rateWindow:15,autoStart:true,freshOnly:true,
+  hudCorner:'tr',alertSeconds:8,hideFocused:true,hudProspector:true,debounceSeconds:12
+};
+
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const n=v=>{const x=Number(v);return Number.isFinite(x)?x:null};
+const norm=v=>String(v||'').trim().toLowerCase().replace(/^\$/,'').replace(/;$/,'').replace(/[_\s-]+/g,'');
+const iso=()=>new Date().toISOString();
+const tms=v=>Date.parse(v||'')||0;
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const mean=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:null;
+const median=a=>{if(!a.length)return null;const s=a.slice().sort((a,b)=>a-b),m=Math.floor(s.length/2);return s.length%2?s[m]:(s[m-1]+s[m])/2};
+const quantile=(a,q)=>{if(!a.length)return null;const s=a.slice().sort((a,b)=>a-b),p=(s.length-1)*q,i=Math.floor(p),f=p-i;return s[i]+(s[Math.min(i+1,s.length-1)]-s[i])*f};
+const fmt=(v,d=0)=>Number.isFinite(Number(v))?Number(v).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}):'—';
+const fmtCr=v=>{if(!Number.isFinite(v))return'—';const a=Math.abs(v);if(a>=1e9)return`${(v/1e9).toFixed(2)} B`;if(a>=1e6)return`${(v/1e6).toFixed(2)} M`;if(a>=1e3)return`${(v/1e3).toFixed(1)} k`;return Math.round(v).toLocaleString()};
+const fmtTime=ms=>{ms=Math.max(0,ms||0);const s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),z=s%60;return`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(z).padStart(2,'0')}`};
+const commodityName=x=>String(x?.Name_Localised||x?.Type_Localised||x?.nameLocalised||x?.Name||x?.Type||x||'').replace(/^\$/,'').replace(/;$/,'').replace(/_/g,' ').trim();
+const commodityKey=x=>norm(x?.Name||x?.Type||x);
+const contentName=v=>String(v||'').replace(/^\$/,'').replace(/;$/,'').replace(/^AsteroidMaterialContent_/i,'').replace(/^Material Content:\s*/i,'').trim()||'Unknown';
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+let settings={...DEFAULT_SETTINGS};
+let state=freshState();
+let lastStatus=null,lastLoadout=null,cargoInventory=[],cargoMass=null,cargoCapacity=null;
+let marketPrices={},recentSalePrices={},manualPrices={};
+let hudEnabled=false,hudVisible=false,lastProspectorAt=0,saveTimer=null,tickTimer=null,journalSeen=new Set();
+
+function freshState(){
+  return{schema:1,build:BUILD,current:null,history:[],createdAt:iso(),updatedAt:iso()};
+}
+function freshSession(label=''){
+  const now=iso(),st=lastStatus||{};
+  return{
+    id:`run-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,label:label||'',
+    startedAt:now,endedAt:'',pausedAt:'',pauseMs:0,active:true,paused:false,
+    system:'',body:String(st.BodyName||''),prospectorsLaunched:0,collectorLimpetsLaunched:0,
+    prospected:[],refined:[],sales:[],cargoStart:cargoMass,limpetsStart:limpetCount(),
+    targetAtStart:settings.target,thresholdAtStart:settings.threshold
+  };
+}
+function current(){return state.current}
+function activeMs(s=current(),now=Date.now()){
+  if(!s)return 0;
+  const end=s.endedAt?tms(s.endedAt):now;
+  let ms=Math.max(0,end-tms(s.startedAt)-(s.pauseMs||0));
+  if(s.paused&&s.pausedAt)ms-=Math.max(0,now-tms(s.pausedAt));
+  return Math.max(0,ms);
+}
+function ensureSession(reason='activity'){
+  if(state.current)return state.current;
+  if(!settings.autoStart)return null;
+  state.current=freshSession();
+  log(`Run auto-started on ${reason}.`);
+  scheduleSave();renderAll();return state.current;
+}
+function startSession(){
+  if(state.current)return;
+  state.current=freshSession($('#runLabel').value.trim());
+  log('Mining run started manually.');scheduleSave();renderAll();updateHUD();
+}
+function togglePause(){
+  const s=current();if(!s)return;
+  if(!s.paused){s.paused=true;s.pausedAt=iso();log('Run paused.')}
+  else{s.pauseMs=(s.pauseMs||0)+Math.max(0,Date.now()-tms(s.pausedAt));s.paused=false;s.pausedAt='';log('Run resumed.')}
+  scheduleSave();renderAll();updateHUD();
+}
+function endSession(){
+  const s=current();if(!s)return;
+  if(s.paused&&s.pausedAt){s.pauseMs=(s.pauseMs||0)+Math.max(0,Date.now()-tms(s.pausedAt));s.paused=false;s.pausedAt=''}
+  s.endedAt=iso();s.active=false;
+  state.history.unshift(structuredClone(s));state.history=state.history.slice(0,HISTORY_LIMIT);state.current=null;
+  log(`Run archived: ${s.label||s.id}.`);scheduleSave();renderAll();updateHUD();
+}
+function discardSession(){
+  if(!state.current)return;
+  if(!confirm('Discard the current mining run without archiving it?'))return;
+  state.current=null;scheduleSave();renderAll();updateHUD();log('Current run discarded.');
+}
+
+function sigJournal(e){
+  return[e.timestamp,e.event,e.Type,e.Name,e.Content,e.Remaining,e.MotherlodeMaterial,JSON.stringify(e.Materials||[])].map(x=>String(x??'')).join('|');
+}
+function remember(e){
+  const k=sigJournal(e);if(journalSeen.has(k))return false;journalSeen.add(k);
+  if(journalSeen.size>30000)journalSeen=new Set([...journalSeen].slice(-20000));return true;
+}
+
+function parseProspector(e){
+  const materials=(e.Materials||[]).map(m=>({
+    key:commodityKey(m),name:commodityName(m),pct:Number(m.Proportion)||0
+  })).filter(x=>x.name);
+  return{
+    at:e.timestamp||iso(),remaining:Number.isFinite(Number(e.Remaining))?Number(e.Remaining):null,
+    content:contentName(e.Content_Localised||e.Content),motherlode:commodityName(e.MotherlodeMaterial_Localised||e.MotherlodeMaterial||''),
+    materials,signature:materials.map(x=>`${x.key}:${x.pct.toFixed(6)}`).sort().join('|')+`|${contentName(e.Content)}|${Number(e.Remaining??100).toFixed(3)}`
+  };
+}
+function processJournal(e){
+  if(!e?.event||!remember(e))return;
+  const evt=e.event;
+  if(evt==='Loadout'){
+    lastLoadout=e;if(Number.isFinite(Number(e.CargoCapacity)))cargoCapacity=Number(e.CargoCapacity);
+  }
+  if(evt==='Location'||evt==='FSDJump'){
+    const s=current();if(s){s.system=e.StarSystem||s.system||'';if(e.BodyName)s.body=e.BodyName}
+  }
+  if(evt==='LaunchDrone'){
+    const type=norm(e.Type);
+    if(type==='prospector'){
+      const s=ensureSession('prospector launch');if(s&&!s.paused)s.prospectorsLaunched++;
+      if(limpetCount()!=null)adjustLimpets(-1);
+    }else if(type==='collection'){
+      const s=current();if(s&&!s.paused)s.collectorLimpetsLaunched++;
+      if(limpetCount()!=null)adjustLimpets(-1);
+    }
+  }
+  if(evt==='ProspectedAsteroid'){
+    const s=ensureSession('prospector result');if(s&&!s.paused){
+      const r=parseProspector(e);s.prospected.push(r);lastProspectorAt=Date.now();
+      if(s.prospected.length>5000)s.prospected=s.prospected.slice(-5000);
+    }
+  }
+  if(evt==='MiningRefined'){
+    const s=ensureSession('refinery activity');if(s&&!s.paused){
+      const key=commodityKey(e),name=commodityName(e);
+      s.refined.push({at:e.timestamp||iso(),key,name});
+      if(s.refined.length>10000)s.refined=s.refined.slice(-10000);
+      setTimeout(refreshCargo,180);
+    }
+  }
+  if(evt==='MarketSell'){
+    const key=commodityKey(e),name=commodityName(e),price=Number(e.SellPrice);
+    if(key&&Number.isFinite(price)&&price>0)recentSalePrices[key]={name,price,at:e.timestamp||iso(),station:e.StationName||'',system:e.StarSystem||''};
+    const s=current();if(s)s.sales.push({at:e.timestamp||iso(),key,name,count:Number(e.Count)||0,price,total:Number(e.TotalSale)||0});
+  }
+  if(evt==='Cargo')setTimeout(refreshCargo,120);
+  if(evt==='BuyDrones')setTimeout(refreshCargo,120);
+  if(evt==='SellDrones')setTimeout(refreshCargo,120);
+  if(evt==='Docked'){
+    const s=current();if(s&&!s.paused){s.paused=true;s.pausedAt=e.timestamp||iso();log('Run auto-paused on docking.')}
+  }
+  state.updatedAt=iso();scheduleSave();renderAll();updateHUD();
+}
+
+function adjustLimpets(delta){
+  const idx=cargoInventory.findIndex(x=>isLimpetName(x.name||x.Name));
+  if(idx>=0)cargoInventory[idx].count=Math.max(0,(Number(cargoInventory[idx].count)||0)+delta);
+}
+function isLimpetName(v){const k=norm(v);return k==='drones'||k==='limpet'||k==='limpets'||k.includes('drone')}
+function limpetCount(){
+  const rows=cargoInventory.filter(x=>isLimpetName(x.name||x.Name));
+  if(!rows.length)return null;
+  return rows.reduce((s,x)=>s+(Number(x.count??x.Count)||0),0);
+}
+async function refreshCargo(){
+  try{
+    const r=await Elite.data.get('cargo');
+    const data=r?.data||r;
+    const inv=data?.Inventory||data?.inventory||[];
+    if(Array.isArray(inv))cargoInventory=inv.map(x=>({name:x.Name_Localised||x.Name||'',count:Number(x.Count)||0,stolen:Number(x.Stolen)||0}));
+    if(lastStatus&&Number.isFinite(Number(lastStatus.Cargo)))cargoMass=Number(lastStatus.Cargo);
+    renderAll();updateHUD();
+  }catch(e){log(`Cargo refresh unavailable: ${e.message||e}`)}
+}
+async function refreshMarket(){
+  try{
+    const r=await Elite.data.get('market'),data=r?.data||r;
+    const items=data?.Items||data?.items||[];
+    marketPrices={};
+    for(const x of Array.isArray(items)?items:[]){
+      const key=commodityKey(x),name=commodityName(x);
+      marketPrices[key]={name,sell:Number(x.SellPrice??x.sellPrice)||0,mean:Number(x.MeanPrice??x.meanPrice)||0,buy:Number(x.BuyPrice??x.buyPrice)||0,
+        demand:Number(x.Demand??x.demand)||0,station:data?.StationName||'',system:data?.StarSystem||'',at:data?.timestamp||iso()};
+    }
+    $('#priceState').textContent=items.length?`MARKET ${data?.StationName||'SNAPSHOT'}`:'NO MARKET ITEMS';
+    $('#priceState').className='chip '+(items.length?'blue':'warn');
+    log(`Market snapshot loaded: ${items.length} commodities.`);renderPrices();renderAll();updateHUD();
+  }catch(e){log(`Market refresh unavailable: ${e.message||e}`)}
+}
+function effectivePrice(key){
+  key=norm(key);
+  const man=Number(manualPrices[key]);if(Number.isFinite(man)&&man>0)return{price:man,source:'manual'};
+  const sale=recentSalePrices[key];if(sale?.price>0)return{price:sale.price,source:'recent sale'};
+  const m=marketPrices[key];if(m?.sell>0)return{price:m.sell,source:'Market sell'};
+  if(m?.mean>0)return{price:m.mean,source:'galactic mean'};
+  return{price:0,source:'unpriced'};
+}
+function allCommodityNames(){
+  const m=new Map();
+  for(const s of [current(),...state.history]){
+    for(const r of s?.prospected||[])for(const x of r.materials||[])if(x.key)m.set(x.key,x.name);
+    for(const x of s?.refined||[])if(x.key)m.set(x.key,x.name);
+  }
+  for(const [k,x] of Object.entries(marketPrices))m.set(k,x.name||k);
+  for(const [k,x] of Object.entries(recentSalePrices))m.set(k,x.name||k);
+  if(settings.target)m.set(norm(settings.target),settings.target);
+  return [...m.entries()].sort((a,b)=>a[1].localeCompare(b[1]));
+}
+function targetKey(){return norm(settings.target)}
+function targetPct(r,key=targetKey()){
+  const x=(r?.materials||[]).find(m=>m.key===key);return x?Number(x.pct)||0:0;
+}
+function freshProspects(s=current()){
+  let rows=(s?.prospected||[]);
+  if(settings.freshOnly)rows=rows.filter(r=>r.remaining==null||r.remaining>=99.5);
+  return rows;
+}
+function debouncedProspects(s=current()){
+  const rows=freshProspects(s),out=[],sec=Math.max(0,Number(settings.debounceSeconds)||0);
+  for(const r of rows){
+    const prev=out[out.length-1];
+    if(prev&&r.signature===prev.signature&&Math.abs(tms(r.at)-tms(prev.at))<=sec*1000)continue;
+    out.push(r);
+  }
+  return out;
+}
+function distRows(){return $('#distSample')?.value==='debounced'?debouncedProspects():freshProspects()}
+function refinedCounts(s=current()){
+  const m=new Map();for(const x of s?.refined||[]){const z=m.get(x.key)||{key:x.key,name:x.name,count:0};z.count++;m.set(x.key,z)}return [...m.values()].sort((a,b)=>b.count-a.count);
+}
+function rateStats(s=current()){
+  if(!s)return{liveTph:null,liveCrh:null,sessionTph:null,sessionCrh:null,value:0,coverage:null,liveCount:0};
+  const now=Date.now(),elapsed=activeMs(s,now),ref=s.refined||[],windowMin=Number(settings.rateWindow)||0;
+  const windowMs=windowMin>0?windowMin*60000:elapsed;
+  const rateSpan=Math.max(1,Math.min(elapsed||1,windowMs||elapsed||1));
+  const since=now-rateSpan;
+  const live=ref.filter(x=>tms(x.at)>=since);
+  const valueOf=rows=>rows.reduce((sum,x)=>sum+effectivePrice(x.key).price,0);
+  const pricedOf=rows=>rows.filter(x=>effectivePrice(x.key).price>0).length;
+  const liveTph=elapsed>0?live.length/(rateSpan/3600000):null;
+  const liveCrh=elapsed>0?valueOf(live)/(rateSpan/3600000):null;
+  const sessionTph=elapsed>0?ref.length/(elapsed/3600000):null;
+  const sessionCrh=elapsed>0?valueOf(ref)/(elapsed/3600000):null;
+  const value=valueOf(ref),coverage=ref.length?pricedOf(ref)/ref.length:null;
+  return{liveTph,liveCrh,sessionTph,sessionCrh,value,coverage,liveCount:live.length,elapsed,windowMs:rateSpan};
+}
+function targetStats(s=current()){
+  const raw=freshProspects(s),key=targetKey(),vals=raw.map(r=>targetPct(r,key)),hits=vals.filter(x=>x>0),high=vals.filter(x=>x>=settings.threshold);
+  return{n:raw.length,vals,hits,high,mean:mean(hits),median:median(hits),max:hits.length?Math.max(...hits):null,
+    hitRate:raw.length?hits.length/raw.length:null,highRate:raw.length?high.length/raw.length:null};
+}
+function contentCounts(s=current()){
+  const m={High:0,Medium:0,Low:0,Unknown:0};for(const r of freshProspects(s)){const k=/high/i.test(r.content)?'High':/medium/i.test(r.content)?'Medium':/low/i.test(r.content)?'Low':'Unknown';m[k]++}return m;
+}
+function runLocation(s=current()){
+  const system=s?.system||'system ?';const body=s?.body||lastStatus?.BodyName||'';return body?`${system} · ${body}`:system;
+}
+
+function scheduleSave(){state.updatedAt=iso();clearTimeout(saveTimer);saveTimer=setTimeout(saveNow,500)}
+async function saveNow(){
+  try{
+    await Elite.store.set(STORE_KEY,{...state,manualPrices,recentSalePrices});
+    await Elite.store.set(SETTINGS_KEY,settings);
+  }catch(e){if(e?.code!=='TAB_STATE_PREVIEW')log(`Store save failed: ${e.message||e}`)}
+}
+async function restore(){
+  try{
+    const a=await Elite.store.get(SETTINGS_KEY,null);if(a)settings={...DEFAULT_SETTINGS,...a};
+    const b=await Elite.store.get(STORE_KEY,null);if(b?.schema===1){state={...freshState(),...b};manualPrices=b.manualPrices||{};recentSalePrices=b.recentSalePrices||{}}
+  }catch(e){log(`Store restore unavailable: ${e.message||e}`)}
+  applySettingsToUI();
+}
+
+async function recoverContext(){
+  try{
+    let offset=0,guard=0,rows=[];
+    while(guard++<20){
+      const p=await Elite.journal.read({offset,limit:5000}),ev=p?.events||[];rows.push(...ev);
+      if(!p?.info?.truncated||p.info.nextOffset==null)break;offset=p.info.nextOffset;
+    }
+    journalSeen=new Set();
+    for(const e of rows){
+      const k=sigJournal(e);journalSeen.add(k);
+      if(e.event==='Loadout'){lastLoadout=e;if(Number.isFinite(Number(e.CargoCapacity)))cargoCapacity=Number(e.CargoCapacity)}
+      if(e.event==='MarketSell'){const key=commodityKey(e),price=Number(e.SellPrice);if(key&&price>0)recentSalePrices[key]={name:commodityName(e),price,at:e.timestamp||'',station:e.StationName||'',system:e.StarSystem||''}}
+      if(state.current&&tms(e.timestamp)>=tms(state.current.startedAt)){
+        // Rebuild only if this exact event is not already represented in the persisted run.
+        if(e.event==='LaunchDrone'&&norm(e.Type)==='prospector'){
+          const approx=(state.current.prospectorsLaunched||0);
+          // persisted count is authoritative; recovery avoids double-counting it.
+        }
+      }
+    }
+    log(`Current journal context: ${rows.length} events inspected for loadout and price history.`);
+  }catch(e){log(`Journal context recovery unavailable: ${e.message||e}`)}
+}
+
+function applySettingsToUI(){
+  $('#targetThreshold').value=settings.threshold;$('#rateWindow').value=String(settings.rateWindow);$('#autoStart').checked=!!settings.autoStart;$('#freshOnly').checked=!!settings.freshOnly;
+  $('#hudCorner').value=settings.hudCorner;$('#alertSeconds').value=String(settings.alertSeconds);$('#hideFocused').checked=!!settings.hideFocused;$('#hudProspector').checked=!!settings.hudProspector;$('#debounceSeconds').value=settings.debounceSeconds;
+}
+function readSettings(){
+  settings.threshold=clamp(Number($('#targetThreshold').value)||0,0,100);settings.rateWindow=Number($('#rateWindow').value)||0;settings.autoStart=$('#autoStart').checked;settings.freshOnly=$('#freshOnly').checked;
+  settings.hudCorner=$('#hudCorner').value;settings.alertSeconds=Number($('#alertSeconds').value)||8;settings.hideFocused=$('#hideFocused').checked;settings.hudProspector=$('#hudProspector').checked;settings.debounceSeconds=clamp(Number($('#debounceSeconds').value)||0,0,120);
+  settings.target=$('#targetCommodity').value||settings.target||'Platinum';
+}
+function syncCommoditySelects(){
+  const rows=allCommodityNames(),currentTarget=norm(settings.target),distPrev=$('#distCommodity')?.value||currentTarget;
+  const opts=rows.length?rows.map(([k,name])=>`<option value="${esc(k)}">${esc(name)}</option>`).join(''):'<option value="platinum">Platinum</option>';
+  for(const el of [$('#targetCommodity'),$('#distCommodity')])if(el){el.innerHTML=opts}
+  const trow=rows.find(([k])=>k===currentTarget);$('#targetCommodity').value=trow?.[0]||rows[0]?.[0]||'platinum';
+  $('#distCommodity').value=rows.some(([k])=>k===distPrev)?distPrev:($('#targetCommodity').value||'platinum');
+  const selected=rows.find(([k])=>k===$('#targetCommodity').value);if(selected)settings.target=selected[1];
+}
+function targetDisplay(){return allCommodityNames().find(([k])=>k===targetKey())?.[1]||settings.target||'Target'}
+
+function renderHeader(){
+  const api=window.Elite?.api?.version||0;$('#build').textContent=BUILD;$('#sdkChip').textContent=`SDK ${api||'—'}`;$('#sdkChip').className='chip '+(api>=7?'good':'warn');
+  const s=current();$('#sessionChip').textContent=s?(s.paused?'RUN PAUSED':'RUN ACTIVE'):'NO SESSION';$('#sessionChip').className='chip '+(s?(s.paused?'warn':'good'):'');
+  $('#cargoChip').textContent=`CARGO ${cargoMass==null?'—':fmt(cargoMass)}${cargoCapacity!=null?'/'+fmt(cargoCapacity):''}`;$('#cargoChip').className='chip '+(cargoMass!=null?'blue':'');
+  const l=limpetCount();$('#limpetChip').textContent=`LIMPETS ${l==null?'—':l}`;$('#limpetChip').className='chip '+(l==null?'':l<20?'bad':l<50?'warn':'good');
+  $('#hudChip').textContent=hudEnabled?(hudVisible?'HUD ON':'HUD HIDDEN'):'HUD OFF';$('#hudChip').className='chip '+(hudEnabled?'good':'');
+}
+function renderLive(){
+  const s=current(),r=rateStats(s),ts=targetStats(s),label=s?.label||$('#runLabel').value.trim()||'Mining run';
+  $('#sessionTitle').textContent=s?label:'No active run';$('#sessionMeta').textContent=s?`${runLocation(s)} · started ${new Date(s.startedAt).toLocaleTimeString()}${s.paused?' · PAUSED':''}`:'Start a run manually or let the first prospector/refinery event auto-start one.';
+  $('#sessionTimer').textContent=s?fmtTime(activeMs(s)):'00:00:00';$('#runLabel').disabled=!!s;if(s)$('#runLabel').value=s.label||'';
+  $('#startBtn').disabled=!!s;$('#pauseBtn').disabled=!s;$('#endBtn').disabled=!s;$('#pauseBtn').textContent=s?.paused?'Resume':'Pause';
+  $('#liveTph').textContent=r.liveTph==null?'—':`${r.liveTph.toFixed(1)} t/h`;$('#liveCrh').textContent=r.liveCrh==null?'—':`${fmtCr(r.liveCrh)} Cr/h`;
+  $('#sessionTph').textContent=r.sessionTph==null?'—':`${r.sessionTph.toFixed(1)} t/h`;$('#sessionCrh').textContent=r.sessionCrh==null?'—':`${fmtCr(r.sessionCrh)} Cr/h`;
+  $('#liveRateLabel').textContent=settings.rateWindow?`Live ${settings.rateWindow}m t/hr`:'Whole-run t/hr';
+  $('#mRefined').textContent=`${s?.refined?.length||0} t`;$('#mCargo').textContent=cargoMass==null?'—':`${fmt(cargoMass)}${cargoCapacity!=null?` / ${fmt(cargoCapacity)} t`: ' t'}`;
+  $('#mCargoSub').textContent=cargoCapacity!=null&&cargoMass!=null?`${Math.max(0,cargoCapacity-cargoMass).toFixed(0)} t nominal free space`:'live Status.json cargo mass';
+  const l=limpetCount();$('#mLimpets').textContent=l==null?'—':String(l);$('#mProspectors').textContent=s?.prospectorsLaunched||0;$('#mProspectorSub').textContent=`${s?.prospected?.length||0} reports · ${Math.max(0,(s?.prospectorsLaunched||0)-(s?.prospected?.length||0))} pending/lost`;
+  $('#mHitRate').textContent=ts.hitRate==null?'—':`${(ts.hitRate*100).toFixed(0)}%`;$('#mHitSub').textContent=`${ts.hits.length}/${ts.n} contain ${targetDisplay()}`;
+  $('#mHighRate').textContent=ts.highRate==null?'—':`${(ts.highRate*100).toFixed(0)}%`;$('#mHighSub').textContent=`${ts.high.length}/${ts.n} at ≥ ${settings.threshold}%`;
+  $('#mPriceCoverage').textContent=r.coverage==null?'—':`${(r.coverage*100).toFixed(0)}%`;$('#mValue').textContent=s?`${fmtCr(r.value)} Cr`:'—';
+  renderProspectorCard();renderTargetSnapshot();renderCommodityTable();
+}
+function renderProspectorCard(){
+  const s=current(),r=s?.prospected?.at(-1),box=$('#prospectorCard');if(!r){box.className='prospector';box.innerHTML='<div class="empty">Waiting for a ProspectedAsteroid event.</div>';return}
+  const pct=targetPct(r),hit=pct>0,hot=pct>=settings.threshold,target=targetDisplay(),flag=hot?'MINE-GRADE':hit?`BELOW ${settings.threshold}%`:'NO TARGET';
+  box.className=`prospector ${hot?'hot':hit?'hit':'miss'}`;
+  const main=hit?`${esc(target)} ${pct.toFixed(1)}%`:(r.materials[0]?`${esc(r.materials[0].name)} ${r.materials[0].pct.toFixed(1)}%`:'No commodity content');
+  box.innerHTML=`<div class="prospTop"><div><div class="rockMain ${hot?'good':hit?'warn':'dim'}">${main}</div><div class="sessionMeta">${esc(r.content)} material content${r.remaining!=null?` · ${r.remaining.toFixed(0)}% remaining`:''}${r.motherlode?` · MOTHERLODE ${esc(r.motherlode)}`:''}</div></div><span class="rockFlag ${hot?'good':hit?'warn':''}">${flag}</span></div>
+  <div class="materials">${r.materials.slice().sort((a,b)=>b.pct-a.pct).map(m=>`<span class="mat ${m.key===targetKey()?'target':''} ${m.key===targetKey()&&m.pct>=settings.threshold?'hot':''}"><b>${esc(m.name)}</b> ${m.pct.toFixed(1)}%</span>`).join('')||'<span class="mat">No listed materials</span>'}</div>
+  <div class="prospFoot">${new Date(r.at).toLocaleTimeString()} · fresh sample ${r.remaining==null||r.remaining>=99.5?'YES':'NO'} · journal has no asteroid identifier</div>`;
+}
+function renderTargetSnapshot(){
+  const s=current(),ts=targetStats(s),c=contentCounts(s);
+  const cells=[['Samples',ts.n],['Mean hit',ts.mean==null?'—':ts.mean.toFixed(1)+'%'],['Median hit',ts.median==null?'—':ts.median.toFixed(1)+'%'],['Maximum',ts.max==null?'—':ts.max.toFixed(1)+'%'],['Target hits',ts.hits.length],['≥ threshold',ts.high.length]];
+  $('#targetSnapshot').innerHTML=cells.map(([k,v])=>`<div class="mini"><b>${v}</b><span>${k}</span></div>`).join('');
+  const max=Math.max(1,c.High,c.Medium,c.Low,c.Unknown);$('#contentBars').innerHTML=['High','Medium','Low','Unknown'].filter(k=>c[k]||k!=='Unknown').map(k=>`<div class="barrow"><label>${k} material</label><div class="bar"><i style="width:${c[k]/max*100}%"></i></div><b>${c[k]}</b></div>`).join('');
+}
+function renderCommodityTable(){
+  const s=current(),rows=refinedCounts(s),elapsed=activeMs(s);
+  if(!rows.length){$('#commodityTable').innerHTML='<div class="empty">No refined cargo in this run yet.</div>';return}
+  $('#commodityTable').innerHTML=`<table><thead><tr><th>Commodity</th><th>Tonnes</th><th>Run t/hr</th><th>Price / t</th><th>Source</th><th>Estimated value</th><th>Est. Cr/hr</th></tr></thead><tbody>${rows.map(x=>{const p=effectivePrice(x.key),tph=elapsed?x.count/(elapsed/3600000):0,val=x.count*p.price;return`<tr><td><b>${esc(x.name)}</b></td><td>${x.count}</td><td>${tph.toFixed(1)}</td><td>${p.price?fmt(p.price)+' Cr':'—'}</td><td>${esc(p.source)}</td><td>${p.price?fmtCr(val)+' Cr':'—'}</td><td>${p.price?fmtCr(tph*p.price)+' Cr/h':'—'}</td></tr>`}).join('')}</tbody></table>`;
+}
+
+function distributionStats(){
+  const key=$('#distCommodity')?.value||targetKey(),rows=distRows(),vals=rows.map(r=>targetPct(r,key)),hits=vals.filter(x=>x>0);
+  return{key,rows,vals,hits,n:rows.length,mean:mean(hits),median:median(hits),p75:quantile(hits,.75),max:hits.length?Math.max(...hits):null};
+}
+function renderDistribution(){
+  const ds=distributionStats(),name=allCommodityNames().find(([k])=>k===ds.key)?.[1]||ds.key||'Commodity';
+  const kpis=[['Samples',ds.n],['Hits',ds.hits.length],['Hit rate',ds.n?`${(ds.hits.length/ds.n*100).toFixed(0)}%`:'—'],['Mean hit',ds.mean==null?'—':ds.mean.toFixed(2)+'%'],['Median hit',ds.median==null?'—':ds.median.toFixed(2)+'%'],['75th percentile',ds.p75==null?'—':ds.p75.toFixed(2)+'%'],['Maximum',ds.max==null?'—':ds.max.toFixed(2)+'%'],['≥ mine grade',ds.n?`${(ds.vals.filter(x=>x>=settings.threshold).length/ds.n*100).toFixed(1)}%`:'—']];
+  $('#distKpis').innerHTML=kpis.map(([k,v])=>`<div class="mini"><b>${v}</b><span>${k}</span></div>`).join('');
+  $('#sampleNote').innerHTML=`<b>${esc(name)}</b> · ${ds.n} ${$('#distSample').value==='debounced'?'debounced':'raw'} fresh samples. ${settings.freshOnly?'Reports below 99.5% Remaining are excluded from distribution analysis.':'Depleted/re-prospected reports are included.'}`;
+  renderCDFChart(ds);renderCDFbThresholds(ds);
+}
+function renderCDFChart(ds){
+  const box=$('#cdfChart'),W=960,H=310,L=50,R=22,T=22,B=38;if(!ds.n){box.innerHTML='<div class="empty" style="margin:20px">No prospector samples for this commodity.</div>';return}
+  const maxX=Math.max(60,Math.ceil((ds.max||0)/10)*10),xs=[];for(let x=0;x<=maxX;x+=1)xs.push(x);
+  const cdf=xs.map(x=>ds.vals.filter(v=>v<=x).length/ds.n),cdfb=xs.map(x=>ds.vals.filter(v=>v>=x).length/ds.n);
+  const px=x=>L+(x/maxX)*(W-L-R),py=y=>T+(1-y)*(H-T-B);
+  const line=(ys,color)=>`<polyline fill="none" stroke="${color}" stroke-width="2" points="${xs.map((x,i)=>`${px(x).toFixed(1)},${py(ys[i]).toFixed(1)}`).join(' ')}"/>`;
+  let parts=[`<svg viewBox="0 0 ${W} ${H}"><rect x="0" y="0" width="${W}" height="${H}" fill="#060a0c"/>`];
+  for(let i=0;i<=5;i++){const y=i/5,yy=py(y);parts.push(`<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="#172328"/><text x="${L-8}" y="${yy+3}" text-anchor="end" fill="#617178" font-size="9">${Math.round(y*100)}%</text>`)}
+  for(let x=0;x<=maxX;x+=10){const xx=px(x);parts.push(`<line x1="${xx}" y1="${T}" x2="${xx}" y2="${H-B}" stroke="#111d21"/><text x="${xx}" y="${H-15}" text-anchor="middle" fill="#617178" font-size="9">${x}%</text>`)}
+  const tx=px(clamp(settings.threshold,0,maxX));parts.push(`<line x1="${tx}" y1="${T}" x2="${tx}" y2="${H-B}" stroke="#78d49d" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${Math.min(tx+5,W-85)}" y="${T+11}" fill="#78d49d" font-size="9">MINE ${settings.threshold}%</text>`);
+  const mode=$('#distGraph').value;if(mode==='both'||mode==='cdf')parts.push(line(cdf,'#65ccd5'));if(mode==='both'||mode==='cdfb')parts.push(line(cdfb,'#f39a3d'));
+  parts.push(`<line x1="${L}" y1="${H-B}" x2="${W-R}" y2="${H-B}" stroke="#43545b"/><line x1="${L}" y1="${T}" x2="${L}" y2="${H-B}" stroke="#43545b"/><text x="${W/2}" y="${H-3}" text-anchor="middle" fill="#718087" font-size="9">COMMODITY CONTENT %</text></svg>`);
+  box.innerHTML=parts.join('');
+}
+function renderCDFbThresholds(ds){
+  const cuts=[10,20,25,30,35,40,45,50,55,60],max=100;
+  $('#cdfbThresholds').innerHTML=cuts.map(x=>{const v=ds.n?ds.vals.filter(y=>y>=x).length/ds.n*100:0;return`<div class="barrow"><label>CDFb(${x}) · ≥ ${x}%</label><div class="bar"><i style="width:${v/max*100}%"></i></div><b>${v.toFixed(1)}%</b></div>`}).join('');
+}
+
+function renderSession(){
+  const s=current(),r=rateStats(s),ts=targetStats(s),elapsed=activeMs(s),ref=s?.refined?.length||0,launch=s?.prospectorsLaunched||0,reports=s?.prospected?.length||0;
+  const vals=[['Active time',s?fmtTime(elapsed):'—'],['Refined',`${ref} t`],['Run t/hr',r.sessionTph==null?'—':r.sessionTph.toFixed(1)],['Run Cr/hr',r.sessionCrh==null?'—':fmtCr(r.sessionCrh)],['Prospectors',launch],['Reports',reports],['Report rate',launch?`${(reports/launch*100).toFixed(0)}%`:'—'],['Target hit',ts.hitRate==null?'—':`${(ts.hitRate*100).toFixed(1)}%`],['Mine-grade',ts.highRate==null?'—':`${(ts.highRate*100).toFixed(1)}%`],['Target mean',ts.mean==null?'—':`${ts.mean.toFixed(1)}%`],['Target max',ts.max==null?'—':`${ts.max.toFixed(1)}%`],['Value',s?fmtCr(r.value)+' Cr':'—']];
+  $('#sessionKpis').innerHTML=vals.map(([k,v])=>`<div class="mini"><b>${v}</b><span>${k}</span></div>`).join('');
+  const pending=Math.max(0,launch-reports);
+  $('#prospectorStats').innerHTML=s?`<div class="metrics" style="grid-template-columns:repeat(2,1fr)"><div class="metric"><b>${launch}</b><label>Prospector limpets launched</label><small>LaunchDrone: Prospector</small></div><div class="metric"><b>${reports}</b><label>Reports received</label><small>ProspectedAsteroid</small></div><div class="metric"><b>${pending}</b><label>Pending / lost</label><small>launches minus reports; in-flight included</small></div><div class="metric"><b>${ts.high.length}</b><label>Mine-grade rocks</label><small>${targetDisplay()} ≥ ${settings.threshold}%</small></div></div>`:'<div class="empty">No active run.</div>';
+  $('#productionStats').innerHTML=s?`<div class="metrics" style="grid-template-columns:repeat(2,1fr)"><div class="metric"><b>${ref} t</b><label>Refined</label><small>authoritative tonne count</small></div><div class="metric"><b>${r.coverage==null?'—':(r.coverage*100).toFixed(0)+'%'}</b><label>Priced tonnes</label><small>used in Cr/hr</small></div><div class="metric"><b>${r.liveTph==null?'—':r.liveTph.toFixed(1)}</b><label>Live t/hr</label><small>${settings.rateWindow||'whole-run'}${settings.rateWindow?' min window':''}</small></div><div class="metric"><b>${r.liveCrh==null?'—':fmtCr(r.liveCrh)}</b><label>Live Cr/hr</label><small>estimated production value</small></div></div>`:'<div class="empty">No active run.</div>';
+  renderProspectorTable();
+}
+function renderProspectorTable(){
+  const rows=(current()?.prospected||[]).slice().reverse().slice(0,250),key=targetKey();
+  if(!rows.length){$('#prospectorTable').innerHTML='<div class="empty">No prospector reports in this run.</div>';return}
+  $('#prospectorTable').innerHTML=`<table><thead><tr><th>Time</th><th>${esc(targetDisplay())}</th><th>Grade</th><th>Content</th><th>Remaining</th><th>All materials</th></tr></thead><tbody>${rows.map(r=>{const p=targetPct(r,key),grade=p>=settings.threshold?'MINE':p>0?'LOW':'—';return`<tr><td>${new Date(r.at).toLocaleTimeString()}</td><td><b>${p?p.toFixed(2)+'%':'—'}</b></td><td>${grade}</td><td>${esc(r.content)}</td><td>${r.remaining==null?'—':r.remaining.toFixed(1)+'%'}</td><td>${r.materials.map(m=>`${esc(m.name)} ${m.pct.toFixed(1)}%`).join(' · ')||'—'}</td></tr>`}).join('')}</tbody></table>`;
+}
+function renderPrices(){
+  const names=new Map(allCommodityNames());
+  for(const x of current()?.refined||[])names.set(x.key,x.name);for(const r of current()?.prospected||[])for(const x of r.materials)names.set(x.key,x.name);
+  const rows=[...names.entries()].sort((a,b)=>a[1].localeCompare(b[1]));
+  if(!rows.length){$('#priceTable').innerHTML='<div class="empty">Observe or refine a commodity to add it here.</div>';return}
+  $('#priceTable').innerHTML=`<table><thead><tr><th>Commodity</th><th>Manual Cr/t</th><th>Recent sale</th><th>Market sell</th><th>Mean</th><th>Used</th><th>Source</th></tr></thead><tbody>${rows.map(([k,name])=>{const eff=effectivePrice(k),m=marketPrices[k]||{},sale=recentSalePrices[k]||{};return`<tr><td><b>${esc(name)}</b></td><td><input class="manualPrice" data-key="${esc(k)}" type="number" min="0" step="1000" value="${manualPrices[k]||''}" placeholder="optional" style="min-width:110px"></td><td>${sale.price?fmt(sale.price):'—'}</td><td>${m.sell?fmt(m.sell):'—'}</td><td>${m.mean?fmt(m.mean):'—'}</td><td><b>${eff.price?fmt(eff.price):'—'}</b></td><td>${esc(eff.source)}</td></tr>`}).join('')}</tbody></table>`;
+  $$('.manualPrice').forEach(el=>el.onchange=()=>{const k=el.dataset.key,v=Number(el.value);if(v>0)manualPrices[k]=v;else delete manualPrices[k];scheduleSave();renderAll();updateHUD()});
+}
+function renderHistory(){
+  const rows=state.history||[];if(!rows.length){$('#historyTable').innerHTML='<div class="empty">No archived mining runs yet.</div>';return}
+  $('#historyTable').innerHTML=`<table><thead><tr><th>Date</th><th>Run</th><th>Location</th><th>Active time</th><th>Refined</th><th>t/hr</th><th>Prospectors</th><th>Reports</th><th>Target</th></tr></thead><tbody>${rows.map(s=>{const ms=activeMs(s,tms(s.endedAt)||Date.now()),tph=ms?(s.refined?.length||0)/(ms/3600000):0;return`<tr><td>${new Date(s.startedAt).toLocaleDateString()}</td><td><b>${esc(s.label||'Mining run')}</b><br><span class="mono">${new Date(s.startedAt).toLocaleTimeString()}</span></td><td>${esc(runLocation(s))}</td><td>${fmtTime(ms)}</td><td>${s.refined?.length||0} t</td><td>${tph.toFixed(1)}</td><td>${s.prospectorsLaunched||0}</td><td>${s.prospected?.length||0}</td><td>${esc(s.targetAtStart||'—')} ≥ ${s.thresholdAtStart??'—'}%</td></tr>`}).join('')}</tbody></table>`;
+}
+function renderAll(){
+  syncCommoditySelects();renderHeader();renderLive();renderDistribution();renderSession();renderPrices();renderHistory();
+}
+
+function shouldHideHud(){if(!settings.hideFocused)return false;const g=Number(lastStatus?.GuiFocus);return Number.isFinite(g)&&g>=5&&g<=11}
+function hudPosition(){
+  const map={tr:{x:.725,y:.035},tl:{x:.018,y:.035},br:{x:.725,y:.855},bl:{x:.018,y:.855}};return map[settings.hudCorner]||map.tr;
+}
+async function setHUD(on){
+  hudEnabled=!!on;if(!hudEnabled){try{await Elite.overlay.clear()}catch{}hudVisible=false;renderHeader();return}
+  try{const info=await Elite.overlay.info();if(!info?.available)throw new Error('Overlay unavailable');await updateHUD()}catch(e){hudEnabled=false;hudVisible=false;log(`HUD unavailable: ${e.message||e}`)}
+  renderHeader();
+}
+async function updateHUD(){
+  if(!hudEnabled)return;
+  if(shouldHideHud()){if(hudVisible){try{await Elite.overlay.clear()}catch{}hudVisible=false;renderHeader()}return}
+  const s=current();if(!s){if(hudVisible){try{await Elite.overlay.clear()}catch{}hudVisible=false;renderHeader()}return}
+  const p=hudPosition(),r=rateStats(s),ts=targetStats(s),l=limpetCount(),cargo=cargoMass==null?'—':`${Math.round(cargoMass)}${cargoCapacity!=null?'/'+Math.round(cargoCapacity):''}`;
+  const tph=r.liveTph==null?'—':r.liveTph.toFixed(1),crh=r.liveCrh==null?'—':fmtCr(r.liveCrh),target=targetDisplay();
+  const w=.258,baseH=.073;
+  let items=[
+    {type:'rect',x:p.x,y:p.y,w,h:baseH,fill:'#05090BD8',stroke:'#28383F',lineWidth:1},
+    {type:'rect',x:p.x,y:p.y,w:.003,h:baseH,fill:'#F39A3D'},
+    {type:'text',x:p.x+.010,y:p.y+.015,text:`MINING  //  ${tph} t/h  ·  ${crh} Cr/h`,fontSize:12,color:'#E8EEF0'},
+    {type:'text',x:p.x+.010,y:p.y+.036,text:`CARGO ${cargo}   LIMP ${l==null?'—':l}   PROSP ${s.prospectorsLaunched||0}`,fontSize:9,color:'#8F9EA4'},
+    {type:'text',x:p.x+.010,y:p.y+.056,text:`${target.toUpperCase()}  HIT ${ts.hitRate==null?'—':(ts.hitRate*100).toFixed(0)+'%'}   ≥${settings.threshold}% ${ts.highRate==null?'—':(ts.highRate*100).toFixed(0)+'%'}`,fontSize:9,color:'#A7DDBB'}
+  ];
+  const rlast=s.prospected?.at(-1),age=rlast?Date.now()-tms(rlast.at):Infinity,alert=rlast&&settings.hudProspector&&age<=settings.alertSeconds*1000;
+  if(alert){
+    const pct=targetPct(rlast),hot=pct>=settings.threshold,hit=pct>0,ay=p.y+baseH+.007,ah=.080;
+    const main=hit?`${target.toUpperCase()} ${pct.toFixed(1)}%`:(rlast.materials[0]?`${rlast.materials[0].name.toUpperCase()} ${rlast.materials[0].pct.toFixed(1)}%`:'NO LISTED MATERIAL');
+    const secondary=rlast.materials.filter(m=>m.key!==targetKey()).sort((a,b)=>b.pct-a.pct).slice(0,2).map(m=>`${m.name} ${m.pct.toFixed(1)}%`).join('  ·  ');
+    items.push(
+      {type:'rect',x:p.x,y:ay,w,h:ah,fill:'#05090BE8',stroke:hot?'#4B8B65':hit?'#806334':'#35444A',lineWidth:1.4},
+      {type:'rect',x:p.x,y:ay,w:.004,h:ah,fill:hot?'#78D49D':hit?'#E8C36C':'#697A81'},
+      {type:'text',x:p.x+.010,y:ay+.021,text:main,fontSize:17,color:hot?'#9BE2B7':hit?'#F0C97C':'#ADB8BC'},
+      {type:'text',x:p.x+w-.010,y:ay+.020,text:hot?'MINE-GRADE':hit?`BELOW ${settings.threshold}%`:'NO TARGET',fontSize:9,color:hot?'#9BE2B7':hit?'#E8C36C':'#86959B',align:'right'},
+      {type:'text',x:p.x+.010,y:ay+.045,text:`${rlast.content.toUpperCase()} MATERIAL${rlast.motherlode?`  ·  MOTHERLODE ${rlast.motherlode.toUpperCase()}`:''}`,fontSize:9,color:'#87969C'},
+      {type:'text',x:p.x+.010,y:ay+.064,text:secondary||`REMAINING ${rlast.remaining==null?'—':rlast.remaining.toFixed(0)+'%'}`,fontSize:8,color:'#65767D'}
+    );
+  }
+  try{await Elite.overlay.set({z:20,space:'normalized',items});hudVisible=true;renderHeader()}catch(e){log(`HUD update failed: ${e.message||e}`)}
+}
+
+function handleStatus(st){
+  lastStatus=st||lastStatus;if(Number.isFinite(Number(st?.Cargo)))cargoMass=Number(st.Cargo);
+  renderAll();if(hudEnabled)updateHUD();
+}
+function renderLimpetJudgement(){
+  const docked=!!(Number(lastStatus?.Flags)&1),l=limpetCount(),el=$('#limpetState');
+  if(!docked){el.textContent='TOO LATE! You are not docked. Future You has once again been betrayed by Past You.';el.style.color='var(--red)';return}
+  if(l==null){el.textContent='Docked. Cargo inventory has not reported a limpet count yet; refresh Cargo by opening inventory or purchasing limpets.';el.style.color='var(--yellow)';return}
+  const target=cargoCapacity!=null&&cargoMass!=null?Math.max(l,Math.floor(l+(cargoCapacity-cargoMass))):null;
+  el.textContent=target!=null?`Docked. ${l} limpets aboard; nominal fill-to-capacity target is about ${target}. Use Advanced Maintenance → Restock.`:`Docked. ${l} limpets aboard. Use Advanced Maintenance → Restock before departure.`;
+  el.style.color=l<20?'var(--red)':l<50?'var(--yellow)':'var(--green)';
+}
+
+function log(msg){const el=$('#log');if(el){el.textContent+=`[${new Date().toLocaleTimeString()}] ${msg}\n`;el.scrollTop=el.scrollHeight}}
+function wire(){
+  $$('nav button').forEach(b=>b.onclick=()=>{$$('nav button').forEach(x=>x.classList.toggle('on',x===b));$$('.view').forEach(v=>v.classList.toggle('on',v.id===`view-${b.dataset.view}`));renderAll()});
+  $('#startBtn').onclick=startSession;$('#pauseBtn').onclick=togglePause;$('#endBtn').onclick=endSession;$('#resetCurrentBtn').onclick=discardSession;
+  $('#hudBtn').onclick=async()=>{await setHUD(!hudEnabled);$('#hudBtn').textContent=hudEnabled?'Disable quiet HUD':'Enable quiet HUD'};
+  $('#runLabel').onchange=()=>{if(current())current().label=$('#runLabel').value.trim();scheduleSave();renderAll()};
+  $('#limpetBtn').onclick=renderLimpetJudgement;
+  $('#targetCommodity').onchange=()=>{const row=allCommodityNames().find(([k])=>k===$('#targetCommodity').value);settings.target=row?.[1]||$('#targetCommodity').value;$('#distCommodity').value=$('#targetCommodity').value;scheduleSave();renderAll();updateHUD()};
+  for(const id of ['targetThreshold','rateWindow','autoStart','freshOnly','hudCorner','alertSeconds','hideFocused','hudProspector','debounceSeconds']){
+    const el=$('#'+id);el.onchange=()=>{readSettings();scheduleSave();renderAll();updateHUD()}
+  }
+  $('#distCommodity').onchange=renderDistribution;$('#distSample').onchange=renderDistribution;$('#distGraph').onchange=renderDistribution;
+  $('#saveSettingsBtn').onclick=()=>{readSettings();scheduleSave();saveNow();renderAll();updateHUD();log('Settings saved.')};
+  $('#refreshPricesBtn').onclick=refreshMarket;
+  $('#clearManualPricesBtn').onclick=()=>{if(confirm('Clear all manual commodity prices?')){manualPrices={};scheduleSave();renderAll();updateHUD()}};
+  $('#exportBtn').onclick=async()=>{try{await Elite.files.json(`JACoB-mining-${new Date().toISOString().slice(0,10)}.json`,{schema:1,build:BUILD,exportedAt:iso(),settings,current:state.current,history:state.history,manualPrices,recentSalePrices})}catch(e){log(`Export failed: ${e.message||e}`)}};
+  $('#clearHistoryBtn').onclick=()=>{if(confirm('Clear all archived mining runs?')){state.history=[];scheduleSave();renderHistory();log('Archived run history cleared.')}};
+}
+async function bootstrap(){
+  $('#build').textContent=BUILD;
+  await restore();
+  try{
+    const snap=await Elite.state.get();lastStatus=snap?.status||null;if(Number.isFinite(Number(lastStatus?.Cargo)))cargoMass=Number(lastStatus.Cargo);
+    const jc=snap?.journalContext||{};if(Number.isFinite(Number(jc?.cargoCapacity)))cargoCapacity=Number(jc.cargoCapacity);
+    if(state.current){state.current.system=state.current.system||jc.currentSystem||'';state.current.body=state.current.body||lastStatus?.BodyName||''}
+  }catch(e){log(`Initial state unavailable: ${e.message||e}`)}
+  await recoverContext();await refreshCargo();await refreshMarket();
+  syncCommoditySelects();wire();renderAll();
+  Elite.journal.subscribe('*',processJournal);Elite.state.subscribe(handleStatus);
+  clearInterval(tickTimer);tickTimer=setInterval(()=>{if(current()){renderLive();renderSession();if(hudEnabled)updateHUD()}},1000);
+  log(`${BUILD} ready. MiningRefined drives tonnes; Cr/hr reports price coverage explicitly.`);
+}
+bootstrap();
+})();
+</script>
+</body>
+</html>

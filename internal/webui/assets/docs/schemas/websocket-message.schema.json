@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://jacob.local/schemas/v2/websocket-message.schema.json",
+  "$id": "https://jacob.local/schemas/v7/websocket-message.schema.json",
   "title": "JACoB WebSocket Message",
   "oneOf": [
     {
@@ -49,7 +49,11 @@
             "update.check",
             "update.install",
             "tabs.layout.save",
-            "net.fetch"
+            "net.fetch",
+            "tabstate.get",
+            "tabstate.set",
+            "tabstate.delete",
+            "tabstate.clear"
           ]
         },
         "params": {
@@ -111,7 +115,8 @@
             "tabs.changed",
             "appearance.changed",
             "recorder.input",
-            "core.update"
+            "core.update",
+            "market"
           ]
         },
         "data": {}

@@ -195,5 +195,17 @@ func unsafeIP(ip net.IP) bool {
 	if ip == nil {
 		return true
 	}
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+	// Go's IsPrivate intentionally does not include carrier-grade NAT or the
+	// protocol benchmark range. Neither is a public-Internet destination and
+	// both can expose infrastructure on unusual local/provider networks.
+	for _, raw := range []string{"100.64.0.0/10", "198.18.0.0/15"} {
+		_, block, err := net.ParseCIDR(raw)
+		if err == nil && block.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }

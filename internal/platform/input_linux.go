@@ -3,8 +3,10 @@
 package platform
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,10 +54,113 @@ func (l *linuxInput) Available() bool {
 		return false
 	}
 	_ = syscall.Close(fd)
-	return true
+	_, xdotoolErr := exec.LookPath("xdotool")
+	_, xpropErr := exec.LookPath("xprop")
+	return xdotoolErr == nil || xpropErr == nil
 }
 func (l *linuxInput) FocusGame() error {
-	return nil
+	return verifyLinuxEliteForeground()
+}
+
+func verifyLinuxEliteForeground() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 900*time.Millisecond)
+	defer cancel()
+
+	if path, err := exec.LookPath("xdotool"); err == nil {
+		out, runErr := exec.CommandContext(ctx, path, "getactivewindow", "getwindowpid").Output()
+		if runErr == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil && linuxPIDTreeIsElite(pid) {
+				return nil
+			}
+		}
+	}
+
+	if path, err := exec.LookPath("xprop"); err == nil {
+		// Steam Deck Gaming Mode publishes the focused Steam app directly.
+		if out, runErr := exec.CommandContext(ctx, path, "-root", "GAMESCOPE_FOCUSED_APP").CombinedOutput(); runErr == nil {
+			if strings.Contains(string(out), "359320") { // Elite Dangerous Steam app ID
+				return nil
+			}
+		}
+		for _, prop := range []string{"GAMESCOPE_FOCUSED_WINDOW", "_NET_ACTIVE_WINDOW"} {
+			out, runErr := exec.CommandContext(ctx, path, "-root", prop).CombinedOutput()
+			if runErr != nil {
+				continue
+			}
+			windowID := parseXWindowID(string(out))
+			if windowID == "" || windowID == "0x0" {
+				continue
+			}
+			detail, runErr := exec.CommandContext(ctx, path, "-id", windowID, "_NET_WM_PID", "WM_CLASS", "STEAM_GAME").CombinedOutput()
+			if runErr != nil {
+				continue
+			}
+			lower := strings.ToLower(string(detail))
+			if strings.Contains(lower, "elitedangerous64.exe") || strings.Contains(lower, "elitedangerous.exe") || strings.Contains(lower, "359320") {
+				return nil
+			}
+			if pid := parseXPropPID(string(detail)); pid > 0 && linuxPIDTreeIsElite(pid) {
+				return nil
+			}
+		}
+	}
+
+	return fmt.Errorf("Elite Dangerous is not verified as the foreground window; Linux input was blocked for safety")
+}
+
+func parseXWindowID(s string) string {
+	for _, field := range strings.Fields(s) {
+		f := strings.Trim(field, " ,\t\r\n")
+		if strings.HasPrefix(strings.ToLower(f), "0x") {
+			if _, err := strconv.ParseUint(strings.TrimPrefix(strings.ToLower(f), "0x"), 16, 64); err == nil {
+				return f
+			}
+		}
+	}
+	return ""
+}
+
+func parseXPropPID(s string) int {
+	for _, line := range strings.Split(s, "\n") {
+		if !strings.Contains(line, "_NET_WM_PID") {
+			continue
+		}
+		i := strings.LastIndex(line, "=")
+		if i < 0 {
+			continue
+		}
+		if pid, err := strconv.Atoi(strings.TrimSpace(line[i+1:])); err == nil {
+			return pid
+		}
+	}
+	return 0
+}
+
+func linuxPIDTreeIsElite(pid int) bool {
+	for depth := 0; depth < 8 && pid > 1; depth++ {
+		cmdline, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		comm, _ := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+		text := strings.ToLower(strings.ReplaceAll(string(cmdline)+" "+string(comm), "\x00", " "))
+		if strings.Contains(text, "elitedangerous64.exe") || strings.Contains(text, "elitedangerous.exe") {
+			return true
+		}
+		status, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+		if err != nil {
+			break
+		}
+		parent := 0
+		for _, line := range strings.Split(string(status), "\n") {
+			if strings.HasPrefix(line, "PPid:") {
+				parent, _ = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "PPid:")))
+				break
+			}
+		}
+		if parent <= 1 || parent == pid {
+			break
+		}
+		pid = parent
+	}
+	return false
 }
 func (l *linuxInput) TapKey(key string) error { return l.TapChord(key, nil) }
 
@@ -89,6 +194,9 @@ func (l *linuxInput) HoldChord(key string, modifiers []string, durationMs int) e
 }
 
 func (l *linuxInput) resolveChordLocked(key string, modifiers []string) (uint16, []uint16, error) {
+	if err := ValidateSafeChord(key, modifiers); err != nil {
+		return 0, nil, err
+	}
 	mods := make([]uint16, 0, len(modifiers))
 	for _, m := range modifiers {
 		code, ok := evdevKey(m)

@@ -106,6 +106,9 @@ func (c *Client) Check(ctx context.Context) (Info, error) {
 	if asset == nil {
 		info.Installable = false
 		info.InstallNote = "No update package matches this operating system and architecture."
+	} else if strings.TrimSpace(asset.Digest) == "" {
+		info.Installable = false
+		info.InstallNote = "Automatic installation requires a GitHub-published SHA-256 digest for the release asset."
 	} else {
 		switch runtime.GOOS {
 		case "windows", "linux":
@@ -202,13 +205,20 @@ func (c *Client) Download(ctx context.Context, asset Asset, dir string) (string,
 		_ = os.Remove(tmp)
 		return "", fmt.Errorf("update size mismatch: got %d bytes, expected %d", written, asset.Size)
 	}
-	if d := strings.TrimSpace(asset.Digest); d != "" {
-		want := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(d), "sha256:"))
-		got := hex.EncodeToString(h.Sum(nil))
-		if want != "" && want != got {
-			_ = os.Remove(tmp)
-			return "", errors.New("update checksum did not match the GitHub release asset")
-		}
+	d := strings.TrimSpace(asset.Digest)
+	if d == "" {
+		_ = os.Remove(tmp)
+		return "", errors.New("automatic update refused: GitHub release asset has no published SHA-256 digest")
+	}
+	want := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(d), "sha256:"))
+	if len(want) != 64 {
+		_ = os.Remove(tmp)
+		return "", errors.New("automatic update refused: release asset SHA-256 digest is invalid")
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if want != got {
+		_ = os.Remove(tmp)
+		return "", errors.New("update checksum did not match the GitHub release asset")
 	}
 	_ = os.Remove(path)
 	if err := os.Rename(tmp, path); err != nil {

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<title>JACoB Security</title>
+<link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+<header><div class="inner"><strong>JACoB</strong><nav><a href="/">App</a><a href="/docs/index.html">Docs</a><a href="/docs/developer-reference.html">Developer Reference</a></nav></div></header>
+<main class="doc">
+<h1 id="jacob-security-model">JACoB security model</h1>
+<p>JACoB intentionally has privileges that ordinary web pages do not: it
+can read Elite Dangerous journals, send input to Elite, render overlays,
+proxy selected public HTTP requests, and on supported platforms capture
+the Elite window. The security boundary therefore lives in the JACoB
+core, not in custom-tab HTML.</p>
+<h2 id="core-guarantees">Core guarantees</h2>
+<ul>
+<li><strong>Elite-targeted input.</strong> Input methods focus the
+verified <code>EliteDangerous64.exe</code> /
+<code>EliteDangerous.exe</code> window before injecting keys. Custom
+tabs cannot ask JACoB to target another process.</li>
+<li><strong>Elite-only video.</strong> Windows capture reads the
+verified Elite client window, never a rectangle from the desktop
+framebuffer. If Elite is absent, hidden, minimized, or not foreground,
+capture returns a freshly generated black frame.</li>
+<li><strong>Derived vision only.</strong> SDK 7 exposes
+<code>Elite.vision.info()</code> and <code>Elite.vision.sample()</code>.
+Samples contain feature coordinates, coarse frame motion, brightness and
+contrast. Raw pixels are not exposed to custom tabs.</li>
+<li><strong>Same-origin WebSockets and DNS-rebinding defense.</strong>
+Browser WebSocket connections must originate from the same JACoB host
+and port. Cross-site and sandbox-<code>null</code> origins are rejected,
+and HTTP Host values are limited to <code>localhost</code>, loopback
+literals, or IP addresses actually assigned to this computer. This
+prevents a hostile website or rebinding domain from silently reaching
+localhost JACoB.</li>
+<li><strong>Strong LAN pairing.</strong> Automatically generated pairing
+tokens are 128-bit cryptographically random values. Configured LAN
+tokens shorter than 16 characters disable LAN access rather than
+silently weakening authentication.</li>
+<li><strong>Remote mutation limits.</strong> Installing/editing/removing
+custom tabs, changing Appearance HTML, and modifying Elite binding files
+are host-computer-only operations.</li>
+<li><strong>Authenticated diagnostics/media.</strong> LAN health access
+requires the pairing token. Video uses a different cryptographically
+random media-only token on both loopback and LAN; a paired browser
+receives that token only after WebSocket authentication. Custom tabs
+granted Video permission therefore never receive the higher-privilege
+LAN pairing credential. Remote system info omits host paths and detailed
+binding diagnostics.</li>
+<li><strong>Custom-tab sandbox.</strong> Tabs retain an opaque sandboxed
+origin. SDK 7 injects a restrictive CSP that blocks direct external
+scripts, frames, fetch/WebSocket connections, forms, workers and
+external image loads, and injects a navigation guard that blocks
+ordinary external iframe navigations and popups. Sensitive bridge
+capabilities (input, network, recorder, overlay, video and vision)
+require a per-tab browser permission prompt. The network prompt
+explicitly warns that a network-enabled tab can transmit journal/state
+data it can read. Denials are remembered until permissions are reset,
+preventing prompt-spam loops.</li>
+<li><strong>Public-network proxy only.</strong>
+<code>Elite.net.fetch()</code> blocks loopback, private/LAN,
+carrier-grade NAT, protocol-benchmark, link-local, multicast and local
+hostnames, re-checks DNS at dial time, permits only HTTP/HTTPS on
+standard ports, limits redirects, and bounds request/response
+sizes.</li>
+<li><strong>Bounded Elite file access.</strong> Journal history reads
+accept only <code>Journal*.log</code> basenames from the detected Elite
+journal directory, reject traversal and symlinks, and cap results.
+Companion JSON access is limited to files already indexed from that
+directory. The host also rate-limits high-frequency custom-tab calls,
+including journal scans, vision samples, network requests and
+persistent-state writes.</li>
+<li><strong>Verified automatic updates.</strong> Automatic installation
+is refused unless GitHub publishes a SHA-256 digest for the selected
+release asset and the downloaded bytes match it.</li>
+<li><strong>Appearance sanitization.</strong> Appearance HTML is
+presentation-only: shell-slot markup is reduced to a small safe
+tag/attribute allow-list, event handlers/embedded media are removed,
+external URLs are blocked, and theme CSS has external <code>url()</code>
+/ <code>@import</code> sources stripped.</li>
+<li><strong>Clickjacking/browser-permission hardening.</strong> The main
+UI denies framing by other sites, blocks external image loads, and
+disables camera, microphone, geolocation and browser display-capture
+permissions.</li>
+</ul>
+<h2 id="custom-tab-permissions">Custom-tab permissions</h2>
+<p>Permissions are granted per saved-tab version and per browser. A tab
+asks the first time it attempts a sensitive capability. Editing or
+replacing the tab changes its version and therefore invalidates the old
+grants, including on browsers that were offline during the update.
+Grants can also be cleared manually from Tab Manager with <strong>Reset
+permissions</strong>.</p>
+<p>The capabilities are:</p>
+<ul>
+<li><strong>Control Elite Dangerous</strong> — raw or semantic input
+actions.</li>
+<li><strong>Network</strong> — <code>Elite.net.fetch()</code> to public
+internet services.</li>
+<li><strong>Recorder</strong> — Elite-foreground keyboard
+recording.</li>
+<li><strong>Overlay</strong> — game overlay layers.</li>
+<li><strong>Video</strong> — display of the focus-gated Elite video
+stream.</li>
+<li><strong>Vision</strong> — derived feature/motion telemetry from
+Elite-only frames.</li>
+</ul>
+<p>Read-only Elite journal/state access remains available to custom tabs
+because most JACoB tools require it. The injected CSP and network
+permission boundary are intended to prevent that data from being
+silently sent elsewhere.</p>
+<h2 id="remaining-boundaries">Remaining boundaries</h2>
+<ul>
+<li><strong>LAN mode is for trusted networks.</strong> JACoB currently
+serves its browser UI and WebSocket over HTTP/WS rather than TLS. The
+strong pairing token prevents unauthenticated control, but an attacker
+who can actively intercept or modify traffic on the local network is
+outside the current protection boundary. Keep LAN access disabled on
+public/untrusted networks.</li>
+<li><strong>Imported HTML is still code.</strong> The opaque iframe,
+CSP, capability prompts and navigation guard substantially reduce what a
+custom tab can do, but JACoB does not claim a formally non-exfiltrating
+JavaScript sandbox across every old browser engine. Current browsers
+with the Navigation API get the strongest navigation guard. Install tabs
+from sources you trust, especially when granting Network or
+Control.</li>
+</ul>
+<h2 id="threat-model-boundary">Threat-model boundary</h2>
+<p>JACoB protects against hostile web pages, untrusted custom-tab HTML,
+accidental desktop capture, weak LAN authentication, common SSRF
+targets, path traversal, and clickjacking. It does not attempt to defend
+against malware or another local process already running with the user's
+operating-system privileges.</p>
+<p>The Linux/Steam Deck capture backend remains unavailable until a
+PipeWire/Gamescope adapter can implement the same Elite-only/focus-gated
+contract. Linux input now refuses to emit keys unless JACoB can
+positively verify Elite as the focused X11/Gamescope window; if focus
+cannot be verified, input fails closed.</p>
+<h2 id="lan-transport-limitation">LAN transport limitation</h2>
+<p>LAN mode currently uses plain HTTP/WebSocket transport. The 128-bit
+pairing token prevents unauthenticated clients from connecting, but it
+does <strong>not</strong> provide confidentiality against a device that
+can sniff or actively intercept traffic on the local network. Do not
+expose or port-forward JACoB to the public internet, and use LAN control
+only on a network you trust. A future TLS/authenticated-encryption
+transport should be used before claiming protection on hostile Wi-Fi or
+other untrusted networks.</p>
+<h2 id="installed-tab-trust-boundary">Installed-tab trust boundary</h2>
+<p>Custom tabs remain executable code chosen by the user. The sandbox
+and capability prompts block common direct network/control channels and
+protect host secrets, but they are not a formal information-flow
+sandbox. In particular, browser navigation behavior should not be relied
+on as a guarantee that a malicious tab can never disclose read-only game
+data. Only install custom tabs you trust with the journal/state data
+they are designed to consume.</p>
+
+</main>
+</body>
+</html>

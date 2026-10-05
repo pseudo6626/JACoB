@@ -6,6 +6,8 @@ type CaptureInfo struct {
 	Height       int    `json:"height"`
 	SourceWidth  int    `json:"sourceWidth"`
 	SourceHeight int    `json:"sourceHeight"`
+	Blanked      bool   `json:"blanked,omitempty"`
+	Reason       string `json:"reason,omitempty"`
 }
 
 type CaptureDriver interface {

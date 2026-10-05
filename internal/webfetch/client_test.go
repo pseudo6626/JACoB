@@ -23,4 +23,9 @@ func TestAllowsPublicHTTPS(t *testing.T) {
 	if unsafeIP(net.ParseIP("8.8.8.8")) {
 		t.Fatal("public IP marked unsafe")
 	}
+	for _, raw := range []string{"100.64.0.1", "100.100.100.200", "198.18.0.1"} {
+		if !unsafeIP(net.ParseIP(raw)) {
+			t.Fatalf("special-use address %s must be blocked", raw)
+		}
+	}
 }

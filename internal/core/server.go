@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,8 +29,11 @@ import (
 	"jacob/internal/control"
 	"jacob/internal/customtabs"
 	"jacob/internal/journal"
+	"jacob/internal/localization"
 	"jacob/internal/platform"
+	"jacob/internal/tabstate"
 	"jacob/internal/updater"
+	"jacob/internal/vision"
 	"jacob/internal/webfetch"
 	"jacob/internal/webui"
 )
@@ -54,9 +58,12 @@ type Server struct {
 	controls      *control.Bridge
 	recorder      platform.InputRecorder
 	capture       platform.CaptureDriver
+	vision        *vision.Tracker
 	overlay       platform.OverlayDriver
 	tabs          *customtabs.Store
+	tabState      *tabstate.Store
 	appearance    *appearance.Store
+	locale        *localization.Store
 	updater       *updater.Client
 	webfetch      *webfetch.Client
 	clientsMu     sync.RWMutex
@@ -64,6 +71,7 @@ type Server struct {
 	clients       map[*wsClient]struct{}
 	recorderOwner *wsClient
 	started       time.Time
+	mediaToken    string
 	autoBind      bindings.AutoBindReport
 	shutdown      chan struct{}
 	shutdownOnce  sync.Once
@@ -87,9 +95,32 @@ type apiError struct {
 
 func New(cfg Config) *Server {
 	if cfg.LANEnabled && cfg.PairToken == "" {
-		cfg.PairToken = randomToken()
+		token, err := secureRandomToken()
+		if err != nil {
+			log.Printf("JACoB LAN access disabled because a secure pairing token could not be generated: %v", err)
+			cfg.LANEnabled = false
+		} else {
+			cfg.PairToken = token
+		}
+	} else if cfg.LANEnabled && len(strings.TrimSpace(cfg.PairToken)) < 16 {
+		log.Printf("JACoB LAN access disabled: configured pairing token must be at least 16 characters")
+		cfg.LANEnabled = false
 	}
 	s := &Server{cfg: cfg, input: platform.NewInputDriver(), recorder: platform.NewInputRecorder(), capture: platform.NewCaptureDriver(), overlay: platform.NewOverlayDriver(), updater: updater.New(), webfetch: webfetch.New(), clients: map[*wsClient]struct{}{}, started: time.Now(), shutdown: make(chan struct{})}
+	mediaToken, mediaErr := secureRandomToken()
+	if mediaErr != nil {
+		log.Printf("JACoB local media authorization unavailable because a secure token could not be generated: %v", mediaErr)
+	} else {
+		s.mediaToken = mediaToken
+	}
+	s.vision = vision.New(s.capture)
+	localeStore, localeErr := localization.New(cfg.DataDir)
+	if localeErr != nil {
+		log.Printf("JACoB locale store unavailable: %v", localeErr)
+	} else {
+		s.locale = localeStore
+		log.Printf("Locale store: %s", localeStore.Path())
+	}
 	themeStore, themeErr := appearance.New(cfg.DataDir)
 	if themeErr != nil {
 		log.Printf("JACoB appearance store unavailable: %v", themeErr)
@@ -102,6 +133,13 @@ func New(cfg Config) *Server {
 	} else {
 		s.tabs = tabStore
 		log.Printf("Custom tabs store: %s", tabStore.Path())
+	}
+	stateStore, stateErr := tabstate.New(cfg.DataDir)
+	if stateErr != nil {
+		log.Printf("JACoB tab state store unavailable: %v", stateErr)
+	} else {
+		s.tabState = stateStore
+		log.Printf("Tab state store: %s", stateStore.Path())
 	}
 	s.bindings = bindings.New(cfg.BindingsDir)
 	if cfg.AutoBind {
@@ -152,7 +190,12 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/video/frame.jpg", s.handleVideoFrame)
 	mux.HandleFunc("/api/video.mjpeg", s.handleVideoMJPEG)
 	mux.Handle("/", webui.Handler())
-	httpServer := &http.Server{Addr: s.cfg.Bind, Handler: withHeaders(mux)}
+	httpServer := &http.Server{
+		Addr:              s.cfg.Bind,
+		Handler:           withHeaders(hostGuard(mux)),
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -170,11 +213,21 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	local := isLoopbackRequest(r)
+	if !local && !s.authorizeRemoteToken(r) {
+		http.Error(w, "pairing token required", http.StatusUnauthorized)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(s.systemInfo(isLoopbackRequest(r)))
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(s.systemInfo(local))
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	if err := validateWebSocketOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	local := isLoopbackRequest(r)
 	if !local {
 		if !s.cfg.LANEnabled {
@@ -238,6 +291,14 @@ func (s *Server) requireInput(c *wsClient, id string) bool {
 	return true
 }
 
+func (s *Server) requireLocal(c *wsClient, id, action string) bool {
+	if c != nil && c.local {
+		return true
+	}
+	_ = s.sendError(c, id, "LOCAL_ONLY", action+" is only available from a browser running on the host computer")
+	return false
+}
+
 func (s *Server) handleRequest(c *wsClient, req envelope) {
 	if req.Type != "request" {
 		_ = s.sendError(c, req.ID, "BAD_MESSAGE", "expected type=request")
@@ -265,8 +326,50 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		}()
 	case "state.get":
 		s.sendResult(c, req.ID, s.watcher.Snapshot())
+	case "elitefiles.list":
+		s.sendResult(c, req.ID, map[string]any{"files": s.watcher.EliteFileIndex()})
+	case "elitefiles.get":
+		name, _ := req.Params["name"].(string)
+		if strings.TrimSpace(name) == "" {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "name is required")
+			return
+		}
+		data, fileName, updated, found := s.watcher.EliteFile(name)
+		s.sendResult(c, req.ID, map[string]any{"found": found, "name": name, "file": fileName, "updated": updated, "data": data})
+	case "journal.files":
+		s.sendResult(c, req.ID, map[string]any{"files": s.watcher.JournalFiles()})
+	case "journal.read":
+		fileName, _ := req.Params["file"].(string)
+		eventName, _ := req.Params["event"].(string)
+		offset := intParam(req.Params, "offset", 0)
+		limit := intParam(req.Params, "limit", 1000)
+		events, info, err := s.watcher.ReadJournal(fileName, eventName, offset, limit)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "JOURNAL_READ_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"events": events, "info": info})
 	case "system.health":
-		s.sendResult(c, req.ID, s.healthReport())
+		s.sendResult(c, req.ID, s.healthForClient(c.local))
+	case "locale.get":
+		if s.locale == nil {
+			s.sendResult(c, req.ID, map[string]any{"language": localization.DefaultLanguage, "supported": localization.Supported()})
+			return
+		}
+		s.sendResult(c, req.ID, s.locale.Info())
+	case "locale.save":
+		if s.locale == nil {
+			_ = s.sendError(c, req.ID, "LOCALE_UNAVAILABLE", "language storage is unavailable")
+			return
+		}
+		language, _ := req.Params["language"].(string)
+		if err := s.locale.Set(language); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_LANGUAGE", err.Error())
+			return
+		}
+		info := s.locale.Info()
+		s.sendResult(c, req.ID, info)
+		s.broadcast(envelope{Type: "event", Event: "locale.changed", Data: info})
 	case "appearance.get":
 		if s.appearance == nil {
 			s.sendResult(c, req.ID, map[string]any{"html": "", "custom": false})
@@ -275,6 +378,9 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		html := s.appearance.Get()
 		s.sendResult(c, req.ID, map[string]any{"html": html, "custom": strings.TrimSpace(html) != ""})
 	case "appearance.save":
+		if !s.requireLocal(c, req.ID, "appearance changes") {
+			return
+		}
 		if s.appearance == nil {
 			_ = s.sendError(c, req.ID, "APPEARANCE_UNAVAILABLE", "appearance storage is unavailable")
 			return
@@ -287,6 +393,9 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		s.broadcast(envelope{Type: "event", Event: "appearance.changed", Data: map[string]any{"custom": strings.TrimSpace(html) != ""}})
 		s.sendResult(c, req.ID, map[string]any{"saved": true, "custom": strings.TrimSpace(html) != ""})
 	case "appearance.reset":
+		if !s.requireLocal(c, req.ID, "appearance changes") {
+			return
+		}
 		if s.appearance == nil {
 			s.sendResult(c, req.ID, map[string]any{"reset": true})
 			return
@@ -334,6 +443,9 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		}
 		s.sendResult(c, req.ID, tab)
 	case "tabs.save":
+		if !s.requireLocal(c, req.ID, "custom-tab installation and editing") {
+			return
+		}
 		if s.tabs == nil {
 			_ = s.sendError(c, req.ID, "TAB_STORE_UNAVAILABLE", "custom tab storage is unavailable")
 			return
@@ -349,6 +461,9 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "saved", "tab": tab}})
 		s.sendResult(c, req.ID, tab)
 	case "tabs.delete":
+		if !s.requireLocal(c, req.ID, "custom-tab removal") {
+			return
+		}
 		if s.tabs == nil {
 			_ = s.sendError(c, req.ID, "TAB_STORE_UNAVAILABLE", "custom tab storage is unavailable")
 			return
@@ -365,8 +480,63 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		if s.overlay != nil {
 			_ = s.overlay.ClearLayer("tab:" + id)
 		}
+		if s.tabState != nil {
+			_ = s.tabState.Clear(id)
+		}
 		s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "deleted", "id": id}})
 		s.sendResult(c, req.ID, map[string]any{"id": id, "deleted": true})
+	case "tabstate.get":
+		if s.tabState == nil {
+			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		key, _ := req.Params["key"].(string)
+		if tabID == "" || key == "" {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "tab id and state key are required")
+			return
+		}
+		value, ok := s.tabState.Get(tabID, key)
+		s.sendResult(c, req.ID, map[string]any{"found": ok, "value": value})
+	case "tabstate.set":
+		if s.tabState == nil {
+			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		key, _ := req.Params["key"].(string)
+		if tabID == "" || key == "" {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "tab id and state key are required")
+			return
+		}
+		if err := s.tabState.Set(tabID, key, req.Params["value"]); err != nil {
+			_ = s.sendError(c, req.ID, "TAB_STATE_SAVE_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"saved": true, "key": key})
+	case "tabstate.delete":
+		if s.tabState == nil {
+			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		key, _ := req.Params["key"].(string)
+		if err := s.tabState.Delete(tabID, key); err != nil {
+			_ = s.sendError(c, req.ID, "TAB_STATE_DELETE_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"deleted": true, "key": key})
+	case "tabstate.clear":
+		if s.tabState == nil {
+			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		if err := s.tabState.Clear(tabID); err != nil {
+			_ = s.sendError(c, req.ID, "TAB_STATE_CLEAR_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"cleared": true})
 	case "update.check":
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
@@ -450,6 +620,9 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 	case "bindings.list":
 		s.sendResult(c, req.ID, map[string]any{"directory": s.bindings.Directory(), "activeFile": s.bindings.ActiveFile(), "activeFiles": s.bindings.ActiveFiles(), "activeSource": s.bindings.ActiveSource(), "files": s.bindings.ListFiles(), "actions": s.bindings.ListActions(), "autoBind": s.autoBind, "diagnostics": s.bindings.Diagnostics()})
 	case "bindings.autofill":
+		if !s.requireLocal(c, req.ID, "binding-file modification") {
+			return
+		}
 		if platform.GameRunning() {
 			_ = s.sendError(c, req.ID, "GAME_RUNNING", "close Elite Dangerous before JACoB modifies binding files")
 			return
@@ -642,7 +815,31 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		}
 		s.sendResult(c, req.ID, map[string]any{"layer": layer, "cleared": true, "overlay": s.overlay.Info()})
 	case "video.info":
-		s.sendResult(c, req.ID, map[string]any{"available": s.capture.Available(), "driver": s.capture.Name()})
+		s.sendResult(c, req.ID, map[string]any{"available": s.capture.Available(), "driver": s.capture.Name(), "eliteOnly": true, "foregroundOnly": true, "rawFramesExposed": false})
+	case "vision.info":
+		if s.vision == nil {
+			s.sendResult(c, req.ID, map[string]any{"available": false, "eliteOnly": true, "foregroundOnly": true, "rawFramesExposed": false})
+			return
+		}
+		s.sendResult(c, req.ID, s.vision.Info())
+	case "vision.sample":
+		if s.vision == nil {
+			_ = s.sendError(c, req.ID, "VISION_UNAVAILABLE", "derived game vision is unavailable")
+			return
+		}
+		width := intParam(req.Params, "width", 320)
+		if width < 160 {
+			width = 160
+		}
+		if width > 640 {
+			width = 640
+		}
+		sample, err := s.vision.Sample(width)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "VISION_SAMPLE_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, sample)
 	case "binding.press":
 		if !s.requireInput(c, req.ID) {
 			return
@@ -655,6 +852,36 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		result, err := s.controls.PressBinding(action)
 		if err != nil {
 			_ = s.sendError(c, req.ID, "BINDING_PRESS_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "binding.down":
+		if !s.requireInput(c, req.ID) {
+			return
+		}
+		action, _ := req.Params["action"].(string)
+		if action == "" {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "params.action is required")
+			return
+		}
+		result, err := s.controls.DownBinding(action)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BINDING_DOWN_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "binding.up":
+		if !s.requireInput(c, req.ID) {
+			return
+		}
+		action, _ := req.Params["action"].(string)
+		if action == "" {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "params.action is required")
+			return
+		}
+		result, err := s.controls.UpBinding(action)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BINDING_UP_FAILED", err.Error())
 			return
 		}
 		s.sendResult(c, req.ID, result)
@@ -707,21 +934,57 @@ func (s *Server) systemInfo(includeSecret bool) map[string]any {
 			lan["pairToken"] = s.cfg.PairToken
 		}
 	}
+	journalDir, bindingsDir, bindingsFile := "", "", ""
+	bindingsFiles := []string{}
+	customTabsDir := ""
+	if includeSecret {
+		journalDir = s.cfg.JournalDir
+		bindingsDir = s.bindings.Directory()
+		bindingsFile = s.bindings.ActiveFile()
+		bindingsFiles = s.bindings.ActiveFiles()
+		if s.tabs != nil {
+			customTabsDir = s.tabs.Directory()
+		}
+	} else {
+		host = "paired-client"
+	}
+	// Scoped media authorization is intentionally separate from the LAN pairing
+	// token. A tab with Video permission must never receive a WebSocket credential.
+	mediaToken := s.mediaToken
 	return map[string]any{
-		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 2, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()),
-		"journalDir": s.cfg.JournalDir, "bindingsDir": s.bindings.Directory(), "bindingsFile": s.bindings.ActiveFile(), "bindingsFiles": s.bindings.ActiveFiles(), "bindingsSource": s.bindings.ActiveSource(), "bindingsCount": len(s.bindings.ListActions()), "autoBind": s.autoBind,
-		"input": map[string]any{"enabled": s.cfg.EnableInput, "available": s.input.Available(), "driver": s.input.Name()}, "recorder": s.recorder.Status(), "capture": map[string]any{"available": s.capture.Available(), "driver": s.capture.Name()}, "overlay": s.overlay.Info(), "lan": lan,
-		"health":      s.healthReport(),
+		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 7, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken,
+		"journalDir": journalDir, "bindingsDir": bindingsDir, "bindingsFile": bindingsFile, "bindingsFiles": bindingsFiles, "bindingsSource": s.bindings.ActiveSource(), "bindingsCount": len(s.bindings.ListActions()), "autoBind": s.autoBind,
+		"input": map[string]any{"enabled": s.cfg.EnableInput, "available": s.input.Available(), "driver": s.input.Name()}, "recorder": s.recorder.Status(), "capture": map[string]any{"available": s.capture.Available(), "driver": s.capture.Name(), "eliteOnly": true, "foregroundOnly": true}, "vision": func() map[string]any {
+			if s.vision != nil {
+				return s.vision.Info()
+			}
+			return map[string]any{"available": false}
+		}(), "overlay": s.overlay.Info(), "lan": lan,
+		"health":      s.healthForClient(includeSecret),
 		"localClient": includeSecret,
 		"appearance":  map[string]any{"available": s.appearance != nil, "custom": s.appearance != nil && strings.TrimSpace(s.appearance.Get()) != ""},
-		"updates":     map[string]any{"repository": buildinfo.Repository, "checkAvailable": true, "installAvailable": runtime.GOOS == "windows" || runtime.GOOS == "linux"},
-		"network":     map[string]any{"fetchAvailable": s.webfetch != nil, "publicHTTPOnly": true},
-		"customTabs": map[string]any{"available": s.tabs != nil, "directory": func() string {
-			if s.tabs != nil {
-				return s.tabs.Directory()
+		"locale": func() map[string]any {
+			if s.locale != nil {
+				return s.locale.Info()
 			}
-			return ""
-		}()},
+			return map[string]any{"language": localization.DefaultLanguage, "supported": localization.Supported()}
+		}(),
+		"updates":    map[string]any{"repository": buildinfo.Repository, "checkAvailable": true, "installAvailable": runtime.GOOS == "windows" || runtime.GOOS == "linux"},
+		"network":    map[string]any{"fetchAvailable": s.webfetch != nil, "publicHTTPOnly": true},
+		"customTabs": map[string]any{"available": s.tabs != nil, "directory": customTabsDir},
+	}
+}
+
+func (s *Server) healthForClient(local bool) map[string]any {
+	h := s.healthReport()
+	if local {
+		return h
+	}
+	return map[string]any{
+		"status":      h["status"],
+		"blockers":    h["blockers"],
+		"warnings":    h["warnings"],
+		"gameRunning": h["gameRunning"],
 	}
 }
 
@@ -800,15 +1063,44 @@ func (s *Server) healthReport() map[string]any {
 	}
 }
 
-func (s *Server) authorizeMedia(r *http.Request) bool {
-	if isLoopbackRequest(r) {
-		return true
-	}
+func (s *Server) authorizeRemoteToken(r *http.Request) bool {
 	if !s.cfg.LANEnabled {
 		return false
 	}
 	got := r.URL.Query().Get("token")
 	return got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.PairToken)) == 1
+}
+
+func (s *Server) authorizeMedia(r *http.Request) bool {
+	// Media uses a dedicated per-process bearer token on both loopback and LAN.
+	// Remote browsers receive it only after authenticating the WebSocket with the
+	// LAN pairing token. This keeps the higher-privilege pairing credential out
+	// of video URLs returned to sandboxed custom tabs.
+	got := r.URL.Query().Get("token")
+	return s.mediaToken != "" && got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(s.mediaToken)) == 1
+}
+
+func validateWebSocketOrigin(r *http.Request) error {
+	if !validJACoBHost(r.Host) {
+		return fmt.Errorf("unrecognized JACoB host")
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		// Non-browser clients may omit Origin. Browser WebSockets always send it,
+		// so this still blocks cross-site WebSocket hijacking while preserving CLI tools.
+		return nil
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("invalid websocket Origin")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("websocket Origin scheme is not allowed")
+	}
+	if !strings.EqualFold(u.Host, r.Host) {
+		return fmt.Errorf("cross-origin websocket connections are blocked")
+	}
+	return nil
 }
 
 func videoParams(r *http.Request) (int, int, int) {
@@ -830,7 +1122,7 @@ func videoParams(r *http.Request) (int, int, int) {
 
 func (s *Server) handleVideoFrame(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeMedia(r) {
-		http.Error(w, "pairing token required", http.StatusUnauthorized)
+		http.Error(w, "media authorization required", http.StatusUnauthorized)
 		return
 	}
 	if !s.capture.Available() {
@@ -846,12 +1138,16 @@ func (s *Server) handleVideoFrame(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-JACoB-Capture", info.Driver)
+	if info.Blanked {
+		w.Header().Set("X-JACoB-Blanked", "true")
+		w.Header().Set("X-JACoB-Blank-Reason", info.Reason)
+	}
 	_, _ = w.Write(b)
 }
 
 func (s *Server) handleVideoMJPEG(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeMedia(r) {
-		http.Error(w, "pairing token required", http.StatusUnauthorized)
+		http.Error(w, "media authorization required", http.StatusUnauthorized)
 		return
 	}
 	if !s.capture.Available() {
@@ -874,13 +1170,17 @@ func (s *Server) handleVideoMJPEG(w http.ResponseWriter, r *http.Request) {
 	tick := time.NewTicker(time.Second / time.Duration(fps))
 	defer tick.Stop()
 	for {
-		b, _, err := s.capture.CaptureJPEG(width, quality)
+		b, info, err := s.capture.CaptureJPEG(width, quality)
 		if err != nil {
 			return
 		}
 		h := make(textproto.MIMEHeader)
 		h.Set("Content-Type", "image/jpeg")
 		h.Set("Content-Length", strconv.Itoa(len(b)))
+		if info.Blanked {
+			h.Set("X-JACoB-Blanked", "true")
+			h.Set("X-JACoB-Blank-Reason", info.Reason)
+		}
 		part, err := mw.CreatePart(h)
 		if err != nil {
 			return
@@ -931,11 +1231,72 @@ func (s *Server) sendError(c *wsClient, id, code, msg string) error {
 	ok := false
 	return s.send(c, envelope{Type: "response", ID: id, OK: &ok, Error: &apiError{Code: code, Message: msg}})
 }
+func hostGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validJACoBHost(r.Host) {
+			http.Error(w, "unrecognized JACoB host", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// validJACoBHost rejects arbitrary DNS names even when they resolve to this
+// machine. Browser same-origin checks alone do not stop DNS-rebinding attacks:
+// an attacker-controlled hostname could otherwise resolve to 127.0.0.1 and
+// present a matching Host and Origin. JACoB's browser surface is therefore
+// reachable only through localhost/loopback literals or IP addresses actually
+// assigned to this host.
+func validJACoBHost(hostport string) bool {
+	hostport = strings.TrimSpace(hostport)
+	if hostport == "" {
+		return false
+	}
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	} else if strings.HasPrefix(hostport, "[") && strings.HasSuffix(hostport, "]") {
+		host = strings.TrimSuffix(strings.TrimPrefix(hostport, "["), "]")
+	} else if strings.Count(hostport, ":") > 1 {
+		// Bare IPv6 Host values are malformed for HTTP and should not be accepted.
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, addr := range addrs {
+		var local net.IP
+		switch v := addr.(type) {
+		case *net.IPNet:
+			local = v.IP
+		case *net.IPAddr:
+			local = v.IP
+		}
+		if local != nil && ip.Equal(local) {
+			return true
+		}
+	}
+	return false
+}
+
 func withHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; frame-src 'self' blob:; connect-src 'self' ws: wss:")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), bluetooth=()")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -1014,12 +1375,12 @@ func intParam(m map[string]any, k string, d int) int {
 	}
 	return d
 }
-func randomToken() string {
-	var b [4]byte
+func secureRandomToken() (string, error) {
+	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%08x", time.Now().UnixNano())
+		return "", err
 	}
-	return strings.ToUpper(hex.EncodeToString(b[:]))
+	return strings.ToUpper(hex.EncodeToString(b[:])), nil
 }
 func isLoopbackRequest(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

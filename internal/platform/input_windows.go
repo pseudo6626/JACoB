@@ -116,6 +116,9 @@ func makeWindowsKeyEvent(r resolvedWindowsKey, up bool) winInput {
 }
 
 func resolveWindowsChord(key string, modifiers []string) (resolvedWindowsKey, []resolvedWindowsKey, error) {
+	if err := ValidateSafeChord(key, modifiers); err != nil {
+		return resolvedWindowsKey{}, nil, err
+	}
 	mods := make([]resolvedWindowsKey, 0, len(modifiers))
 	for _, m := range modifiers {
 		r, err := resolveWindowsKey(m)
