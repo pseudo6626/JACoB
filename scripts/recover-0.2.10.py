@@ -1433,9 +1433,9 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -1655,10 +1655,10 @@ replace_once(
     """addEventListener('message',ev=>{const m=ev.data;if(!m||m.channel!=='jacob-host')return;if(m.kind==='response'){const p=pending.get(m.id);if(!p)return;pending.delete(m.id);m.ok?p.resolve(m.result):p.reject(Object.assign(new Error(m.error?.message||'JACoB error'),{code:m.error?.code}));return}if(m.kind==='action-invoke'){const handler=actionHandlers.get(String(m.action||''));if(!handler){parent.postMessage({channel:'jacob-tab',kind:'action-result',id:m.id,ok:false,error:{code:'ACTION_NOT_FOUND',message:'registered action is unavailable'}},'*');return}Promise.resolve().then(()=>handler(m.payload,{action:m.action,caller:m.caller||null})).then(result=>parent.postMessage({channel:'jacob-tab',kind:'action-result',id:m.id,ok:true,result},'*')).catch(error=>parent.postMessage({channel:'jacob-tab',kind:'action-result',id:m.id,ok:false,error:{code:String(error?.code||'ACTION_FAILED'),message:String(error?.message||error||'action failed')}},'*'));return}if(m.kind==='event'){if(m.event==='locale.changed'&&m.data)localeState={language:m.data.language||localeState.language,supported:Array.isArray(m.data.supported)&&m.data.supported.length?m.data.supported:localeState.supported};if(m.event==='core.hello'&&m.data?.locale)localeState={language:m.data.locale.language||localeState.language,supported:Array.isArray(m.data.locale.supported)&&m.data.locale.supported.length?m.data.locale.supported:localeState.supported};const set=eventSubs.get(m.event);if(set)for(const cb of set)try{cb(m.data)}catch(e){console.error(e)};const all=eventSubs.get('*');if(all)for(const cb of all)try{cb(m.event,m.data)}catch(e){console.error(e)};if(m.event==='journal')for(const sub of [...journalSubs])if(sub.eventName==='*'||sub.eventName===m.data?.event)try{sub.cb(m.data)}catch(e){console.error(e)}}});
 """,
 )
-replace_once(
+regex_replace_once(
     "internal/webui/assets/app.js",
-    "const defaultFooter='<span>JACoB Alpha 0.2.10 · SDK 8</span><a href=\"/docs/index.html\" target=\"_blank\" rel=\"noopener\">Documentation</a>';",
-    "const defaultFooter='<span>JACoB Alpha 0.2.10 · SDK 9</span><a href=\"/docs/index.html\" target=\"_blank\" rel=\"noopener\">Documentation</a>';",
+    r'''const defaultFooter='<span>JACoB Alpha [^<]*</span><a href="/docs/index\.html" target="_blank" rel="noopener">Documentation</a>';''',
+    '''const defaultFooter='<span>JACoB Alpha 0.2.10 · SDK 9</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';''',
 )
 replace_once(
     "internal/webui/assets/app.js",
