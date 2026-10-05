@@ -1,0 +1,146 @@
+name: Recover JACoB 0.2.10 + SDK 9
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Quarantine broken 0.29 releases
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit v0.2.9-alpha --draft 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host "v0.2.9-alpha was already absent/draft or could not be edited." }
+          gh release edit v0.2.9-hotfix --draft 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host "v0.2.9-hotfix was already absent/draft or could not be edited." }
+          exit 0
+
+      - name: Apply recovery + SDK 9 source changes
+        run: python scripts/recover-0.2.10.py
+
+      - name: Format Go source
+        shell: powershell
+        run: |
+          gofmt -w internal/buildinfo/version.go internal/buildinfo/version_test.go `
+            internal/platform/input.go internal/platform/input_windows.go internal/platform/input_linux.go `
+            internal/platform/text.go internal/platform/text_windows.go internal/platform/text_linux.go internal/platform/text_other.go `
+            internal/platform/recorder.go internal/platform/recorder_windows.go `
+            internal/platform/input_physical_test.go internal/platform/input_windows_test.go `
+            internal/core/server.go internal/customtabs/store.go internal/customtabs/store_test.go cmd/installer/main.go
+
+      - name: Run Windows tests
+        run: go test ./...
+
+      - name: Validate browser SDK
+        shell: powershell
+        run: |
+          node --check internal/webui/assets/app.js
+          $app = Get-Content internal/webui/assets/app.js -Raw
+          if ($app -notmatch 'api:Object\.freeze\(\{version:9\}\)') { throw "Browser SDK version was not raised to 9" }
+          foreach ($needle in @('actions:Object.freeze','actions.register','actions.invoke','tabs.activate','toggleNavigationVisibility')) {
+            if ($app -notmatch [regex]::Escape($needle)) { throw "SDK 9 browser marker missing: $needle" }
+          }
+
+
+      - name: Compile Linux core
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $env:CGO_ENABLED="0"
+          $env:GOOS="linux"
+          $env:GOARCH="amd64"
+          go build -trimpath -o dist/JACoB-linux-amd64 ./cmd/jacob
+
+      - name: Build Windows applications and recovery installer
+        shell: powershell
+        run: |
+          $env:CGO_ENABLED="0"
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+          go build -trimpath -ldflags="-H=windowsgui" -o dist/JACoB.exe ./cmd/jacob
+          go build -trimpath -tags norecorder -ldflags="-H=windowsgui" -o dist/JACoB-no-recorder.exe ./cmd/jacob
+          Copy-Item dist/JACoB.exe cmd/installer/payload/JACoB.exe
+          Copy-Item dist/JACoB-no-recorder.exe cmd/installer/payload/JACoB-no-recorder.exe
+          try {
+            go build -trimpath -ldflags="-H=windowsgui" -o dist/JACoB-Setup-0.2.10-alpha.exe ./cmd/installer
+          } finally {
+            Remove-Item cmd/installer/payload/JACoB.exe,cmd/installer/payload/JACoB-no-recorder.exe -Force -ErrorAction SilentlyContinue
+          }
+          $hash=(Get-FileHash dist/JACoB-Setup-0.2.10-alpha.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  JACoB-Setup-0.2.10-alpha.exe" | Out-File dist/JACoB-Setup-0.2.10-alpha.exe.sha256 -Encoding ascii
+
+      - name: Verify generated version markers
+        shell: powershell
+        run: |
+          $v = Get-Content internal/buildinfo/version.go -Raw
+          if ($v -notmatch 'Version\s*=\s*"0\.2\.10-alpha"') { throw "Version marker is wrong" }
+          $server = Get-Content internal/core/server.go -Raw
+          if ($server -notmatch '"apiVersion": 9') { throw "SDK/API version was not raised to 9" }
+          if (!(Test-Path dist/JACoB-Setup-0.2.10-alpha.exe)) { throw "Recovery installer is missing" }
+
+      - name: Remove one-time recovery files before committing
+        shell: powershell
+        run: |
+          Remove-Item scripts/recover-0.2.10.py -Force
+          Remove-Item .github/workflows/recover-0.2.10.yml -Force
+
+      - name: Commit repaired source to main
+        shell: powershell
+        run: |
+          git config user.name "JACoB Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git status --short
+          if (git diff --cached --quiet) { throw "Recovery produced no source changes" }
+          git commit -m "Recover 0.2.10 update path and add SDK 9 cross-tab actions"
+          git push origin HEAD:main
+
+      - name: Upload recovery build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JACoB-0.2.10-alpha-Recovery
+          path: |
+            dist/JACoB.exe
+            dist/JACoB-no-recorder.exe
+            dist/JACoB-linux-amd64
+            dist/JACoB-Setup-0.2.10-alpha.exe
+            dist/JACoB-Setup-0.2.10-alpha.exe.sha256
+            RELEASE-NOTES-0.2.10-alpha.md
+
+      - name: Create/update draft 0.2.10 release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag="v0.2.10-alpha"
+          $assets=@(
+            "dist/JACoB.exe",
+            "dist/JACoB-no-recorder.exe",
+            "dist/JACoB-linux-amd64",
+            "dist/JACoB-Setup-0.2.10-alpha.exe",
+            "dist/JACoB-Setup-0.2.10-alpha.exe.sha256"
+          )
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assets --clobber
+            gh release edit $tag --draft --prerelease --title "JACoB 0.2.10 Alpha — Recovery + SDK 9" --notes-file RELEASE-NOTES-0.2.10-alpha.md
+          } else {
+            gh release create $tag @assets --target $(git rev-parse HEAD) --draft --prerelease --title "JACoB 0.2.10 Alpha — Recovery + SDK 9" --notes-file RELEASE-NOTES-0.2.10-alpha.md
+          }
