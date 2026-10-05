@@ -1965,4 +1965,368 @@ if "## Cross-tab actions" not in notes:
 ''' + "\n"
 write("RELEASE-NOTES-0.2.10-alpha.md", notes)
 
+
+# ---------------------------------------------------------------------------
+# CI/runtime consistency fixes discovered by the full Windows test pass.
+# ---------------------------------------------------------------------------
+# The X11 parser helpers are pure string parsers and are tested on every host.
+# Keep them in a platform-neutral file while Linux-specific foreground probing
+# continues to call them from input_linux.go.
+regex_replace_once(
+    "internal/platform/input_linux.go",
+    r'''\nfunc parseXWindowID\(s string\) string \{.*?\n\}\n\nfunc parseXPropPID\(s string\) int \{.*?\n\}\n''',
+    "\n",
+    flags=re.S,
+)
+write("internal/platform/x11_parse.go", r'''package platform
+
+import (
+    "strconv"
+    "strings"
+)
+
+func parseXWindowID(s string) string {
+    for _, field := range strings.Fields(s) {
+        f := strings.Trim(field, " ,\t\r\n")
+        if strings.HasPrefix(strings.ToLower(f), "0x") {
+            if _, err := strconv.ParseUint(strings.TrimPrefix(strings.ToLower(f), "0x"), 16, 64); err == nil {
+                return f
+            }
+        }
+    }
+    return ""
+}
+
+func parseXPropPID(s string) int {
+    for _, line := range strings.Split(s, "\n") {
+        if !strings.Contains(line, "_NET_WM_PID") {
+            continue
+        }
+        i := strings.LastIndex(line, "=")
+        if i < 0 {
+            continue
+        }
+        if pid, err := strconv.Atoi(strings.TrimSpace(line[i+1:])); err == nil {
+            return pid
+        }
+    }
+    return 0
+}
+''')
+
+# The repo already contains fragmentation/oversize websocket tests, but the
+# reader was still single-frame and used an anonymous 8 MiB literal. Bring the
+# implementation and tests back into agreement without weakening the RFC rule
+# that browser/client frames must be masked.
+write("internal/core/ws.go", r'''package core
+
+import (
+    "bufio"
+    "crypto/sha1"
+    "encoding/base64"
+    "encoding/binary"
+    "errors"
+    "fmt"
+    "io"
+    "net"
+    "net/http"
+    "strings"
+    "sync"
+)
+
+const (
+    wsGUID           = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+    wsMaxMessageSize = 8 * 1024 * 1024
+)
+
+type wsClient struct {
+    conn   net.Conn
+    reader *bufio.Reader
+    mu     sync.Mutex
+    local  bool
+
+    fragmentOpcode  byte
+    fragmentPayload []byte
+}
+
+func upgradeWebSocket(w http.ResponseWriter, r *http.Request) (*wsClient, error) {
+    if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+        return nil, errors.New("missing websocket upgrade")
+    }
+    connectionUpgrade := false
+    for _, part := range strings.Split(r.Header.Get("Connection"), ",") {
+        if strings.EqualFold(strings.TrimSpace(part), "upgrade") {
+            connectionUpgrade = true
+            break
+        }
+    }
+    if !connectionUpgrade {
+        return nil, errors.New("missing Connection: Upgrade")
+    }
+    if v := strings.TrimSpace(r.Header.Get("Sec-WebSocket-Version")); v != "13" {
+        return nil, errors.New("unsupported websocket version")
+    }
+    key := r.Header.Get("Sec-WebSocket-Key")
+    if key == "" {
+        return nil, errors.New("missing Sec-WebSocket-Key")
+    }
+    h, ok := w.(http.Hijacker)
+    if !ok {
+        return nil, errors.New("server does not support hijacking")
+    }
+    conn, rw, err := h.Hijack()
+    if err != nil {
+        return nil, err
+    }
+    acceptRaw := sha1.Sum([]byte(key + wsGUID))
+    accept := base64.StdEncoding.EncodeToString(acceptRaw[:])
+    _, err = fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", accept)
+    if err != nil {
+        _ = conn.Close()
+        return nil, err
+    }
+    if err := rw.Flush(); err != nil {
+        _ = conn.Close()
+        return nil, err
+    }
+    return &wsClient{conn: conn, reader: rw.Reader}, nil
+}
+
+func (c *wsClient) Close() error { return c.conn.Close() }
+
+func (c *wsClient) WriteText(payload []byte) error {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    return writeFrame(c.conn, 0x1, payload)
+}
+
+func (c *wsClient) WritePong(payload []byte) error {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    return writeFrame(c.conn, 0xA, payload)
+}
+
+func writeFrame(w io.Writer, opcode byte, payload []byte) error {
+    header := []byte{0x80 | opcode}
+    n := len(payload)
+    switch {
+    case n < 126:
+        header = append(header, byte(n))
+    case n <= 65535:
+        header = append(header, 126, byte(n>>8), byte(n))
+    default:
+        header = append(header, 127)
+        var b [8]byte
+        binary.BigEndian.PutUint64(b[:], uint64(n))
+        header = append(header, b[:]...)
+    }
+    if _, err := w.Write(header); err != nil {
+        return err
+    }
+    _, err := w.Write(payload)
+    return err
+}
+
+func (c *wsClient) readFrame() (fin bool, opcode byte, payload []byte, err error) {
+    r := c.reader
+    b1, err := r.ReadByte()
+    if err != nil {
+        return false, 0, nil, err
+    }
+    b2, err := r.ReadByte()
+    if err != nil {
+        return false, 0, nil, err
+    }
+    if b1&0x70 != 0 {
+        return false, 0, nil, errors.New("websocket extensions are not supported")
+    }
+    fin = b1&0x80 != 0
+    opcode = b1 & 0x0f
+    masked := b2&0x80 != 0
+    if !masked {
+        return false, 0, nil, errors.New("client websocket frames must be masked")
+    }
+
+    ln := uint64(b2 & 0x7f)
+    switch ln {
+    case 126:
+        var b [2]byte
+        if _, err = io.ReadFull(r, b[:]); err != nil {
+            return false, 0, nil, err
+        }
+        ln = uint64(binary.BigEndian.Uint16(b[:]))
+    case 127:
+        var b [8]byte
+        if _, err = io.ReadFull(r, b[:]); err != nil {
+            return false, 0, nil, err
+        }
+        if b[0]&0x80 != 0 {
+            return false, 0, nil, errors.New("invalid websocket payload length")
+        }
+        ln = binary.BigEndian.Uint64(b[:])
+    }
+    if ln > wsMaxMessageSize {
+        return false, 0, nil, errors.New("websocket message too large")
+    }
+
+    var mask [4]byte
+    if _, err = io.ReadFull(r, mask[:]); err != nil {
+        return false, 0, nil, err
+    }
+    payload = make([]byte, int(ln))
+    if _, err = io.ReadFull(r, payload); err != nil {
+        return false, 0, nil, err
+    }
+    for i := range payload {
+        payload[i] ^= mask[i%4]
+    }
+    return fin, opcode, payload, nil
+}
+
+func (c *wsClient) ReadMessage() (opcode byte, payload []byte, err error) {
+    for {
+        fin, op, framePayload, err := c.readFrame()
+        if err != nil {
+            return 0, nil, err
+        }
+
+        if op >= 0x8 {
+            if !fin {
+                return 0, nil, errors.New("fragmented websocket control frame")
+            }
+            if len(framePayload) > 125 {
+                return 0, nil, errors.New("websocket control frame too large")
+            }
+            switch op {
+            case 0x8, 0x9, 0xA:
+                return op, framePayload, nil
+            default:
+                return 0, nil, fmt.Errorf("unsupported websocket control opcode 0x%x", op)
+            }
+        }
+
+        switch op {
+        case 0x0:
+            if c.fragmentOpcode == 0 {
+                return 0, nil, errors.New("unexpected websocket continuation frame")
+            }
+            if len(c.fragmentPayload)+len(framePayload) > wsMaxMessageSize {
+                c.fragmentOpcode = 0
+                c.fragmentPayload = nil
+                return 0, nil, errors.New("websocket message too large")
+            }
+            c.fragmentPayload = append(c.fragmentPayload, framePayload...)
+            if !fin {
+                continue
+            }
+            opcode = c.fragmentOpcode
+            payload = c.fragmentPayload
+            c.fragmentOpcode = 0
+            c.fragmentPayload = nil
+            return opcode, payload, nil
+
+        case 0x1, 0x2:
+            if c.fragmentOpcode != 0 {
+                return 0, nil, errors.New("new websocket data frame before fragmented message completed")
+            }
+            if fin {
+                return op, framePayload, nil
+            }
+            c.fragmentOpcode = op
+            c.fragmentPayload = append(c.fragmentPayload[:0], framePayload...)
+
+        default:
+            return 0, nil, fmt.Errorf("unsupported websocket opcode 0x%x", op)
+        }
+    }
+}
+''')
+
+write("internal/core/ws_test.go", r'''package core
+
+import (
+    "bufio"
+    "bytes"
+    "encoding/binary"
+    "strings"
+    "testing"
+)
+
+func testWSFrame(fin bool, opcode byte, payload []byte) []byte {
+    first := opcode
+    if fin {
+        first |= 0x80
+    }
+    mask := [4]byte{0x11, 0x22, 0x33, 0x44}
+    out := []byte{first}
+    n := len(payload)
+    switch {
+    case n < 126:
+        out = append(out, 0x80|byte(n))
+    case n <= 65535:
+        out = append(out, 0x80|126, byte(n>>8), byte(n))
+    default:
+        out = append(out, 0x80|127)
+        var b [8]byte
+        binary.BigEndian.PutUint64(b[:], uint64(n))
+        out = append(out, b[:]...)
+    }
+    out = append(out, mask[:]...)
+    for i, b := range payload {
+        out = append(out, b^mask[i%4])
+    }
+    return out
+}
+
+func TestReadMessageReassemblesFragmentedText(t *testing.T) {
+    wire := append(testWSFrame(false, 0x1, []byte("hello ")), testWSFrame(true, 0x0, []byte("world"))...)
+    c := &wsClient{reader: bufio.NewReader(bytes.NewReader(wire))}
+    op, payload, err := c.ReadMessage()
+    if err != nil {
+        t.Fatal(err)
+    }
+    if op != 0x1 || string(payload) != "hello world" {
+        t.Fatalf("opcode=%x payload=%q", op, payload)
+    }
+}
+
+func TestReadMessagePreservesFragmentAcrossPing(t *testing.T) {
+    wire := append(testWSFrame(false, 0x1, []byte("hello ")), testWSFrame(true, 0x9, []byte("ping"))...)
+    wire = append(wire, testWSFrame(true, 0x0, []byte("world"))...)
+    c := &wsClient{reader: bufio.NewReader(bytes.NewReader(wire))}
+    op, payload, err := c.ReadMessage()
+    if err != nil {
+        t.Fatal(err)
+    }
+    if op != 0x9 || string(payload) != "ping" {
+        t.Fatalf("control opcode=%x payload=%q", op, payload)
+    }
+    op, payload, err = c.ReadMessage()
+    if err != nil {
+        t.Fatal(err)
+    }
+    if op != 0x1 || string(payload) != "hello world" {
+        t.Fatalf("opcode=%x payload=%q", op, payload)
+    }
+}
+
+func TestReadMessageRejectsOversizeFragmentedMessage(t *testing.T) {
+    first := testWSFrame(false, 0x1, []byte(strings.Repeat("a", wsMaxMessageSize/2+1)))
+    second := testWSFrame(true, 0x0, []byte(strings.Repeat("b", wsMaxMessageSize/2+1)))
+    wire := append(first, second...)
+    c := &wsClient{reader: bufio.NewReader(bytes.NewReader(wire))}
+    if _, _, err := c.ReadMessage(); err == nil {
+        t.Fatal("expected oversize fragmented message error")
+    }
+}
+
+func TestReadMessageRejectsUnmaskedClientFrame(t *testing.T) {
+    wire := []byte{0x81, 0x01, 'x'}
+    c := &wsClient{reader: bufio.NewReader(bytes.NewReader(wire))}
+    if _, _, err := c.ReadMessage(); err == nil {
+        t.Fatal("expected unmasked client frame error")
+    }
+}
+''')
+
 print("JACoB 0.2.10 recovery + SDK 9 cross-tab patch prepared successfully.")
