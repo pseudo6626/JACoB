@@ -96,11 +96,13 @@ jobs:
           if ($server -notmatch '"apiVersion": 9') { throw "SDK/API version was not raised to 9" }
           if (!(Test-Path dist/JACoB-Setup-0.2.10-alpha.exe)) { throw "Recovery installer is missing" }
 
-      - name: Remove one-time recovery files before committing
+      - name: Keep workflow files out of the bot commit
         shell: powershell
         run: |
-          Remove-Item scripts/recover-0.2.10.py -Force
-          Remove-Item .github/workflows/recover-0.2.10.yml -Force
+          # GITHUB_TOKEN can push normal source changes, but GitHub blocks it from
+          # creating/updating/deleting workflow files without workflows permission.
+          # Restore the workflow directory exactly to checked-out HEAD before git add.
+          git restore --source=HEAD --staged --worktree .github/workflows
 
       - name: Commit repaired source to main
         shell: powershell
