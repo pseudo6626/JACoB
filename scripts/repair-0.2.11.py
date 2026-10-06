@@ -406,8 +406,21 @@ for rel in [
     "cmd/installer/payload/Documentation/JACoB-Custom-Tab-Developer-Reference.html",
 ]:
     text = read(rel)
-    text, n = re.subn(r'<h3 id="persistence">2\.3 Persistence</h3>[\s\S]*?<h3 id="overlay-isolation">2\.4 Overlay isolation</h3>', lambda _m: html_section, text, count=1)
-    if n != 1: raise SystemExit(f"{rel}: generated persistence docs block not found")
+    # Pandoc-generated heading IDs have changed across documentation builds
+    # (for example overlay-isolation vs 24-overlay-isolation). Match the
+    # visible section headings rather than one generated ID spelling.
+    pattern = r'<h3 id="[^"]*persistence[^"]*">2\.3 Persistence</h3>[\s\S]*?<h3 id="[^"]*overlay-isolation[^"]*">2\.4 Overlay isolation</h3>'
+    text, n = re.subn(pattern, lambda _m: html_section, text, count=1)
+    if n != 1:
+        raise SystemExit(f"{rel}: generated persistence docs block not found")
+
+    # Some checked-in generated references predate the Markdown source and
+    # still show Elite.api.version === 6. Keep that displayed example aligned
+    # with the SDK 9 source while we are repairing the generated copy.
+    sdk_pattern = r'(<p>The current SDK version is:</p>[\s\S]*?<span class="at">version</span>[\s\S]*?<span class="op">===</span>\s*<span class="dv">)\d+(</span>)'
+    text, sdk_n = re.subn(sdk_pattern, lambda m: m.group(1) + "9" + m.group(2), text, count=1)
+    if sdk_n != 1:
+        raise SystemExit(f"{rel}: generated SDK version example not found")
     write(rel, text)
 
 for rel in ["docs/USER_GUIDE.md", "cmd/installer/payload/Documentation/JACoB-User-Guide.md"]:
