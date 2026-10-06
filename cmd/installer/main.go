@@ -386,7 +386,7 @@ func verifyRunningVersion(expected string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var last string
 	for time.Now().Before(deadline) {
-		resp, err := client.Get("http://127.0.0.1:4510/api/health")
+		resp, err := client.Get("http://127.0.0.1:6626/api/health")
 		if err == nil {
 			var health struct {
 				Product string `json:"product"`

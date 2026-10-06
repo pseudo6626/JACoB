@@ -30,3 +30,18 @@ func TestWindowsLegacyInstallerNameIsRecognized(t *testing.T) {
 		t.Fatalf("legacy installer name not selected: %#v", a)
 	}
 }
+
+func TestWindowsCanonicalInstallerNameIsRecognized(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("selector follows current runtime")
+	}
+	assets := []Asset{
+		{Name: "JACoB-0.2.11-alpha-win-x64-portable.exe"},
+		{Name: "JACoB-0.2.11-alpha-win-x64-no-recorder.exe"},
+		{Name: "JACoB-0.2.11-alpha-win-x64.exe"},
+	}
+	a := selectAsset(assets)
+	if a == nil || a.Name != "JACoB-0.2.11-alpha-win-x64.exe" {
+		t.Fatalf("canonical installer name not selected: %#v", a)
+	}
+}

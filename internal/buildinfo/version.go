@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	Version    = "0.2.10-alpha"
-	Display    = "Alpha 0.2.10 SDK9 Recovery"
+	Version    = "0.2.11-alpha"
+	Display    = "Alpha 0.2.11 SDK9"
 	Repository = "pseudo6626/JACoB"
 )
 

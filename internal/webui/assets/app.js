@@ -302,7 +302,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     const box=document.createElement('div');box.appendChild(frag);return box.innerHTML;
   }
   const defaultBrand='<strong>JACoB</strong><span>Journal Aligned Control Bridge</span>';
-  const defaultFooter='<span>JACoB Alpha 0.2.10 · SDK 9</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';
+  const defaultFooter='<span>JACoB Alpha 0.2.11 · SDK 9</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';
   function applyAppearance(html=''){
     state.themeHTML=html||'';
     $('#jacob-user-theme').textContent='';
@@ -482,7 +482,7 @@ Allow this capability on this browser?`);
     if($('#home-event-name'))$('#home-event-name').textContent=s.lastJournalEvent?.event||tr('Waiting…');
     if($('#home-journal-state'))$('#home-journal-state').textContent=s.journalFile||tr('Waiting for journal');
   }
-  function renderLAN(lan={}){$('#lan-enabled').textContent=lan.enabled?tr('enabled'):tr('disabled');$('#lan-addresses').textContent=(lan.addresses||[]).map(a=>`http://${a}:${lan.port||4510}/`).join('\n')||'—';const p=lan.pairToken||'';$('#pair-token').textContent=p||(!isLocal?tr('hidden on remote clients'):'—');$('#remote-token').value=token();renderPairQR(p)}
+  function renderLAN(lan={}){$('#lan-enabled').textContent=lan.enabled?tr('enabled'):tr('disabled');$('#lan-addresses').textContent=(lan.addresses||[]).map(a=>`http://${a}:${lan.port||6626}/`).join('\n')||'—';const p=lan.pairToken||'';$('#pair-token').textContent=p||(!isLocal?tr('hidden on remote clients'):'—');$('#remote-token').value=token();renderPairQR(p)}
   function setConnection(on){const el=$('#connection');el.textContent=on?tr('ONLINE'):tr('OFFLINE');el.className=`status-mark ${on?'online':'offline'}`}
   function addStream(kind,data){const row=document.createElement('div');row.className='stream-line';const summary=kind==='journal'?(data?.event||''):kind==='recorder.input'?`${data?.type||''} ${data?.key||''}`:'';row.innerHTML=`<span class="time">${new Date().toLocaleTimeString()}</span><span class="kind">${escapeHTML(kind)}</span>${escapeHTML(summary)}`;const box=$('#stream');box.prepend(row);while(box.children.length>60)box.lastChild.remove()}
 

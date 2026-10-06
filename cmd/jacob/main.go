@@ -22,14 +22,17 @@ import (
 	"jacob/internal/journal"
 )
 
-const localURL = "http://127.0.0.1:4510/"
+const (
+	localURL       = "http://127.0.0.1:6626/"
+	legacyLocalURL = "http://127.0.0.1:4510/"
+)
 
 func main() {
 	dataDir := customtabs.DefaultDirectory()
 	setupLog(dataDir)
 
-	if runningJACoB() {
-		openBrowser(localURL)
+	if runningURL := runningJACoB(); runningURL != "" {
+		openBrowser(runningURL)
 		return
 	}
 
@@ -54,9 +57,9 @@ func main() {
 	}
 
 	lan := boolDefault(firstEnv("JACOB_LAN", "EDBRIDGE_LAN"), true)
-	bind := "127.0.0.1:4510"
+	bind := "127.0.0.1:6626"
 	if lan {
-		bind = "0.0.0.0:4510"
+		bind = "0.0.0.0:6626"
 	}
 
 	cfg := core.Config{
@@ -93,9 +96,18 @@ func setupLog(dir string) {
 	log.SetFlags(log.Ldate | log.Ltime)
 }
 
-func runningJACoB() bool {
+func runningJACoB() string {
+	for _, url := range []string{localURL, legacyLocalURL} {
+		if probeJACoB(url) {
+			return url
+		}
+	}
+	return ""
+}
+
+func probeJACoB(url string) bool {
 	client := http.Client{Timeout: 250 * time.Millisecond}
-	r, err := client.Get(localURL + "api/health")
+	r, err := client.Get(url + "api/health")
 	if err != nil {
 		return false
 	}

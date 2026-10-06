@@ -132,6 +132,9 @@ func selectAsset(assets []Asset) *Asset {
 			if strings.Contains(n, "portable") || strings.Contains(n, "no-recorder") {
 				return false
 			}
+			if strings.Contains(n, "win-x64") {
+				return runtime.GOARCH == "amd64"
+			}
 			return strings.Contains(n, "setup") || strings.Contains(n, "alpha-")
 		case "linux":
 			return strings.Contains(n, "jacob") && strings.Contains(n, "linux") && strings.Contains(n, runtime.GOARCH)

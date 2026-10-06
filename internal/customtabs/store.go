@@ -292,7 +292,6 @@ func (s *Store) load() error {
 	} else if err := json.Unmarshal(b, &f); err != nil {
 		return fmt.Errorf("parse custom tabs store: %w", err)
 	}
-
 	migrated := manifestExists && f.SchemaVersion < storeSchema
 	for _, raw := range f.Tabs {
 		if strings.TrimSpace(raw.ID) == "" || strings.TrimSpace(raw.Name) == "" || !validTabID(raw.ID) {
@@ -321,7 +320,6 @@ func (s *Store) load() error {
 		}
 		s.tabs[t.ID] = t
 	}
-
 	recovered, err := s.recoverOrphanedBodies()
 	if err != nil {
 		return err
@@ -329,7 +327,6 @@ func (s *Store) load() error {
 	if recovered > 0 {
 		migrated = true
 	}
-
 	s.layout = f.Layout
 	s.layout = s.normalizedLayoutLocked()
 	if migrated {
@@ -340,9 +337,9 @@ func (s *Store) load() error {
 	return nil
 }
 
-// recoverOrphanedBodies repairs the exact 0.2.10 recovery regression where a
-// schema-3 manifest could be replaced or ignored while the split HTML bodies
-// remained intact in custom-tabs/. Existing manifest metadata always wins.
+// recoverOrphanedBodies repairs the 0.2.10 regression where schema-3 body
+// files survived in custom-tabs/ but the in-memory/manifest view lost them.
+// Manifest metadata always wins when it still exists.
 func (s *Store) recoverOrphanedBodies() (int, error) {
 	entries, err := os.ReadDir(s.contentDir)
 	if err != nil {
@@ -398,8 +395,7 @@ func recoveredTabName(id string, body []byte) string {
 		if gt := strings.Index(lower[start:], ">"); gt >= 0 {
 			bodyStart := start + gt + 1
 			if end := strings.Index(lower[bodyStart:], "</title>"); end >= 0 {
-				name := strings.TrimSpace(text[bodyStart : bodyStart+end])
-				name = strings.Join(strings.Fields(name), " ")
+				name := strings.Join(strings.Fields(strings.TrimSpace(text[bodyStart:bodyStart+end])), " ")
 				if len(name) > 80 {
 					name = name[:80]
 				}
@@ -467,8 +463,6 @@ func (s *Store) normalizedLayoutLocked() Layout {
 		}
 	}
 
-	// HiddenDefaults is retained as the on-disk field name for compatibility,
-	// but SDK 9 permits any valid navigation entry except Tab Manager itself.
 	hidden := make([]string, 0, len(s.layout.HiddenDefaults))
 	hiddenSeen := map[string]bool{}
 	for _, id := range s.layout.HiddenDefaults {

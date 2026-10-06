@@ -4,7 +4,7 @@
 
 1. Start Elite Dangerous.
 2. Start JACoB.
-3. JACoB opens `http://127.0.0.1:4510/` in the default browser on Windows.
+3. JACoB opens `http://127.0.0.1:6626/` in the default browser on Windows.
 4. Home reports **READY**, **WARNING**, or **BLOCKED** with the current operational note.
 
 ## Add a custom tab
@@ -23,9 +23,9 @@ The saved tab joins the navigation manifest and persists across JACoB restarts.
 Tab Manager includes **Navigation manifest**.
 
 - Use the arrow controls to move any default or custom tab.
-- Home, Tutorial and Settings may be hidden from the navigation bar.
+- Any default or custom tab may be hidden from the navigation bar.
 - Tab Manager remains visible as the recovery point.
-- Hidden default pages keep their settings and may be restored at any time.
+- Hidden tabs remain installed; hidden custom tabs may keep running in the background and can be restored at any time.
 
 The manifest is stored with the saved-tab data and is shared by browsers connected to the same JACoB instance.
 

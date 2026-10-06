@@ -11,7 +11,7 @@
 <main class="doc">
 <h1 id="jacob-custom-tab-developer-reference">JACoB Custom Tab Developer
 Reference</h1>
-<p>Version: Alpha 0.2.10<br />
+<p>Version: Alpha 0.2.11<br />
 SDK version: 9</p>
 <p>This is the canonical reference for building JACoB custom HTML tabs.
 It describes the tab runtime, the browser SDK, the direct WebSocket
@@ -90,22 +90,12 @@ stay loaded.</p>
 <p>Deleting a tab removes its persistent record and clears that tab’s
 overlay layer.</p>
 <h3 id="persistence">2.3 Persistence</h3>
-<p>Saved tabs are stored by the JACoB core, not browser local storage.
-On Windows the default data directory is normally:</p>
+<p>Saved tabs are stored by the JACoB core, not browser local storage. On Windows the default data directory is normally:</p>
 <pre class="text"><code>%APPDATA%\JACoB</code></pre>
-<p>The tab database is:</p>
-<pre class="text"><code>custom-tabs.json</code></pre>
-<p>A saved tab record contains:</p>
-<div class="sourceCode" id="cb4"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;id&quot;</span><span class="fu">:</span> <span class="st">&quot;tab-0123456789abcdef&quot;</span><span class="fu">,</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;name&quot;</span><span class="fu">:</span> <span class="st">&quot;Route Queue&quot;</span><span class="fu">,</span></span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;html&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;!doctype html&gt;...&quot;</span><span class="fu">,</span></span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;createdAt&quot;</span><span class="fu">:</span> <span class="st">&quot;2026-10-03T16:00:00Z&quot;</span><span class="fu">,</span></span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updatedAt&quot;</span><span class="fu">:</span> <span class="st">&quot;2026-10-03T16:10:00Z&quot;</span></span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
-<p>Maximum saved HTML size is 1 MiB per tab.</p>
-<h3 id="24-overlay-isolation">2.4 Overlay isolation</h3>
+<p>Saved-tab metadata and navigation order are stored in <code>custom-tabs.json</code>.</p>
+<p>Each tab body is stored separately under <code>custom-tabs/&lt;tab-id&gt;.html</code>. The manifest stays small, <code>tabs.list</code> returns metadata only, and JACoB loads HTML on demand with <code>tabs.get</code>. Schema-2 inline stores migrate automatically. JACoB 0.2.11 also recovers surviving schema-3 body files orphaned by the 0.2.10 regression.</p>
+<p>A metadata record contains <code>id</code>, <code>name</code>, <code>sizeBytes</code>, <code>createdAt</code>, and <code>updatedAt</code>. Maximum saved HTML size is 4 MiB per tab.</p>
+<h3 id="overlay-isolation">2.4 Overlay isolation</h3>
 <p>Each saved tab receives a separate overlay layer.
 <code>Elite.overlay.clear()</code> clears only the calling tab's layer.
 A preview in Tab Manager uses a temporary preview layer.</p>
@@ -132,7 +122,7 @@ Elite.files
 Elite.events
 Elite.journal</code></pre>
 <p>The current SDK version is:</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode js"><code class="sourceCode javascript"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>Elite<span class="op">.</span><span class="at">api</span><span class="op">.</span><span class="at">version</span> <span class="op">===</span> <span class="dv">6</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode js"><code class="sourceCode javascript"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>Elite<span class="op">.</span><span class="at">api</span><span class="op">.</span><span class="at">version</span> <span class="op">===</span> <span class="dv">9</span></span></code></pre></div>
 <p>All command methods return Promises.</p>
 <p>Errors reject with an <code>Error</code> object carrying a
 machine-readable <code>code</code> when one is available:</p>
@@ -1071,9 +1061,9 @@ await Elite.tabs.activate('Carrier Market Orders');
 <p>Most custom tabs should use the injected SDK. The direct protocol is
 documented for external clients and debugging.</p>
 <p>Endpoint:</p>
-<pre class="text"><code>ws://HOST:4510/ws</code></pre>
+<pre class="text"><code>ws://HOST:6626/ws</code></pre>
 <p>Loopback clients do not require a pairing token. LAN clients use:</p>
-<pre class="text"><code>ws://HOST:4510/ws?token=PAIR_TOKEN</code></pre>
+<pre class="text"><code>ws://HOST:6626/ws?token=PAIR_TOKEN</code></pre>
 <h3 id="request">Request</h3>
 <div class="sourceCode" id="cb90"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb90-1"><a href="#cb90-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
@@ -1184,7 +1174,7 @@ Custom tabs receive it through the generic event bridge.</p>
 <p>Representative shape:</p>
 <div class="sourceCode" id="cb90"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb90-1"><a href="#cb90-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb90-2"><a href="#cb90-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;prototype&quot;</span><span class="fu">:</span> <span class="st">&quot;Alpha 0.2.10&quot;</span><span class="fu">,</span></span>
+<span id="cb90-2"><a href="#cb90-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;prototype&quot;</span><span class="fu">:</span> <span class="st">&quot;Alpha 0.2.11&quot;</span><span class="fu">,</span></span>
 <span id="cb90-3"><a href="#cb90-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;version&quot;</span><span class="fu">:</span> <span class="st">&quot;0.2.8-alpha&quot;</span><span class="fu">,</span></span>
 <span id="cb90-4"><a href="#cb90-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;product&quot;</span><span class="fu">:</span> <span class="st">&quot;JACoB&quot;</span><span class="fu">,</span></span>
 <span id="cb90-5"><a href="#cb90-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;name&quot;</span><span class="fu">:</span> <span class="st">&quot;Journal Aligned Control Bridge&quot;</span><span class="fu">,</span></span>

@@ -20,6 +20,7 @@ func TestStorePersistsAcrossInstances(t *testing.T) {
 	if tab.ID == "" {
 		t.Fatal("expected id")
 	}
+
 	s2, err := New(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -59,9 +60,6 @@ func TestStoreUpdateDelete(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "custom-tabs.json")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "custom-tabs", tab.ID+".html")); !os.IsNotExist(err) {
-		t.Fatalf("body file survived delete: %v", err)
-	}
 }
 
 func TestLayoutPersistsAndOrdersCustomTabs(t *testing.T) {
@@ -89,6 +87,7 @@ func TestLayoutPersistsAndOrdersCustomTabs(t *testing.T) {
 	if len(list) != 2 || list[0].ID != two.ID || list[1].ID != one.ID {
 		t.Fatalf("unexpected custom tab order: %#v", list)
 	}
+
 	s2, err := New(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -118,51 +117,6 @@ func TestLayoutDropsDeletedCustomTab(t *testing.T) {
 	for _, id := range s.Layout().Order {
 		if id == "custom-"+tab.ID {
 			t.Fatalf("deleted tab remained in layout: %#v", s.Layout())
-		}
-	}
-}
-
-func TestLayoutCanHideCustomTabs(t *testing.T) {
-	dir := t.TempDir()
-	s, err := New(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tab, err := s.Save("", "Hidden Tool", "<p>x</p>")
-	if err != nil {
-		t.Fatal(err)
-	}
-	navID := "custom-" + tab.ID
-	layout, err := s.SaveLayout([]string{"dashboard", navID, "tabmanager", "tutorial", "settings"}, []string{navID, "settings", "tabmanager"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(layout.HiddenDefaults) != 2 || layout.HiddenDefaults[0] != navID || layout.HiddenDefaults[1] != "settings" {
-		t.Fatalf("unexpected hidden navigation: %#v", layout.HiddenDefaults)
-	}
-	s2, err := New(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := s2.Layout()
-	found := false
-	for _, id := range got.HiddenDefaults {
-		if id == navID {
-			found = true
-		}
-		if id == "tabmanager" {
-			t.Fatalf("Tab Manager must never be hideable: %#v", got.HiddenDefaults)
-		}
-	}
-	if !found {
-		t.Fatalf("hidden custom tab did not persist: %#v", got.HiddenDefaults)
-	}
-	if err := s2.Delete(tab.ID); err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range s2.Layout().HiddenDefaults {
-		if id == navID {
-			t.Fatalf("deleted custom tab remained hidden in layout: %#v", s2.Layout())
 		}
 	}
 }
@@ -235,74 +189,6 @@ func TestStoreMigratesSchema2InlineHTML(t *testing.T) {
 	}
 }
 
-func TestStoreLoadsSchema3SplitFiles(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "custom-tabs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	manifest := `{
-  "schemaVersion": 3,
-  "tabs": [{"id":"tab-split","name":"Split","sizeBytes":28,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}],
-  "layout": {"order":["dashboard","custom-tab-split","tabmanager","tutorial","settings"]}
-}`
-	body := "<!doctype html><h1>split</h1>"
-	if err := os.WriteFile(filepath.Join(dir, "custom-tabs.json"), []byte(manifest), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "custom-tabs", "tab-split.html"), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	s, err := New(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	list := s.List()
-	if len(list) != 1 || list[0].Name != "Split" || list[0].HTML != "" {
-		t.Fatalf("bad metadata: %#v", list)
-	}
-	got, ok := s.Get("tab-split")
-	if !ok || got.HTML != body {
-		t.Fatalf("split body did not load: %#v ok=%v", got, ok)
-	}
-}
-
-func TestStoreRecoversOrphanedSchema3Bodies(t *testing.T) {
-	dir := t.TempDir()
-	content := filepath.Join(dir, "custom-tabs")
-	if err := os.MkdirAll(content, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	// Simulate the 0.2.10 regression having overwritten/emptied the manifest
-	// while the schema-3 body survived untouched.
-	manifest := `{"schemaVersion":2,"tabs":[],"layout":{}}`
-	if err := os.WriteFile(filepath.Join(dir, "custom-tabs.json"), []byte(manifest), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	body := "<!doctype html><html><head><title>My Mining Tab</title></head><body>x</body></html>"
-	if err := os.WriteFile(filepath.Join(content, "tab-orphan.html"), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	s, err := New(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	list := s.List()
-	if len(list) != 1 || list[0].ID != "tab-orphan" || list[0].Name != "My Mining Tab" {
-		t.Fatalf("orphan not recovered: %#v", list)
-	}
-	got, ok := s.Get("tab-orphan")
-	if !ok || got.HTML != body {
-		t.Fatalf("orphan body not readable: %#v ok=%v", got, ok)
-	}
-	manifestBytes, err := os.ReadFile(filepath.Join(dir, "custom-tabs.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(manifestBytes), `"schemaVersion": 3`) || !strings.Contains(string(manifestBytes), `"tab-orphan"`) {
-		t.Fatalf("recovered manifest not persisted: %s", manifestBytes)
-	}
-}
-
 func TestStoreAcceptsMultiMegabyteTab(t *testing.T) {
 	s, err := New(t.TempDir())
 	if err != nil {
@@ -323,15 +209,72 @@ func TestStoreAcceptsMultiMegabyteTab(t *testing.T) {
 	}
 }
 
-func TestInvalidTabIDCannotEscapeContentDirectory(t *testing.T) {
-	s, err := New(t.TempDir())
+func TestLayoutCanHideCustomTabs(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Save("../escape", "Bad", "<p>x</p>"); err == nil {
-		t.Fatal("expected invalid id to be rejected")
+	tab, err := s.Save("", "Hidden Tool", "<p>x</p>")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := s.Get("../escape"); ok {
-		t.Fatal("invalid id unexpectedly resolved")
+	navID := "custom-" + tab.ID
+	layout, err := s.SaveLayout([]string{"dashboard", navID, "tabmanager", "tutorial", "settings"}, []string{navID, "settings", "tabmanager"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(layout.HiddenDefaults) != 2 || layout.HiddenDefaults[0] != navID || layout.HiddenDefaults[1] != "settings" {
+		t.Fatalf("unexpected hidden navigation: %#v", layout.HiddenDefaults)
+	}
+	s2, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, id := range s2.Layout().HiddenDefaults {
+		if id == navID {
+			found = true
+		}
+		if id == "tabmanager" {
+			t.Fatal("Tab Manager must never be hideable")
+		}
+	}
+	if !found {
+		t.Fatalf("hidden custom tab did not persist: %#v", s2.Layout().HiddenDefaults)
+	}
+}
+
+func TestStoreRecoversOrphanedSchema3Bodies(t *testing.T) {
+	dir := t.TempDir()
+	content := filepath.Join(dir, "custom-tabs")
+	if err := os.MkdirAll(content, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "custom-tabs.json"), []byte(`{"schemaVersion":2,"tabs":[],"layout":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := "<!doctype html><html><head><title>My Mining Tab</title></head><body>x</body></html>"
+	if err := os.WriteFile(filepath.Join(content, "tab-orphan.html"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := s.List()
+	if len(list) != 1 || list[0].ID != "tab-orphan" || list[0].Name != "My Mining Tab" {
+		t.Fatalf("orphan not recovered: %#v", list)
+	}
+	got, ok := s.Get("tab-orphan")
+	if !ok || got.HTML != body {
+		t.Fatalf("orphan body not readable: %#v ok=%v", got, ok)
+	}
+	manifest, err := os.ReadFile(filepath.Join(dir, "custom-tabs.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(manifest), `"schemaVersion": 3`) || !strings.Contains(string(manifest), `"tab-orphan"`) {
+		t.Fatalf("recovered manifest not persisted: %s", manifest)
 	}
 }

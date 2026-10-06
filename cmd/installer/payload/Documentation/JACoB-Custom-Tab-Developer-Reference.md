@@ -1,6 +1,6 @@
 # JACoB Custom Tab Developer Reference
 
-Version: Alpha 0.2.10  
+Version: Alpha 0.2.11  
 SDK version: 9
 
 This is the canonical reference for building JACoB custom HTML tabs. It describes the tab runtime, the browser SDK, the direct WebSocket protocol, state and event shapes, input behavior, overlays, video, recorder support, persistence, security boundaries, and platform limitations.
@@ -78,25 +78,33 @@ Saved tabs are stored by the JACoB core, not browser local storage. On Windows t
 %APPDATA%\JACoB
 ```
 
-The tab database is:
+Saved-tab metadata and navigation order are stored in:
 
 ```text
 custom-tabs.json
 ```
 
-A saved tab record contains:
+Each tab body is stored separately under:
+
+```text
+custom-tabs/<tab-id>.html
+```
+
+The manifest therefore stays small even when individual tabs contain large datasets or complex UI. `tabs.list` returns metadata only; JACoB loads a tab's HTML on demand with `tabs.get` when the tab is opened, edited, or loaded for a registered background action. Existing schema-2 stores with inline HTML are migrated automatically without changing tab IDs or per-tab `Elite.store` state. JACoB 0.2.11 also recovers surviving schema-3 body files if the 0.2.10 regression left them orphaned from the manifest.
+
+A saved tab metadata record contains:
 
 ```json
 {
   "id": "tab-0123456789abcdef",
   "name": "Route Queue",
-  "html": "<!doctype html>...",
+  "sizeBytes": 182304,
   "createdAt": "2026-10-03T16:00:00Z",
   "updatedAt": "2026-10-03T16:10:00Z"
 }
 ```
 
-Maximum saved HTML size is 1 MiB per tab.
+Maximum saved HTML size is 4 MiB per tab.
 
 ### 2.4 Overlay isolation
 
@@ -1329,13 +1337,13 @@ Most custom tabs should use the injected SDK. The direct protocol is documented 
 Endpoint:
 
 ```text
-ws://HOST:4510/ws
+ws://HOST:6626/ws
 ```
 
 Loopback clients do not require a pairing token. LAN clients use:
 
 ```text
-ws://HOST:4510/ws?token=PAIR_TOKEN
+ws://HOST:6626/ws?token=PAIR_TOKEN
 ```
 
 ### Request
