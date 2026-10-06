@@ -42,8 +42,9 @@ jobs:
             internal/platform/input.go internal/platform/input_windows.go internal/platform/input_linux.go `
             internal/platform/text.go internal/platform/text_windows.go internal/platform/text_linux.go internal/platform/text_other.go `
             internal/platform/recorder.go internal/platform/recorder_windows.go `
-            internal/platform/input_physical_test.go internal/platform/input_windows_test.go `
-            internal/core/server.go internal/customtabs/store.go internal/customtabs/store_test.go cmd/installer/main.go
+            internal/platform/input_physical_test.go internal/platform/input_windows_test.go internal/platform/x11_parse.go `
+            internal/core/server.go internal/core/ws.go internal/core/ws_test.go `
+            internal/customtabs/store.go internal/customtabs/store_test.go cmd/installer/main.go
 
       - name: Run Windows tests
         run: go test ./...
