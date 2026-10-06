@@ -225,9 +225,8 @@ write("internal/customtabs/store_test.go", tests)
 # Bump the build so 0.2.10 actually sees a newer release.
 replace_exact("internal/buildinfo/version.go", 'Version    = "0.2.10-alpha"', 'Version    = "0.2.11-alpha"')
 replace_exact("internal/buildinfo/version.go", 'Display    = "Alpha 0.2.10 SDK9 Recovery"', 'Display    = "Alpha 0.2.11 SDK9"')
-p = ROOT / "internal/buildinfo/version_test.go"
-if p.exists():
-    p.write_text(p.read_text(encoding="utf-8").replace("0.2.10-alpha", "0.2.11-alpha"), encoding="utf-8", newline="\n")
+# version_test.go tests generic comparison semantics and must not be version-bumped.
+# In particular, 0.2.10.0-alpha is intentionally equivalent to 0.2.10-alpha.
 
 # Move the default/documented service port to 6626 throughout source/docs.
 text_exts = {".go", ".js", ".md", ".html", ".json", ".txt", ".ps1", ".sh"}
