@@ -63,6 +63,26 @@ jobs:
           $version = Get-Content internal/buildinfo/version.go -Raw
           if ($version -notmatch 'Version\s*=\s*"0\.2\.11-alpha"') { throw "Version was not raised to 0.2.11-alpha" }
 
+          foreach ($docPath in @(
+            'docs/JACOB_CUSTOM_TAB_REFERENCE.md',
+            'internal/webui/assets/docs/JACOB_CUSTOM_TAB_REFERENCE.md',
+            'cmd/installer/payload/Documentation/JACoB-Custom-Tab-Developer-Reference.md'
+          )) {
+            $doc = Get-Content $docPath -Raw
+            if ($doc -notmatch 'custom-tabs/<tab-id>\.html') { throw "$docPath does not describe schema-3 split bodies" }
+            if ($doc -notmatch 'Maximum saved HTML size is 4 MiB per tab') { throw "$docPath does not document the 4 MiB limit" }
+          }
+
+          foreach ($htmlPath in @(
+            'internal/webui/assets/docs/developer-reference.html',
+            'cmd/installer/payload/Documentation/JACoB-Custom-Tab-Developer-Reference.html'
+          )) {
+            $html = Get-Content $htmlPath -Raw
+            if ($html -notmatch '4 MiB per tab') { throw "$htmlPath does not document the 4 MiB limit" }
+            if ($html -match 'Maximum saved HTML size is 1 MiB per tab') { throw "$htmlPath still contains the old 1 MiB schema-2 limit" }
+            if ($html -notmatch '(?s)<span class="at">version</span>.*?<span class="op">===</span>\s*<span class="dv">9</span>') { throw "$htmlPath still shows the wrong Elite.api.version" }
+          }
+
       - name: Commit repaired source to main
         shell: powershell
         run: |
