@@ -1,0 +1,119 @@
+name: Build JACoB Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version from internal/buildinfo/version.go (example 0.2.11-alpha)
+        required: true
+        default: 0.2.10-alpha
+      create_draft_release:
+        description: Create/update a draft GitHub release with the built assets
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Verify version
+        shell: powershell
+        run: |
+          $want = "${{ inputs.version }}"
+          $src = Get-Content internal/buildinfo/version.go -Raw
+          if ($src -notmatch ('Version\s*=\s*"' + [regex]::Escape($want) + '"')) {
+            throw "buildinfo.Version does not match requested version $want"
+          }
+
+      - name: Test Windows
+        run: go test ./...
+
+      - name: Validate browser SDK
+        shell: powershell
+        run: |
+          node --check internal/webui/assets/app.js
+
+      - name: Compile Linux core
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $env:CGO_ENABLED="0"
+          $env:GOOS="linux"
+          $env:GOARCH="amd64"
+          go build -trimpath -o dist/JACoB-linux-amd64 ./cmd/jacob
+
+      - name: Build Windows applications and installer
+        shell: powershell
+        run: |
+          $env:CGO_ENABLED="0"
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+          $v = "${{ inputs.version }}"
+          go build -trimpath -ldflags="-H=windowsgui" -o dist/JACoB.exe ./cmd/jacob
+          go build -trimpath -tags norecorder -ldflags="-H=windowsgui" -o dist/JACoB-no-recorder.exe ./cmd/jacob
+          Copy-Item dist/JACoB.exe cmd/installer/payload/JACoB.exe
+          Copy-Item dist/JACoB-no-recorder.exe cmd/installer/payload/JACoB-no-recorder.exe
+          try {
+            go build -trimpath -ldflags="-H=windowsgui" -o "dist/JACoB-Setup-$v.exe" ./cmd/installer
+          } finally {
+            Remove-Item cmd/installer/payload/JACoB.exe,cmd/installer/payload/JACoB-no-recorder.exe -Force -ErrorAction SilentlyContinue
+          }
+          $hash=(Get-FileHash "dist/JACoB-Setup-$v.exe" -Algorithm SHA256).Hash.ToLower()
+          "$hash  JACoB-Setup-$v.exe" | Out-File "dist/JACoB-Setup-$v.exe.sha256" -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JACoB-${{ inputs.version }}
+          path: |
+            dist/JACoB.exe
+            dist/JACoB-no-recorder.exe
+            dist/JACoB-linux-amd64
+            dist/JACoB-Setup-${{ inputs.version }}.exe
+            dist/JACoB-Setup-${{ inputs.version }}.exe.sha256
+
+      - name: Create or update draft release
+        if: ${{ inputs.create_draft_release }}
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v="${{ inputs.version }}"
+          $tag="v$v"
+          $assets=@(
+            "dist/JACoB.exe",
+            "dist/JACoB-no-recorder.exe",
+            "dist/JACoB-linux-amd64",
+            "dist/JACoB-Setup-$v.exe",
+            "dist/JACoB-Setup-$v.exe.sha256"
+          )
+
+          # `gh release view` exits non-zero when a release does not exist. On the
+          # Windows runner that can become a PowerShell NativeCommandError before
+          # `$LASTEXITCODE` can be handled. Listing releases instead always exits 0.
+          $releaseTags = @(gh release list --limit 100 --json tagName --jq '.[].tagName')
+          $exists = $releaseTags -contains $tag
+
+          if ($exists) {
+            gh release upload $tag @assets --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Failed to upload assets to existing release $tag" }
+            gh release edit $tag --draft --prerelease --title "JACoB $v"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to update release $tag" }
+          } else {
+            $notesFile = "RELEASE-NOTES-$v.md"
+            if (Test-Path $notesFile) {
+              gh release create $tag @assets --target "${{ github.sha }}" --draft --prerelease --title "JACoB $v" --notes-file $notesFile
+            } else {
+              gh release create $tag @assets --target "${{ github.sha }}" --draft --prerelease --title "JACoB $v" --notes "Automated JACoB build. Test the installer before publishing this draft release."
+            }
+            if ($LASTEXITCODE -ne 0) { throw "Failed to create release $tag" }
+          }
