@@ -1411,103 +1411,11 @@ write("README.md", readme)
 # Permanent web-friendly release builder. Future releases can be built and
 # placed into a draft Release without any local Git tooling.
 # ---------------------------------------------------------------------------
-write(".github/workflows/build-windows-release.yml", r'''name: Build JACoB Release
-
-on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Version from internal/buildinfo/version.go (example 0.2.11-alpha)
-        required: true
-        default: 0.2.10-alpha
-      create_draft_release:
-        description: Create/update a draft GitHub release with the built assets
-        required: true
-        type: boolean
-        default: true
-
-permissions:
-  contents: write
-
-jobs:
-  build:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      - name: Verify version
-        shell: powershell
-        run: |
-          $want = "${{ inputs.version }}"
-          $src = Get-Content internal/buildinfo/version.go -Raw
-          if ($src -notmatch ('Version\s*=\s*"' + [regex]::Escape($want) + '"')) {
-            throw "buildinfo.Version does not match requested version $want"
-          }
-
-      - name: Test Windows
-        run: go test ./...
-
-      - name: Compile Linux core
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          $env:CGO_ENABLED="0"
-          $env:GOOS="linux"
-          $env:GOARCH="amd64"
-          go build -trimpath -o dist/JACoB-linux-amd64 ./cmd/jacob
-          $env:GOOS="windows"
-          $env:GOARCH="amd64"
-
-      - name: Build Windows applications and installer
-        shell: powershell
-        run: |
-          $env:CGO_ENABLED="0"
-          $env:GOOS="windows"
-          $env:GOARCH="amd64"
-          $v = "${{ inputs.version }}"
-          go build -trimpath -ldflags="-H=windowsgui" -o dist/JACoB.exe ./cmd/jacob
-          go build -trimpath -tags norecorder -ldflags="-H=windowsgui" -o dist/JACoB-no-recorder.exe ./cmd/jacob
-          Copy-Item dist/JACoB.exe cmd/installer/payload/JACoB.exe
-          Copy-Item dist/JACoB-no-recorder.exe cmd/installer/payload/JACoB-no-recorder.exe
-          try {
-            go build -trimpath -ldflags="-H=windowsgui" -o "dist/JACoB-Setup-$v.exe" ./cmd/installer
-          } finally {
-            Remove-Item cmd/installer/payload/JACoB.exe,cmd/installer/payload/JACoB-no-recorder.exe -Force -ErrorAction SilentlyContinue
-          }
-          $hash=(Get-FileHash "dist/JACoB-Setup-$v.exe" -Algorithm SHA256).Hash.ToLower()
-          "$hash  JACoB-Setup-$v.exe" | Out-File "dist/JACoB-Setup-$v.exe.sha256" -Encoding ascii
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: JACoB-${{ inputs.version }}
-          path: |
-            dist/JACoB.exe
-            dist/JACoB-no-recorder.exe
-            dist/JACoB-linux-amd64
-            dist/JACoB-Setup-${{ inputs.version }}.exe
-            dist/JACoB-Setup-${{ inputs.version }}.exe.sha256
-
-      - name: Create or update draft release
-        if: ${{ inputs.create_draft_release }}
-        shell: powershell
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $v="${{ inputs.version }}"
-          $tag="v$v"
-          $assets=@("dist/JACoB.exe","dist/JACoB-no-recorder.exe","dist/JACoB-linux-amd64","dist/JACoB-Setup-$v.exe","dist/JACoB-Setup-$v.exe.sha256")
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag @assets --clobber
-            gh release edit $tag --draft --prerelease --title "JACoB $v"
-          } else {
-            gh release create $tag @assets --target "${{ github.sha }}" --draft --prerelease --title "JACoB $v" --notes "Automated JACoB build. Test the installer before publishing this draft release."
-          }
-''')
+# The permanent release workflow is intentionally not written by this recovery
+# script. GitHub rejects workflow-file changes made by GITHUB_TOKEN unless the
+# token has workflows permission. Add build-windows-release.yml manually after
+# this recovery succeeds; the recovery workflow itself already builds/releases
+# 0.2.10.
 
 write("RELEASE-NOTES-0.2.10-alpha.md", r'''# JACoB 0.2.10 Alpha — Recovery + SDK 8
 
