@@ -14,14 +14,19 @@ import (
 	"time"
 )
 
-const maxHTMLBytes = 1024 * 1024
+const (
+	maxHTMLBytes   = 4 * 1024 * 1024
+	storeSchema    = 3
+	contentDirName = "custom-tabs"
+)
 
 var defaultNavIDs = []string{"dashboard", "tabmanager", "tutorial", "settings"}
 
 type Tab struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
-	HTML      string `json:"html"`
+	HTML      string `json:"html,omitempty"`
+	SizeBytes int64  `json:"sizeBytes,omitempty"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
 }
@@ -38,11 +43,12 @@ type fileData struct {
 }
 
 type Store struct {
-	mu     sync.RWMutex
-	dir    string
-	path   string
-	tabs   map[string]Tab
-	layout Layout
+	mu         sync.RWMutex
+	dir        string
+	path       string
+	contentDir string
+	tabs       map[string]Tab
+	layout     Layout
 }
 
 func DefaultDirectory() string {
@@ -65,8 +71,16 @@ func New(dir string) (*Store, error) {
 	if strings.TrimSpace(dir) == "" {
 		dir = DefaultDirectory()
 	}
-	s := &Store{dir: dir, path: filepath.Join(dir, "custom-tabs.json"), tabs: map[string]Tab{}}
+	s := &Store{
+		dir:        dir,
+		path:       filepath.Join(dir, "custom-tabs.json"),
+		contentDir: filepath.Join(dir, contentDirName),
+		tabs:       map[string]Tab{},
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(s.contentDir, 0o700); err != nil {
 		return nil, err
 	}
 	if err := s.load(); err != nil {
@@ -75,9 +89,12 @@ func New(dir string) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) Directory() string { return s.dir }
-func (s *Store) Path() string      { return s.path }
+func (s *Store) Directory() string        { return s.dir }
+func (s *Store) Path() string             { return s.path }
+func (s *Store) ContentDirectory() string { return s.contentDir }
 
+// List returns metadata only. HTML is intentionally omitted so navigation and
+// Tab Manager refreshes stay small even when saved tabs are large.
 func (s *Store) List() []Tab {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -93,6 +110,7 @@ func (s *Store) listLocked() []Tab {
 		}
 		id := strings.TrimPrefix(navID, "custom-")
 		if t, ok := s.tabs[id]; ok {
+			t.HTML = ""
 			out = append(out, t)
 			seen[id] = true
 		}
@@ -100,6 +118,7 @@ func (s *Store) listLocked() []Tab {
 	remaining := make([]Tab, 0, len(s.tabs)-len(out))
 	for id, t := range s.tabs {
 		if !seen[id] {
+			t.HTML = ""
 			remaining = append(remaining, t)
 		}
 	}
@@ -112,11 +131,22 @@ func (s *Store) listLocked() []Tab {
 	return append(out, remaining...)
 }
 
+// Get reads one tab body on demand. Normal listing/navigation never reads all
+// saved HTML into a single response.
 func (s *Store) Get(id string) (Tab, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	t, ok := s.tabs[id]
-	return t, ok
+	if !ok || !validTabID(id) {
+		return Tab{}, false
+	}
+	b, err := os.ReadFile(s.tabPath(id))
+	if err != nil {
+		return Tab{}, false
+	}
+	t.HTML = string(b)
+	t.SizeBytes = int64(len(b))
+	return t, true
 }
 
 func (s *Store) Layout() Layout {
@@ -149,7 +179,8 @@ func (s *Store) Save(id, name, html string) (Tab, error) {
 	if strings.TrimSpace(html) == "" {
 		return Tab{}, errors.New("tab HTML is required")
 	}
-	if len([]byte(html)) > maxHTMLBytes {
+	htmlBytes := []byte(html)
+	if len(htmlBytes) > maxHTMLBytes {
 		return Tab{}, fmt.Errorf("tab HTML exceeds %d byte limit", maxHTMLBytes)
 	}
 
@@ -165,27 +196,47 @@ func (s *Store) Save(id, name, html string) (Tab, error) {
 			}
 			id = randomID()
 		}
-		t := Tab{ID: id, Name: name, HTML: html, CreatedAt: now, UpdatedAt: now}
+		if err := replaceFileAtomic(s.tabPath(id), htmlBytes); err != nil {
+			return Tab{}, err
+		}
+		t := Tab{ID: id, Name: name, SizeBytes: int64(len(htmlBytes)), CreatedAt: now, UpdatedAt: now}
 		s.tabs[id] = t
 		s.layout = s.normalizedLayoutLocked()
 		if err := s.persistLocked(); err != nil {
 			delete(s.tabs, id)
+			_ = os.Remove(s.tabPath(id))
 			return Tab{}, err
 		}
 		return t, nil
 	}
 
+	if !validTabID(id) {
+		return Tab{}, errors.New("invalid saved tab id")
+	}
 	old, ok := s.tabs[id]
 	if !ok {
 		return Tab{}, errors.New("saved tab not found")
 	}
+	oldBody, readErr := os.ReadFile(s.tabPath(id))
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return Tab{}, readErr
+	}
+	if err := replaceFileAtomic(s.tabPath(id), htmlBytes); err != nil {
+		return Tab{}, err
+	}
 	t := old
 	t.Name = name
-	t.HTML = html
+	t.SizeBytes = int64(len(htmlBytes))
 	t.UpdatedAt = now
+	t.HTML = ""
 	s.tabs[id] = t
 	if err := s.persistLocked(); err != nil {
 		s.tabs[id] = old
+		if readErr == nil {
+			_ = replaceFileAtomic(s.tabPath(id), oldBody)
+		} else {
+			_ = os.Remove(s.tabPath(id))
+		}
 		return Tab{}, err
 	}
 	return t, nil
@@ -198,38 +249,171 @@ func (s *Store) Delete(id string) error {
 	if !ok {
 		return errors.New("saved tab not found")
 	}
+	if !validTabID(id) {
+		return errors.New("invalid saved tab id")
+	}
 	oldLayout := s.layout
+	path := s.tabPath(id)
+	backup := path + ".delete"
+	_ = os.Remove(backup)
+	hadBody := false
+	if _, err := os.Stat(path); err == nil {
+		if err := os.Rename(path, backup); err != nil {
+			return err
+		}
+		hadBody = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	delete(s.tabs, id)
 	s.layout = s.normalizedLayoutLocked()
 	if err := s.persistLocked(); err != nil {
 		s.tabs[id] = old
 		s.layout = oldLayout
+		if hadBody {
+			_ = os.Rename(backup, path)
+		}
 		return err
+	}
+	if hadBody {
+		_ = os.Remove(backup)
 	}
 	return nil
 }
 
 func (s *Store) load() error {
+	var f fileData
+	manifestExists := true
 	b, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
+		manifestExists = false
+	} else if err != nil {
 		return err
-	}
-	var f fileData
-	if err := json.Unmarshal(b, &f); err != nil {
+	} else if err := json.Unmarshal(b, &f); err != nil {
 		return fmt.Errorf("parse custom tabs store: %w", err)
 	}
-	for _, t := range f.Tabs {
-		if strings.TrimSpace(t.ID) == "" || strings.TrimSpace(t.Name) == "" || strings.TrimSpace(t.HTML) == "" {
+
+	migrated := manifestExists && f.SchemaVersion < storeSchema
+	for _, raw := range f.Tabs {
+		if strings.TrimSpace(raw.ID) == "" || strings.TrimSpace(raw.Name) == "" || !validTabID(raw.ID) {
 			continue
+		}
+		t := raw
+		legacyHTML := t.HTML
+		t.HTML = ""
+		if strings.TrimSpace(legacyHTML) != "" {
+			body := []byte(legacyHTML)
+			if len(body) > maxHTMLBytes {
+				return fmt.Errorf("saved tab %q exceeds %d byte limit", t.Name, maxHTMLBytes)
+			}
+			if err := replaceFileAtomic(s.tabPath(t.ID), body); err != nil {
+				return fmt.Errorf("migrate saved tab %q: %w", t.Name, err)
+			}
+			t.SizeBytes = int64(len(body))
+			migrated = true
+		} else {
+			info, statErr := os.Stat(s.tabPath(t.ID))
+			if statErr != nil {
+				// A metadata entry without its content file cannot be opened safely.
+				continue
+			}
+			t.SizeBytes = info.Size()
 		}
 		s.tabs[t.ID] = t
 	}
+
+	recovered, err := s.recoverOrphanedBodies()
+	if err != nil {
+		return err
+	}
+	if recovered > 0 {
+		migrated = true
+	}
+
 	s.layout = f.Layout
 	s.layout = s.normalizedLayoutLocked()
+	if migrated {
+		if err := s.persistLocked(); err != nil {
+			return fmt.Errorf("persist migrated custom tabs: %w", err)
+		}
+	}
 	return nil
+}
+
+// recoverOrphanedBodies repairs the exact 0.2.10 recovery regression where a
+// schema-3 manifest could be replaced or ignored while the split HTML bodies
+// remained intact in custom-tabs/. Existing manifest metadata always wins.
+func (s *Store) recoverOrphanedBodies() (int, error) {
+	entries, err := os.ReadDir(s.contentDir)
+	if err != nil {
+		return 0, err
+	}
+	recovered := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".html") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		if !validTabID(id) {
+			continue
+		}
+		if _, exists := s.tabs[id]; exists {
+			continue
+		}
+		path := s.tabPath(id)
+		info, err := os.Stat(path)
+		if err != nil || info.Size() <= 0 || info.Size() > maxHTMLBytes {
+			continue
+		}
+		body, err := os.ReadFile(path)
+		if err != nil || strings.TrimSpace(string(body)) == "" {
+			continue
+		}
+		stamp := info.ModTime().UTC()
+		if stamp.IsZero() {
+			stamp = time.Now().UTC()
+		}
+		ts := stamp.Format(time.RFC3339Nano)
+		s.tabs[id] = Tab{
+			ID:        id,
+			Name:      recoveredTabName(id, body),
+			SizeBytes: info.Size(),
+			CreatedAt: ts,
+			UpdatedAt: ts,
+		}
+		recovered++
+	}
+	return recovered, nil
+}
+
+func recoveredTabName(id string, body []byte) string {
+	const maxProbe = 64 * 1024
+	probe := body
+	if len(probe) > maxProbe {
+		probe = probe[:maxProbe]
+	}
+	text := string(probe)
+	lower := strings.ToLower(text)
+	if start := strings.Index(lower, "<title"); start >= 0 {
+		if gt := strings.Index(lower[start:], ">"); gt >= 0 {
+			bodyStart := start + gt + 1
+			if end := strings.Index(lower[bodyStart:], "</title>"); end >= 0 {
+				name := strings.TrimSpace(text[bodyStart : bodyStart+end])
+				name = strings.Join(strings.Fields(name), " ")
+				if len(name) > 80 {
+					name = name[:80]
+				}
+				if name != "" {
+					return name
+				}
+			}
+		}
+	}
+	name := "Recovered " + id
+	if len(name) > 80 {
+		name = name[:80]
+	}
+	return name
 }
 
 func (s *Store) normalizedLayoutLocked() Layout {
@@ -250,7 +434,6 @@ func (s *Store) normalizedLayoutLocked() Layout {
 			seen[id] = true
 		}
 	}
-	// New installs keep custom tools between Home and the management pages.
 	if len(order) == 0 {
 		order = append(order, "dashboard")
 		seen["dashboard"] = true
@@ -265,7 +448,6 @@ func (s *Store) normalizedLayoutLocked() Layout {
 			seen[navID] = true
 		}
 	}
-	// Append anything not yet represented. This also handles tabs created after a saved layout.
 	remainingCustom := make([]Tab, 0)
 	for id, t := range s.tabs {
 		if !seen["custom-"+id] {
@@ -285,6 +467,8 @@ func (s *Store) normalizedLayoutLocked() Layout {
 		}
 	}
 
+	// HiddenDefaults is retained as the on-disk field name for compatibility,
+	// but SDK 9 permits any valid navigation entry except Tab Manager itself.
 	hidden := make([]string, 0, len(s.layout.HiddenDefaults))
 	hiddenSeen := map[string]bool{}
 	for _, id := range s.layout.HiddenDefaults {
@@ -302,17 +486,41 @@ func cloneLayout(in Layout) Layout {
 }
 
 func (s *Store) persistLocked() error {
-	tabs := make([]Tab, 0, len(s.tabs))
-	for _, t := range s.tabs {
-		tabs = append(tabs, t)
+	tabs := s.listLocked()
+	for i := range tabs {
+		tabs[i].HTML = ""
 	}
-	sort.Slice(tabs, func(i, j int) bool { return tabs[i].CreatedAt < tabs[j].CreatedAt })
-	b, err := json.MarshalIndent(fileData{SchemaVersion: 2, Tabs: tabs, Layout: s.normalizedLayoutLocked()}, "", "  ")
+	b, err := json.MarshalIndent(fileData{SchemaVersion: storeSchema, Tabs: tabs, Layout: s.normalizedLayoutLocked()}, "", "  ")
 	if err != nil {
 		return err
 	}
 	b = append(b, '\n')
-	tmp, err := os.CreateTemp(s.dir, "custom-tabs-*.tmp")
+	return replaceFileAtomic(s.path, b)
+}
+
+func (s *Store) tabPath(id string) string {
+	return filepath.Join(s.contentDir, id+".html")
+}
+
+func validTabID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return id != "." && id != ".."
+}
+
+func replaceFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".jacob-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -324,7 +532,7 @@ func (s *Store) persistLocked() error {
 			_ = os.Remove(tmpName)
 		}
 	}()
-	if _, err := tmp.Write(b); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
@@ -333,20 +541,21 @@ func (s *Store) persistLocked() error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	backup := s.path + ".bak"
+
+	backup := path + ".bak"
 	_ = os.Remove(backup)
 	hadOld := false
-	if _, err := os.Stat(s.path); err == nil {
-		if err := os.Rename(s.path, backup); err != nil {
+	if _, err := os.Stat(path); err == nil {
+		if err := os.Rename(path, backup); err != nil {
 			return err
 		}
 		hadOld = true
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.Rename(tmpName, s.path); err != nil {
+	if err := os.Rename(tmpName, path); err != nil {
 		if hadOld {
-			_ = os.Rename(backup, s.path)
+			_ = os.Rename(backup, path)
 		}
 		return err
 	}
