@@ -6,10 +6,13 @@ import (
 )
 
 func TypeText(d InputDriver, text string, interval time.Duration) error {
+	if handled, err := typeTextNative(d, text, interval); handled {
+		return err
+	}
 	for _, r := range text {
 		key, mods, ok := textRune(r)
 		if !ok {
-			return fmt.Errorf("text character %q is not supported by the JACoB keyboard mapper", r)
+			return fmt.Errorf("text character %q is not supported by the JACoB keyboard mapper on this host", r)
 		}
 		if err := d.TapChord(key, mods); err != nil {
 			return err
@@ -21,6 +24,8 @@ func TypeText(d InputDriver, text string, interval time.Duration) error {
 	return nil
 }
 
+// textRune remains for compatibility and for hosts without a native
+// layout-aware text path. Physical-control APIs do not use this mapping.
 func textRune(r rune) (string, []string, bool) {
 	if r >= 'a' && r <= 'z' {
 		return string(r - 'a' + 'A'), nil, true

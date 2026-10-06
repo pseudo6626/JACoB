@@ -16,6 +16,7 @@ const (
 	inputKeyboard                = 1
 	keyeventfExtendedKey         = 0x0001
 	keyeventfKeyUp               = 0x0002
+	keyeventfUnicode             = 0x0004
 	keyeventfScanCode            = 0x0008
 	mapvkVkToVsc                 = 0
 	jacobInputMarker     uintptr = 0x4A41434F
@@ -84,6 +85,9 @@ type resolvedWindowsKey struct {
 }
 
 func resolveWindowsKey(k string) (resolvedWindowsKey, error) {
+	if physical, ok := ParsePhysicalKeyToken(k); ok {
+		return resolvedWindowsKey{scan: physical.Scan, extended: physical.Extended, name: FormatPhysicalKeyToken(uint32(physical.Scan), physical.Extended)}, nil
+	}
 	vk, ext, ok := virtualKey(k)
 	if !ok {
 		return resolvedWindowsKey{}, fmt.Errorf("unsupported key %q", k)
@@ -109,6 +113,20 @@ func makeWindowsKeyEvent(r resolvedWindowsKey, up bool) winInput {
 	if r.extended {
 		ki.Flags |= keyeventfExtendedKey
 	}
+	if up {
+		ki.Flags |= keyeventfKeyUp
+	}
+	return in
+}
+
+func makeWindowsUnicodeEvent(unit uint16, up bool) winInput {
+	var in winInput
+	in.Type = inputKeyboard
+	ki := (*keyboardInput)(unsafe.Pointer(&in.Data[0]))
+	ki.Vk = 0
+	ki.Scan = unit
+	ki.ExtraInfo = jacobInputMarker
+	ki.Flags = keyeventfUnicode
 	if up {
 		ki.Flags |= keyeventfKeyUp
 	}
@@ -205,6 +223,7 @@ func virtualKey(key string) (vk uint16, extended bool, ok bool) {
 		extended bool
 	}{
 		"ENTER": {0x0D, false}, "RETURN": {0x0D, false}, "ESC": {0x1B, false}, "ESCAPE": {0x1B, false}, "TAB": {0x09, false}, "SPACE": {0x20, false}, "BACKSPACE": {0x08, false},
+		"CAPSLOCK": {0x14, false}, "PAUSE": {0x13, false}, "PRINTSCREEN": {0x2C, true}, "SCROLLLOCK": {0x91, false}, "NUMLOCK": {0x90, true},
 		"PAGEUP": {0x21, true}, "PAGEDOWN": {0x22, true}, "END": {0x23, true}, "HOME": {0x24, true},
 		"UP": {0x26, true}, "DOWN": {0x28, true}, "LEFT": {0x25, true}, "RIGHT": {0x27, true}, "INSERT": {0x2D, true}, "DELETE": {0x2E, true},
 		"CTRL": {0x11, false}, "CONTROL": {0x11, false}, "LEFTCONTROL": {0xA2, false}, "RIGHTCONTROL": {0xA3, true},
@@ -215,6 +234,7 @@ func virtualKey(key string) (vk uint16, extended bool, ok bool) {
 		"MULTIPLY": {0x6A, false}, "ADD": {0x6B, false}, "SUBTRACT": {0x6D, false}, "DECIMAL": {0x6E, false}, "DIVIDE": {0x6F, true},
 		"SEMICOLON": {0xBA, false}, "EQUALS": {0xBB, false}, "COMMA": {0xBC, false}, "MINUS": {0xBD, false}, "PERIOD": {0xBE, false},
 		"SLASH": {0xBF, false}, "GRAVE": {0xC0, false}, "LEFTBRACKET": {0xDB, false}, "BACKSLASH": {0xDC, false}, "RIGHTBRACKET": {0xDD, false}, "APOSTROPHE": {0xDE, false},
+		"OEM102": {0xE2, false}, "KANA": {0x15, false}, "KANJI": {0x19, false}, "CONVERT": {0x1C, false}, "NONCONVERT": {0x1D, false},
 		"F1": {0x70, false}, "F2": {0x71, false}, "F3": {0x72, false}, "F4": {0x73, false}, "F5": {0x74, false}, "F6": {0x75, false},
 		"F7": {0x76, false}, "F8": {0x77, false}, "F9": {0x78, false}, "F10": {0x79, false}, "F11": {0x7A, false}, "F12": {0x7B, false},
 	}

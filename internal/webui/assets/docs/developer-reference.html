@@ -11,8 +11,8 @@
 <main class="doc">
 <h1 id="jacob-custom-tab-developer-reference">JACoB Custom Tab Developer
 Reference</h1>
-<p>Version: Alpha 0.2.8<br />
-SDK version: 7</p>
+<p>Version: Alpha 0.2.10<br />
+SDK version: 9</p>
 <p>This is the canonical reference for building JACoB custom HTML tabs.
 It describes the tab runtime, the browser SDK, the direct WebSocket
 protocol, state and event shapes, input behavior, overlays, video,
@@ -69,7 +69,7 @@ to the JACoB host page, arbitrary filesystem access, operating-system
 APIs, or direct access to JACoB’s privileged WebSocket.</p>
 <p>The host injects the <code>Elite</code> SDK into each tab and
 forwards only allowed SDK calls.</p>
-<p>SDK 7 also injects a restrictive Content Security Policy into custom
+<p>SDK 8 also injects a restrictive Content Security Policy into custom
 tabs. Direct external scripts, frames, fetch/WebSocket connections,
 workers, forms, and external image loads are blocked. Sensitive bridge
 capabilities prompt the user per saved-tab version/browser before first
@@ -126,6 +126,8 @@ Elite.video
 Elite.net
 Elite.data
 Elite.store
+Elite.actions
+Elite.tabs
 Elite.files
 Elite.events
 Elite.journal</code></pre>
@@ -439,7 +441,7 @@ because Elite itself uses the first entry.</p>
 class="sourceCode js"><code class="sourceCode javascript"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="cf">await</span> Elite<span class="op">.</span><span class="at">bindings</span><span class="op">.</span><span class="fu">reload</span>()<span class="op">;</span></span></code></pre></div>
 <p>Reloads binding files from disk.</p>
 <h3 id="binding-autofill-is-host-only-in-sdk-7">Binding autofill is
-host-only in SDK 7</h3>
+host-only in SDK 8</h3>
 <p><code>bindings.autofill</code> still exists as a local host-console
 operation, but it is intentionally no longer exposed through the
 custom-tab SDK. A custom tab cannot modify Elite binding files.</p>
@@ -1039,6 +1041,32 @@ custom tabs.</p>
 <p>The selected theme is persisted by the core and is shared by browsers
 opening the same JACoB instance.</p>
 <hr />
+<h2 id="125-cross-tab-actions-and-tab-navigation-sdk-9">12.5 Cross-tab actions and tab navigation (SDK 9)</h2>
+<p>Saved tabs can publish named actions to the JACoB host. Other saved tabs invoke those actions through the host broker; sandboxed iframes do not receive direct access to each other.</p>
+<pre><code class="language-js">const unregister = await Elite.actions.register(
+  'carrier.runLoad',
+  async ({ load = 0 } = {}) =&gt; {
+    await prepareRun(load);
+    return { prepared: true, load };
+  },
+  { label: 'Run carrier load', description: 'Prepare and run a Fleet Carrier market load.' }
+);
+
+const { actions } = await Elite.actions.list();
+await Elite.actions.invoke('carrier.runLoad', { load: 0 });
+</code></pre>
+<p><code>Elite.actions.list()</code> loads saved tabs as needed so hidden tabs can publish actions. Action names are global in the current JACoB browser session; use stable namespaces such as <code>carrier.*</code>, <code>mining.*</code>, <code>neutron.*</code>, or <code>race.*</code>.</p>
+<p>The first invocation from a saved tab asks for the <strong>Control other JACoB tabs</strong> capability. The provider tab still needs its normal permissions for any game control, network, overlay, recorder, video, or vision work it performs.</p>
+<pre><code class="language-js">await Elite.actions.invoke('neutron.plotNext', null, { timeoutMs: 30000 });
+await Elite.actions.unregister('carrier.runLoad');
+await unregister();
+
+const { tabs } = await Elite.tabs.list();
+await Elite.tabs.activate('Carrier Market Orders');
+</code></pre>
+<p><code>Elite.tabs.activate()</code> accepts a saved-tab ID, navigation ID, saved-tab name, or default page name. Activating a hidden tab does not change its saved visibility.</p>
+<p>Action errors include <code>ACTION_PREVIEW</code>, <code>ACTION_CONFLICT</code>, <code>ACTION_NOT_FOUND</code>, <code>ACTION_NOT_OWNER</code>, <code>ACTION_TARGET_RELOADED</code>, <code>ACTION_TIMEOUT</code>, <code>ACTION_FAILED</code>, and <code>TAB_NOT_FOUND</code>. Reloading or deleting a provider cancels outstanding invocations.</p>
+<p>The navigation manifest may hide default pages and saved custom tabs. <strong>Tab Manager</strong> remains visible as the recovery page. Hiding a custom tab does not delete it or stop an already-running tab.</p>
 <h2 id="13-direct-websocket-protocol">13. Direct WebSocket protocol</h2>
 <p>Most custom tabs should use the injected SDK. The direct protocol is
 documented for external clients and debugging.</p>
@@ -1156,7 +1184,7 @@ Custom tabs receive it through the generic event bridge.</p>
 <p>Representative shape:</p>
 <div class="sourceCode" id="cb90"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb90-1"><a href="#cb90-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb90-2"><a href="#cb90-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;prototype&quot;</span><span class="fu">:</span> <span class="st">&quot;Alpha 0.2.8&quot;</span><span class="fu">,</span></span>
+<span id="cb90-2"><a href="#cb90-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;prototype&quot;</span><span class="fu">:</span> <span class="st">&quot;Alpha 0.2.10&quot;</span><span class="fu">,</span></span>
 <span id="cb90-3"><a href="#cb90-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;version&quot;</span><span class="fu">:</span> <span class="st">&quot;0.2.8-alpha&quot;</span><span class="fu">,</span></span>
 <span id="cb90-4"><a href="#cb90-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;product&quot;</span><span class="fu">:</span> <span class="st">&quot;JACoB&quot;</span><span class="fu">,</span></span>
 <span id="cb90-5"><a href="#cb90-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;name&quot;</span><span class="fu">:</span> <span class="st">&quot;Journal Aligned Control Bridge&quot;</span><span class="fu">,</span></span>

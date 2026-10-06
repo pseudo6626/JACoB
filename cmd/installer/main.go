@@ -4,7 +4,9 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +57,7 @@ func main() {
 	}
 
 	if opts.autoUpdate {
+		previousVersion := installedVersion()
 		if opts.waitPID > 0 {
 			waitForPID(opts.waitPID, 30*time.Second)
 		}
@@ -66,7 +69,19 @@ func main() {
 			msg("JACoB Update", "Update failed:\n\n"+err.Error(), mbOK|mbIconWarning)
 			return
 		}
-		_ = exec.Command(filepath.Join(installDir(), "JACoB.exe")).Start()
+		dir := installDir()
+		target := filepath.Join(dir, "JACoB.exe")
+		if err := exec.Command(target).Start(); err != nil {
+			rollbackErr := rollbackExecutable(dir, previousVersion)
+			msg("JACoB Update", rollbackMessage("Updated JACoB could not be started: "+err.Error(), rollbackErr), mbOK|mbIconWarning)
+			return
+		}
+		if err := verifyRunningVersion(buildinfo.Version, 15*time.Second); err != nil {
+			_ = hidden("taskkill", "/IM", "JACoB.exe", "/F").Run()
+			time.Sleep(500 * time.Millisecond)
+			rollbackErr := rollbackExecutable(dir, previousVersion)
+			msg("JACoB Update", rollbackMessage("Updated JACoB failed its startup/version check: "+err.Error(), rollbackErr), mbOK|mbIconWarning)
+		}
 		return
 	}
 
@@ -155,7 +170,16 @@ func install(includeRecorder bool) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "JACoB.exe"), app, 0o755); err != nil {
+	target := filepath.Join(dir, "JACoB.exe")
+	backup := target + ".previous"
+	if old, readErr := os.ReadFile(target); readErr == nil {
+		if err := os.WriteFile(backup, old, 0o755); err != nil {
+			return fmt.Errorf("backup current JACoB executable: %w", err)
+		}
+	} else if !os.IsNotExist(readErr) {
+		return fmt.Errorf("read current JACoB executable: %w", readErr)
+	}
+	if err := os.WriteFile(target, app, 0o755); err != nil {
 		return err
 	}
 
@@ -355,4 +379,61 @@ func msg(title, text string, flags uintptr) int {
 	x, _ := syscall.UTF16PtrFromString(text)
 	r, _, _ := messageBoxW.Call(0, uintptr(unsafe.Pointer(x)), uintptr(unsafe.Pointer(t)), flags)
 	return int(r)
+}
+
+func verifyRunningVersion(expected string, timeout time.Duration) error {
+	client := http.Client{Timeout: 900 * time.Millisecond}
+	deadline := time.Now().Add(timeout)
+	var last string
+	for time.Now().Before(deadline) {
+		resp, err := client.Get("http://127.0.0.1:4510/api/health")
+		if err == nil {
+			var health struct {
+				Product string `json:"product"`
+				Version string `json:"version"`
+			}
+			decodeErr := json.NewDecoder(resp.Body).Decode(&health)
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && decodeErr == nil && strings.EqualFold(health.Product, "JACoB") {
+				if health.Version == expected {
+					return nil
+				}
+				last = fmt.Sprintf("core reported version %q, expected %q", health.Version, expected)
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if last == "" {
+		last = "local health endpoint did not become ready"
+	}
+	return fmt.Errorf("%s", last)
+}
+
+func rollbackExecutable(dir, previousVersion string) error {
+	target := filepath.Join(dir, "JACoB.exe")
+	backup := target + ".previous"
+	if _, err := os.Stat(backup); err != nil {
+		return fmt.Errorf("previous executable is unavailable: %w", err)
+	}
+	_ = os.Remove(target + ".failed")
+	if _, err := os.Stat(target); err == nil {
+		_ = os.Rename(target, target+".failed")
+	}
+	if err := os.Rename(backup, target); err != nil {
+		return fmt.Errorf("restore previous executable: %w", err)
+	}
+	if strings.TrimSpace(previousVersion) != "" {
+		_ = hidden("reg", "add", uninstallKey, "/v", "DisplayVersion", "/t", "REG_SZ", "/d", previousVersion, "/f").Run()
+	}
+	if err := exec.Command(target).Start(); err != nil {
+		return fmt.Errorf("restart previous JACoB: %w", err)
+	}
+	return nil
+}
+
+func rollbackMessage(reason string, rollbackErr error) string {
+	if rollbackErr == nil {
+		return reason + "\n\nThe previous JACoB executable was restored and restarted."
+	}
+	return reason + "\n\nAutomatic rollback also failed: " + rollbackErr.Error()
 }

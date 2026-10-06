@@ -1,7 +1,7 @@
 # JACoB Custom Tab Developer Reference
 
-Version: Alpha 0.2.8  
-SDK version: 7
+Version: Alpha 0.2.10  
+SDK version: 9
 
 This is the canonical reference for building JACoB custom HTML tabs. It describes the tab runtime, the browser SDK, the direct WebSocket protocol, state and event shapes, input behavior, overlays, video, recorder support, persistence, security boundaries, and platform limitations.
 
@@ -58,7 +58,7 @@ Saved and previewed tabs run in sandboxed iframes with script execution enabled.
 
 The host injects the `Elite` SDK into each tab and forwards only allowed SDK calls.
 
-SDK 7 also injects a restrictive Content Security Policy into custom tabs. Direct external scripts, frames, fetch/WebSocket connections, workers, forms, and external image loads are blocked. Sensitive bridge capabilities prompt the user per saved-tab version/browser before first use: game control, public-network access, recorder, overlay, video, and derived vision. A code update invalidates old grants, denials are remembered to prevent prompt-spam loops, and grants can be cleared from Tab Manager with **Reset permissions**. High-frequency tab calls are bounded by the host bridge.
+SDK 9 retains the restrictive Content Security Policy introduced in SDK 8 for custom tabs. Direct external scripts, frames, fetch/WebSocket connections, workers, forms, and external image loads are blocked. Sensitive bridge capabilities prompt the user per saved-tab version/browser before first use: game control, public-network access, recorder, overlay, video, derived vision, and cross-tab action invocation. A code update invalidates old grants, denials are remembered to prevent prompt-spam loops, and grants can be cleared from Tab Manager with **Reset permissions**. High-frequency tab calls are bounded by the host bridge.
 
 Custom tabs retain an opaque sandbox origin. They cannot open a direct browser WebSocket to JACoB because sandbox `Origin: null` connections are rejected by the core.
 
@@ -127,6 +127,8 @@ Elite.video
 Elite.net
 Elite.data
 Elite.store
+Elite.actions
+Elite.tabs
 Elite.files
 Elite.events
 Elite.journal
@@ -135,8 +137,25 @@ Elite.journal
 The current SDK version is:
 
 ```js
-Elite.api.version === 7
+Elite.api.version === 9
 ```
+
+
+### 3.1 Physical keyboard identifiers (SDK 8)
+
+Keyboard-control calls accept the existing logical names and canonical physical scan-code tokens. Physical tokens are layout-independent and use PC/AT set-1 scan codes:
+
+```text
+SC:29
+SC:56
+SC:E0:38
+```
+
+`Elite.input.tap()` and `Elite.input.hold()` may use these tokens for the main key or modifiers. Existing names such as `A`, `ENTER`, `RIGHTALT`, and `LEFTSHIFT` remain supported.
+
+Windows recorder events retain the legacy `key` and `modifiers` fields and additionally report `physical`, `scanCode`, `virtualKey`, `extended`, and `localizedName`. New recorder-driven tools should store `physical` when present and use `localizedName` only for display. This preserves AZERTY/QWERTZ, ISO-102, JIS/IME, ABNT, Nordic, Cyrillic-layout, AltGr/right-Alt, and left/right modifier positions without assuming a US keyboard.
+
+`Elite.input.text()` is character-oriented rather than physical-key-oriented. JACoB uses the active host layout for text entry and preserves Unicode where the platform input path supports it.
 
 All command methods return Promises.
 
@@ -1215,6 +1234,91 @@ Optional body class:
 All host CSS selectors can be overridden. Theme scripts are not executed in the privileged host page. Interactive behavior belongs in custom tabs.
 
 The selected theme is persisted by the core and is shared by browsers opening the same JACoB instance.
+
+---
+
+## 12.5 Cross-tab actions and tab navigation (SDK 9)
+
+Saved tabs can publish named actions to the JACoB host. Other saved tabs can discover and invoke those actions without gaining direct access to another iframe. The host remains the broker between sandboxed tabs.
+
+A provider registers an action:
+
+```js
+const unregister = await Elite.actions.register(
+  'carrier.runLoad',
+  async ({ load = 0 } = {}) => {
+    await prepareRun(load);
+    return { prepared: true, load };
+  },
+  {
+    label: 'Run carrier load',
+    description: 'Prepare and run a Fleet Carrier market load.'
+  }
+);
+```
+
+An action name is global within the current JACoB browser session. Use a stable namespace such as `carrier.*`, `mining.*`, `neutron.*`, or `race.*`. A second tab cannot silently replace an action already registered by another tab.
+
+A controller such as Touch Deck can discover published actions:
+
+```js
+const result = await Elite.actions.list();
+console.log(result.actions);
+```
+
+`Elite.actions.list()` loads saved tabs as needed so they have an opportunity to register their actions. Hidden tabs remain eligible action providers.
+
+Invoke an action:
+
+```js
+await Elite.actions.invoke('carrier.runLoad', { load: 0 });
+```
+
+The first action invocation from a saved tab asks the user for the **Control other JACoB tabs** capability on that browser. The provider's own permissions remain in force. For example, a carrier action that sends Elite controls still requires the carrier tab to have its normal game-control permission.
+
+Invocation waits for the provider's handler result. The default timeout is 15 seconds and can be changed per call:
+
+```js
+await Elite.actions.invoke('neutron.plotNext', null, { timeoutMs: 30000 });
+```
+
+Providers can unregister actions:
+
+```js
+await Elite.actions.unregister('carrier.runLoad');
+await unregister();
+```
+
+Tab navigation is also exposed to saved tabs:
+
+```js
+const { tabs } = await Elite.tabs.list();
+await Elite.tabs.activate('tab-0123456789abcdef');
+await Elite.tabs.activate('Carrier Market Orders');
+```
+
+`Elite.tabs.activate()` accepts a saved-tab ID, navigation ID, saved-tab name, or default page name. Activating a hidden tab does not unhide it; it only displays that tab in the current browser.
+
+### Action errors
+
+Cross-tab calls may reject with:
+
+```text
+ACTION_PREVIEW
+ACTION_CONFLICT
+ACTION_NOT_FOUND
+ACTION_NOT_OWNER
+ACTION_TARGET_RELOADED
+ACTION_TIMEOUT
+ACTION_FAILED
+TAB_NOT_FOUND
+```
+
+A target reload or deletion cancels outstanding invocations instead of leaving the caller waiting indefinitely.
+
+### Navigation visibility
+
+The navigation manifest can hide both default pages and saved custom tabs. **Tab Manager** remains visible as the recovery page. Hiding a custom tab does not delete it, unload an already-running iframe, clear its state, or prevent it from publishing actions.
 
 ---
 

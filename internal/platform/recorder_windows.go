@@ -21,6 +21,7 @@ const (
 	wmSysKeyDown         = 0x0104
 	wmSysKeyUp           = 0x0105
 	wmQuit               = 0x0012
+	llkhfExtended        = 0x00000001
 	llkhfLowerILInjected = 0x00000002
 	llkhfInjected        = 0x00000010
 )
@@ -45,11 +46,16 @@ type winMSG struct {
 }
 
 type activePress struct {
-	id        uint64
-	key       string
-	modifiers []string
-	atMs      int64
-	isMod     bool
+	id            uint64
+	key           string
+	physical      string
+	localizedName string
+	scanCode      uint32
+	virtualKey    uint32
+	extended      bool
+	modifiers     []string
+	atMs          int64
+	isMod         bool
 }
 
 type windowsRecorder struct {
@@ -75,6 +81,7 @@ var (
 	procUnhookWindowsHookEx = user32.NewProc("UnhookWindowsHookEx")
 	procGetMessageW         = user32.NewProc("GetMessageW")
 	procPostThreadMessageW  = user32.NewProc("PostThreadMessageW")
+	procGetKeyNameTextW     = user32.NewProc("GetKeyNameTextW")
 )
 
 func newInputRecorder() InputRecorder {
@@ -205,11 +212,12 @@ func (r *windowsRecorder) hookProc(nCode int, wParam uintptr, lParam uintptr) ui
 			running := r.recording
 			r.mu.Unlock()
 			if running && fg == target {
+				extended := k.Flags&llkhfExtended != 0
 				switch uint32(wParam) {
 				case wmKeyDown, wmSysKeyDown:
-					r.recordKey(k.VkCode, true)
+					r.recordKey(k.VkCode, k.ScanCode, extended, true)
 				case wmKeyUp, wmSysKeyUp:
-					r.recordKey(k.VkCode, false)
+					r.recordKey(k.VkCode, k.ScanCode, extended, false)
 				}
 			}
 		}
@@ -218,12 +226,49 @@ func (r *windowsRecorder) hookProc(nCode int, wParam uintptr, lParam uintptr) ui
 	return ret
 }
 
-func (r *windowsRecorder) recordKey(vk uint32, down bool) {
-	key, ok := normalizedVK(vk)
-	if !ok {
+func windowsPressIdentity(scan uint32, extended bool, vk uint32) uint32 {
+	if scan == 0 {
+		return 0x80000000 | vk
+	}
+	if extended {
+		return 0x10000 | scan
+	}
+	return scan
+}
+
+func localizedWindowsKeyName(scan uint32, extended bool) string {
+	if scan == 0 {
+		return ""
+	}
+	lparam := uintptr((scan & 0xff) << 16)
+	if extended {
+		lparam |= 1 << 24
+	}
+	buf := make([]uint16, 128)
+	n, _, _ := procGetKeyNameTextW.Call(lparam, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	if n == 0 {
+		return ""
+	}
+	return syscall.UTF16ToString(buf[:n])
+}
+
+func (r *windowsRecorder) recordKey(vk uint32, scan uint32, extended bool, down bool) {
+	if scan == 0 {
+		if mapped, _, _ := procMapVirtualKeyW.Call(uintptr(vk), mapvkVkToVsc); mapped != 0 {
+			scan = uint32(mapped & 0xff)
+		}
+	}
+	physical := FormatPhysicalKeyToken(scan, extended)
+	key, known := normalizedVK(vk)
+	if !known {
+		key = physical
+	}
+	if key == "" {
 		return
 	}
+	localizedName := localizedWindowsKeyName(scan, extended)
 	isMod := isModifierKey(key)
+	identity := windowsPressIdentity(scan, extended, vk)
 
 	r.mu.Lock()
 	if !r.recording {
@@ -237,15 +282,15 @@ func (r *windowsRecorder) recordKey(vk uint32, down bool) {
 	}
 
 	if down {
-		if _, exists := r.pressed[vk]; exists {
+		if _, exists := r.pressed[identity]; exists {
 			r.mu.Unlock()
-			return // auto-repeat; one logical press is enough for replay
+			return
 		}
 		mods := r.currentModifiersLocked()
 		id := atomic.AddUint64(&r.seq, 1)
-		p := activePress{id: id, key: key, modifiers: mods, atMs: now, isMod: isMod}
-		r.pressed[vk] = p
-		ev := RecordedInputEvent{PressID: id, Type: "down", Key: key, Modifiers: append([]string(nil), mods...), AtMs: now, DeltaMs: delta, IsModifier: isMod}
+		p := activePress{id: id, key: key, physical: physical, localizedName: localizedName, scanCode: scan, virtualKey: vk, extended: extended, modifiers: mods, atMs: now, isMod: isMod}
+		r.pressed[identity] = p
+		ev := RecordedInputEvent{PressID: id, Type: "down", Key: key, Physical: physical, LocalizedName: localizedName, ScanCode: scan, VirtualKey: vk, Extended: extended, Modifiers: append([]string(nil), mods...), AtMs: now, DeltaMs: delta, IsModifier: isMod}
 		if isMod {
 			r.mods[key] = true
 		}
@@ -259,7 +304,7 @@ func (r *windowsRecorder) recordKey(vk uint32, down bool) {
 		return
 	}
 
-	p, exists := r.pressed[vk]
+	p, exists := r.pressed[identity]
 	if !exists {
 		if isMod {
 			delete(r.mods, key)
@@ -267,15 +312,15 @@ func (r *windowsRecorder) recordKey(vk uint32, down bool) {
 		r.mu.Unlock()
 		return
 	}
-	delete(r.pressed, vk)
-	if isMod {
-		delete(r.mods, key)
+	delete(r.pressed, identity)
+	if p.isMod {
+		delete(r.mods, p.key)
 	}
 	dur := now - p.atMs
 	if dur < 0 {
 		dur = 0
 	}
-	ev := RecordedInputEvent{PressID: p.id, Type: "up", Key: p.key, Modifiers: append([]string(nil), p.modifiers...), AtMs: now, DeltaMs: delta, DurationMs: dur, IsModifier: p.isMod}
+	ev := RecordedInputEvent{PressID: p.id, Type: "up", Key: p.key, Physical: p.physical, LocalizedName: p.localizedName, ScanCode: p.scanCode, VirtualKey: p.virtualKey, Extended: p.extended, Modifiers: append([]string(nil), p.modifiers...), AtMs: now, DeltaMs: delta, DurationMs: dur, IsModifier: p.isMod}
 	r.lastAtMs = now
 	r.events = append(r.events, ev)
 	cb := r.callback
@@ -321,6 +366,7 @@ func normalizedVK(vk uint32) (string, bool) {
 		0x60: "NUMPAD0", 0x61: "NUMPAD1", 0x62: "NUMPAD2", 0x63: "NUMPAD3", 0x64: "NUMPAD4", 0x65: "NUMPAD5", 0x66: "NUMPAD6", 0x67: "NUMPAD7", 0x68: "NUMPAD8", 0x69: "NUMPAD9",
 		0x6A: "MULTIPLY", 0x6B: "ADD", 0x6D: "SUBTRACT", 0x6E: "DECIMAL", 0x6F: "DIVIDE",
 		0xBA: "SEMICOLON", 0xBB: "EQUALS", 0xBC: "COMMA", 0xBD: "MINUS", 0xBE: "PERIOD", 0xBF: "SLASH", 0xC0: "GRAVE", 0xDB: "LEFTBRACKET", 0xDC: "BACKSLASH", 0xDD: "RIGHTBRACKET", 0xDE: "APOSTROPHE",
+		0xE2: "OEM102", 0x15: "KANA", 0x19: "KANJI", 0x1C: "CONVERT", 0x1D: "NONCONVERT",
 	}
 	v, ok := m[vk]
 	return v, ok

@@ -119,3 +119,48 @@ func TestLayoutDropsDeletedCustomTab(t *testing.T) {
 		}
 	}
 }
+
+func TestLayoutCanHideCustomTabs(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab, err := s.Save("", "Hidden Tool", "<p>x</p>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	navID := "custom-" + tab.ID
+	layout, err := s.SaveLayout([]string{"dashboard", navID, "tabmanager", "tutorial", "settings"}, []string{navID, "settings", "tabmanager"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(layout.HiddenDefaults) != 2 || layout.HiddenDefaults[0] != navID || layout.HiddenDefaults[1] != "settings" {
+		t.Fatalf("unexpected hidden navigation: %#v", layout.HiddenDefaults)
+	}
+	s2, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := s2.Layout()
+	found := false
+	for _, id := range got.HiddenDefaults {
+		if id == navID {
+			found = true
+		}
+		if id == "tabmanager" {
+			t.Fatalf("Tab Manager must never be hideable: %#v", got.HiddenDefaults)
+		}
+	}
+	if !found {
+		t.Fatalf("hidden custom tab did not persist: %#v", got.HiddenDefaults)
+	}
+	if err := s2.Delete(tab.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range s2.Layout().HiddenDefaults {
+		if id == navID {
+			t.Fatalf("deleted custom tab remained hidden in layout: %#v", s2.Layout())
+		}
+	}
+}

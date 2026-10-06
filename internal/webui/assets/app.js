@@ -169,9 +169,17 @@
   const $ = s => document.querySelector(s);
   const state = {
     socket:null,pending:new Map(),core:null,snapshot:null,seq:0,reconnectTimer:null,
-    bindings:[],savedTabs:[],tabHTMLCache:new Map(),tabLoadPromises:new Map(),navLayout:{order:[],hiddenDefaults:[]},editingTabId:'',activeTab:'dashboard',themeHTML:'',locale:{language:'en',supported:[]},quitting:false,updating:false,updateInfo:null
+    bindings:[],savedTabs:[],tabHTMLCache:new Map(),tabLoadPromises:new Map(),navLayout:{order:[],hiddenDefaults:[]},editingTabId:'',activeTab:'dashboard',themeHTML:'',locale:{language:'en',supported:[]},quitting:false,updating:false,updateInfo:null,actionRegistry:new Map(),actionInvocations:new Map(),actionSeq:0,actionDiscoveryDone:false,actionDiscoveryPromise:null
   };
   const isLocal = ['127.0.0.1','localhost','::1'].includes(location.hostname);
+  const UPDATE_CHECK_INTERVAL_MS=30*60*1000,UPDATE_BADGE_KEY='jacob-update-badge-dismissed';
+  let updateCheckTimer=null,updateCheckKickoff=null;
+  function dismissedUpdateVersion(){try{return localStorage.getItem(UPDATE_BADGE_KEY)||''}catch{return''}}
+  function updateBadgeVisible(){const i=state.updateInfo;return !!(i?.available&&i.latestVersion&&dismissedUpdateVersion()!==String(i.latestVersion))}
+  function decorateSettingsUpdateBadge(btn){if(!btn||!updateBadgeVisible())return;const badge=document.createElement('span');badge.className='settings-update-badge';badge.textContent='NEW';badge.setAttribute('aria-hidden','true');btn.appendChild(badge);btn.setAttribute('aria-label',`${navLabel('settings')} — ${tr('update available')}`)}
+  function dismissSettingsUpdateBadge(){const i=state.updateInfo;if(i?.available&&i.latestVersion){try{localStorage.setItem(UPDATE_BADGE_KEY,String(i.latestVersion))}catch{}}renderNavigation()}
+  function queueUpdateCheckSoon(){clearTimeout(updateCheckKickoff);updateCheckKickoff=setTimeout(()=>checkForUpdates({quiet:true}),5000)}
+  function startPeriodicUpdateChecks(){clearInterval(updateCheckTimer);updateCheckTimer=setInterval(()=>checkForUpdates({quiet:true}),UPDATE_CHECK_INTERVAL_MS)}
 
   const I18N=window.JACOB_I18N||{supported:[{code:'en',name:'English',nativeName:'English'}],strings:{}};
   const textSources=new WeakMap(),attrSources=new WeakMap();
@@ -220,7 +228,7 @@ Elite.journal.subscribe('FSDJump',e=>out.textContent='Jumped to '+(e.StarSystem|
 <\/script></body></html>`;
 
   const SDK = `<script>(()=>{
-let seq=0;const pending=new Map(),eventSubs=new Map(),journalSubs=[];
+let seq=0;const pending=new Map(),eventSubs=new Map(),journalSubs=[],actionHandlers=new Map();
 let localeState={language:'en',supported:[{code:'en',name:'English',nativeName:'English'},{code:'ru',name:'Russian',nativeName:'Русский'},{code:'de',name:'German',nativeName:'Deutsch'},{code:'fr',name:'French',nativeName:'Français'},{code:'zh-CN',name:'Simplified Chinese',nativeName:'简体中文'},{code:'es',name:'Spanish',nativeName:'Español'}]};
 function localeInterpolate(text,vars={}){return String(text??'').replace(/\{([A-Za-z0-9_]+)\}/g,(m,k)=>Object.prototype.hasOwnProperty.call(vars,k)?String(vars[k]):m)}
 function localeTranslate(dictionary,key,vars={}){const lang=localeState.language||'en',table=dictionary?.[lang]||dictionary?.[lang.split('-')[0]]||dictionary?.en||{};return localeInterpolate(table?.[key]??dictionary?.en?.[key]??key,vars)}
@@ -235,7 +243,7 @@ try{Object.defineProperty(window,'open',{value:()=>null,writable:false,configura
 function request(method,params={}){const id='tab-'+(++seq)+'-'+Date.now();parent.postMessage({channel:'jacob-tab',kind:'request',id,method,params},'*');return new Promise((resolve,reject)=>pending.set(id,{resolve,reject}))}
 function onEvent(name,cb){if(!eventSubs.has(name))eventSubs.set(name,new Set());eventSubs.get(name).add(cb);return()=>eventSubs.get(name)?.delete(cb)}
 window.Elite=Object.freeze({
- api:Object.freeze({version:7}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
+ api:Object.freeze({version:9}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
  bindings:Object.freeze({list:()=>request('bindings.list'),diagnostics:()=>request('bindings.diagnostics'),get:name=>request('bindings.get',{name}),reload:()=>request('bindings.reload'),press:action=>request('binding.press',{action}),down:action=>request('binding.down',{action}),up:action=>request('binding.up',{action}),hold:(action,durationMs=1000)=>request('binding.hold',{action,durationMs})}),
  input:Object.freeze({tap:(key,options={})=>request('input.tap',{key,delayMs:options.delayMs||0,modifiers:options.modifiers||[]}),hold:(key,durationMs=250,options={})=>request('input.hold',{key,durationMs,modifiers:options.modifiers||[]}),text:(text,options={})=>request('input.text',{text,intervalMs:options.intervalMs??15})}),
  recorder:Object.freeze({status:()=>request('recorder.status'),start:()=>request('recorder.start'),stop:()=>request('recorder.stop'),subscribe:cb=>onEvent('recorder.input',cb)}),
@@ -245,11 +253,18 @@ window.Elite=Object.freeze({
  net:Object.freeze({fetch:(url,options={})=>request('net.fetch',{url,method:options.method||'GET',headers:options.headers||{},body:typeof options.body==='string'?options.body:(options.body==null?'':JSON.stringify(options.body))})}),
  data:Object.freeze({list:()=>request('elitefiles.list'),get:name=>request('elitefiles.get',{name}),subscribe:(name,cb)=>{const wanted=String(name||'*');return onEvent('eliteFile',payload=>{if(wanted==='*'||String(payload?.name||'').toLowerCase()===wanted.toLowerCase()||String(payload?.file||'').toLowerCase()===wanted.toLowerCase())cb(payload)})}}),
  store:Object.freeze({get:async(key,fallback=null)=>{const r=await request('tabstate.get',{key});return r?.found?r.value:fallback},set:(key,value)=>request('tabstate.set',{key,value}),delete:key=>request('tabstate.delete',{key}),clear:()=>request('tabstate.clear')}),
+ actions:Object.freeze({
+  register:async(name,handler,options={})=>{name=String(name||'').trim();if(!name)throw Object.assign(new Error('action name is required'),{code:'BAD_PARAMS'});if(typeof handler!=='function')throw Object.assign(new Error('action handler must be a function'),{code:'BAD_PARAMS'});actionHandlers.set(name,handler);try{await request('actions.register',{name,label:String(options.label||''),description:String(options.description||'')})}catch(error){if(actionHandlers.get(name)===handler)actionHandlers.delete(name);throw error}return async()=>{if(actionHandlers.get(name)===handler)actionHandlers.delete(name);try{return await request('actions.unregister',{name})}catch(error){if(error?.code!=='ACTION_NOT_FOUND')throw error;return{unregistered:true,name}}}},
+  unregister:async name=>{name=String(name||'').trim();actionHandlers.delete(name);return request('actions.unregister',{name})},
+  list:(options={})=>request('actions.list',{discover:options.discover!==false}),
+  invoke:(name,payload=null,options={})=>request('actions.invoke',{name:String(name||'').trim(),payload,timeoutMs:Number(options.timeoutMs)||15000,discover:options.discover!==false})
+ }),
+ tabs:Object.freeze({list:()=>request('tabs.sdk.list'),activate:target=>request('tabs.activate',{target:String(target||'')})}),
  locale:Object.freeze({get language(){return localeState.language},get supported(){return localeState.supported.map(x=>({...x}))},get:()=>request('locale.get'),t:(dictionary,key,vars={})=>localeTranslate(dictionary,key,vars),subscribe:cb=>{const off=onEvent('locale.changed',cb);queueMicrotask(()=>cb({...localeState,supported:localeState.supported.map(x=>({...x}))}));return off}}),
  files:Object.freeze({download:(name,data,options={})=>{const type=options.type||'text/plain;charset=utf-8';const body=(typeof data==='string'||data instanceof Blob)?data:JSON.stringify(data,null,options.compact?0:2);const blob=data instanceof Blob?data:new Blob([body],{type});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=String(name||'jacob-export.txt').replace(/[\\/:*?"<>|]+/g,'-');a.style.display='none';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1500);return{name:a.download,bytes:blob.size,type:blob.type}},json:(name,value,compact=false)=>Elite.files.download(name,value,{type:'application/json',compact})}),
  events:Object.freeze({subscribe:onEvent}), journal:Object.freeze({files:()=>request('journal.files'),read:(options={})=>request('journal.read',{file:options.file||'',event:options.event||'',offset:options.offset||0,limit:options.limit||1000}),subscribe:(eventName,cb)=>{const sub={eventName,cb};journalSubs.push(sub);return()=>{const i=journalSubs.indexOf(sub);if(i>=0)journalSubs.splice(i,1)}}})
 });
-addEventListener('message',ev=>{const m=ev.data;if(!m||m.channel!=='jacob-host')return;if(m.kind==='response'){const p=pending.get(m.id);if(!p)return;pending.delete(m.id);m.ok?p.resolve(m.result):p.reject(Object.assign(new Error(m.error?.message||'JACoB error'),{code:m.error?.code}));return}if(m.kind==='event'){if(m.event==='locale.changed'&&m.data)localeState={language:m.data.language||localeState.language,supported:Array.isArray(m.data.supported)&&m.data.supported.length?m.data.supported:localeState.supported};if(m.event==='core.hello'&&m.data?.locale)localeState={language:m.data.locale.language||localeState.language,supported:Array.isArray(m.data.locale.supported)&&m.data.locale.supported.length?m.data.locale.supported:localeState.supported};const set=eventSubs.get(m.event);if(set)for(const cb of set)try{cb(m.data)}catch(e){console.error(e)};const all=eventSubs.get('*');if(all)for(const cb of all)try{cb(m.event,m.data)}catch(e){console.error(e)};if(m.event==='journal')for(const sub of [...journalSubs])if(sub.eventName==='*'||sub.eventName===m.data?.event)try{sub.cb(m.data)}catch(e){console.error(e)}}});
+addEventListener('message',ev=>{const m=ev.data;if(!m||m.channel!=='jacob-host')return;if(m.kind==='response'){const p=pending.get(m.id);if(!p)return;pending.delete(m.id);m.ok?p.resolve(m.result):p.reject(Object.assign(new Error(m.error?.message||'JACoB error'),{code:m.error?.code}));return}if(m.kind==='action-invoke'){const handler=actionHandlers.get(String(m.action||''));if(!handler){parent.postMessage({channel:'jacob-tab',kind:'action-result',id:m.id,ok:false,error:{code:'ACTION_NOT_FOUND',message:'registered action is unavailable'}},'*');return}Promise.resolve().then(()=>handler(m.payload,{action:m.action,caller:m.caller||null})).then(result=>parent.postMessage({channel:'jacob-tab',kind:'action-result',id:m.id,ok:true,result},'*')).catch(error=>parent.postMessage({channel:'jacob-tab',kind:'action-result',id:m.id,ok:false,error:{code:String(error?.code||'ACTION_FAILED'),message:String(error?.message||error||'action failed')}},'*'));return}if(m.kind==='event'){if(m.event==='locale.changed'&&m.data)localeState={language:m.data.language||localeState.language,supported:Array.isArray(m.data.supported)&&m.data.supported.length?m.data.supported:localeState.supported};if(m.event==='core.hello'&&m.data?.locale)localeState={language:m.data.locale.language||localeState.language,supported:Array.isArray(m.data.locale.supported)&&m.data.locale.supported.length?m.data.locale.supported:localeState.supported};const set=eventSubs.get(m.event);if(set)for(const cb of set)try{cb(m.data)}catch(e){console.error(e)};const all=eventSubs.get('*');if(all)for(const cb of all)try{cb(m.event,m.data)}catch(e){console.error(e)};if(m.event==='journal')for(const sub of [...journalSubs])if(sub.eventName==='*'||sub.eventName===m.data?.event)try{sub.cb(m.data)}catch(e){console.error(e)}}});
 parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
 
 
@@ -287,7 +302,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     const box=document.createElement('div');box.appendChild(frag);return box.innerHTML;
   }
   const defaultBrand='<strong>JACoB</strong><span>Journal Aligned Control Bridge</span>';
-  const defaultFooter='<span>JACoB Alpha 0.2.8</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';
+  const defaultFooter='<span>JACoB Alpha 0.2.10 · SDK 9</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';
   function applyAppearance(html=''){
     state.themeHTML=html||'';
     $('#jacob-user-theme').textContent='';
@@ -356,7 +371,8 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     recorder:{label:'Record Elite keyboard input',detail:'observe keyboard input only while Elite Dangerous is the foreground window'},
     overlay:{label:'Draw an Elite overlay',detail:'place graphics in JACoB’s game overlay'},
     video:{label:'View the Elite video feed',detail:'display the focus-gated Elite Dangerous capture stream'},
-    vision:{label:'Use derived game vision',detail:'receive feature points and motion measurements computed from Elite-only frames; raw pixels are never exposed'}
+    vision:{label:'Use derived game vision',detail:'receive feature points and motion measurements computed from Elite-only frames; raw pixels are never exposed'},
+    intertab:{label:'Control other JACoB tabs',detail:'invoke actions that other saved tabs explicitly publish through the JACoB action broker'}
   };
   function tabPermissionKey(frame){const id=frame?.dataset?.savedTabId||frame?.dataset?.overlayLayer||'preview';const version=frame?.dataset?.savedTabId?(savedTabMeta(id)?.updatedAt||'unknown'):'session';return `jacob-tab-permissions:${id}:${version}`}
   const previewPermissions=new WeakMap();
@@ -375,6 +391,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     if(method.startsWith('vision.'))return'vision';
     if(method==='recorder.start'||method==='recorder.stop')return'recorder';
     if(method==='overlay.set'||method==='overlay.clear')return'overlay';
+    if(method==='actions.invoke')return'intertab';
     if(method.startsWith('input.')||method.startsWith('binding.'))return'control';
     return'';
   }
@@ -434,7 +451,7 @@ Allow this capability on this browser?`);
   function handleEvent(kind,data){
     addStream(kind,data);
     if(kind==='core.hello'){
-      state.core=data;state.updating=false;if(data.locale)applyLocaleInfo(data.locale);if($('#quit-jacob'))$('#quit-jacob').hidden=!data.localClient;if($('#install-update'))$('#install-update').hidden=!data.localClient;$('#core-os').textContent=`${data.os}/${data.arch}`;$('#core-api').textContent=`v${data.apiVersion} (${data.product||'JACoB'} ${data.prototype})`;if($('#update-current'))$('#update-current').textContent=data.version||data.prototype||'—';
+      state.core=data;state.updating=false;if(data.locale)applyLocaleInfo(data.locale);if($('#quit-jacob'))$('#quit-jacob').hidden=!data.localClient;if($('#install-update'))$('#install-update').hidden=!data.localClient;$('#core-os').textContent=`${data.os}/${data.arch}`;$('#core-api').textContent=`v${data.apiVersion} (${data.product||'JACoB'} ${data.prototype})`;if($('#update-current'))$('#update-current').textContent=data.version||data.prototype||'—';queueUpdateCheckSoon();
       $('#binding-autofill').textContent=data.autoBind?`${data.autoBind.assigned||0} added / ${data.autoBind.scannedActions||0} scanned`:'—';
       $('#input-driver').textContent=`${data.input?.driver||'—'} / ${data.input?.enabled?'enabled':'disabled'}`;$('#capture-driver').textContent=`${data.capture?.driver||'—'} / ${data.capture?.available?'available':'unavailable'}`;if($('#overlay-driver'))$('#overlay-driver').textContent=`${data.overlay?.driver||'—'} / ${data.overlay?.available?'available':'unavailable'}`;
       $('#journal-dir').textContent=data.journalDir||tr('not detected');$('#bindings-file').textContent=data.bindingsFile||tr('not detected');if($('#home-journal-state'))$('#home-journal-state').textContent=data.journalDir?'Connected':tr('not detected');renderLAN(data.lan);if(data.health)renderHealth(data.health);
@@ -493,8 +510,44 @@ Allow this capability on this browser?`);
   }
   function seedFrame(frame){if(state.core)sendToFrame(frame,{channel:'jacob-host',kind:'event',event:'core.hello',data:sanitizedCoreForTab(state.core)});if(state.locale)sendToFrame(frame,{channel:'jacob-host',kind:'event',event:'locale.changed',data:state.locale});if(state.snapshot)sendToFrame(frame,{channel:'jacob-host',kind:'event',event:'state',data:state.snapshot})}
 
+  const frameReadyWaiters=new WeakMap();
+  function publicActionRecord(record){return{name:record.name,label:record.label||record.name,description:record.description||'',tabId:record.tabId,tabName:record.tabName||record.tabId}}
+  function actionError(code,message){return{code,message}}
+  function clearActionsForFrame(frame,reason='target tab reloaded'){
+    for(const [name,record] of [...state.actionRegistry])if(record.frame===frame)state.actionRegistry.delete(name);
+    for(const [id,pending] of [...state.actionInvocations])if(pending.targetFrame===frame){clearTimeout(pending.timer);state.actionInvocations.delete(id);pending.reject(actionError('ACTION_TARGET_RELOADED',reason))}
+  }
+  function markFrameReady(frame){frame.dataset.sdkReady='1';const waiters=frameReadyWaiters.get(frame)||[];frameReadyWaiters.delete(frame);for(const done of waiters)done(true)}
+  function waitForFrameReady(frame,timeoutMs=5000){if(frame?.dataset?.sdkReady==='1')return Promise.resolve(true);return new Promise(resolve=>{const list=frameReadyWaiters.get(frame)||[];let settled=false;const done=value=>{if(settled)return;settled=true;clearTimeout(timer);resolve(value)};list.push(done);frameReadyWaiters.set(frame,list);const timer=setTimeout(()=>done(false),timeoutMs)})}
+  function registerTabAction(frame,params={}){
+    const tabId=frame?.dataset?.savedTabId||'';if(!tabId)throw actionError('ACTION_PREVIEW','preview tabs cannot publish cross-tab actions');
+    const name=String(params.name||'').trim();if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(name))throw actionError('BAD_PARAMS','action name must be 1-96 letters, numbers, dots, colons, underscores, or hyphens');
+    const existing=state.actionRegistry.get(name);if(existing&&existing.frame!==frame)throw actionError('ACTION_CONFLICT',`action ${name} is already published by ${existing.tabName||existing.tabId}`);
+    const meta=savedTabMeta(tabId);const record={name,label:String(params.label||name).slice(0,120),description:String(params.description||'').slice(0,300),tabId,tabName:meta?.name||tabId,frame};state.actionRegistry.set(name,record);return publicActionRecord(record)
+  }
+  function unregisterTabAction(frame,name){name=String(name||'').trim();const existing=state.actionRegistry.get(name);if(!existing)throw actionError('ACTION_NOT_FOUND','registered action was not found');if(existing.frame!==frame)throw actionError('ACTION_NOT_OWNER','a tab may unregister only its own action');state.actionRegistry.delete(name);return{unregistered:true,name}}
+  async function discoverTabActions(){
+    if(state.actionDiscoveryDone)return;
+    if(state.actionDiscoveryPromise)return state.actionDiscoveryPromise;
+    state.actionDiscoveryPromise=(async()=>{const loads=state.savedTabs.map(async tab=>{try{await ensureSavedTabLoaded(tab.id);const frame=savedTabFrame(tab.id);if(frame)await waitForFrameReady(frame,5000)}catch{}});await Promise.all(loads);await new Promise(resolve=>setTimeout(resolve,100));state.actionDiscoveryDone=true})().finally(()=>{state.actionDiscoveryPromise=null});
+    return state.actionDiscoveryPromise
+  }
+  function listRegisteredActions(){return[...state.actionRegistry.values()].map(publicActionRecord).sort((a,b)=>a.name.localeCompare(b.name))}
+  function callerInfo(frame){const id=frame?.dataset?.savedTabId||'';const meta=id?savedTabMeta(id):null;return{id,tabId:id,tabName:meta?.name||(id?'Saved tab':'Tab preview')}}
+  async function invokeRegisteredAction(callerFrame,params={}){
+    const name=String(params.name||'').trim();if(!name)throw actionError('BAD_PARAMS','action name is required');
+    let record=state.actionRegistry.get(name);if(!record&&params.discover!==false){await discoverTabActions();record=state.actionRegistry.get(name)}
+    if(!record)throw actionError('ACTION_NOT_FOUND',`no loaded saved tab publishes ${name}`);
+    const timeoutMs=Math.max(500,Math.min(60000,Number(params.timeoutMs)||15000));const id=`action-${++state.actionSeq}-${Date.now()}`;
+    return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{state.actionInvocations.delete(id);reject(actionError('ACTION_TIMEOUT',`${name} did not finish within ${timeoutMs} ms`))},timeoutMs);state.actionInvocations.set(id,{resolve,reject,timer,targetFrame:record.frame});sendToFrame(record.frame,{channel:'jacob-host',kind:'action-invoke',id,action:name,payload:params.payload,caller:callerInfo(callerFrame)})})
+  }
+  function resolveSDKTabTarget(target){const raw=String(target||'').trim();if(!raw)return'';if(navigationOrder().includes(raw))return raw;const byId=state.savedTabs.find(tab=>tab.id===raw);if(byId)return navIDForTab(byId);const lower=raw.toLowerCase(),byName=state.savedTabs.find(tab=>String(tab.name||'').toLowerCase()===lower);if(byName)return navIDForTab(byName);for(const id of Object.keys(defaultNav))if(id.toLowerCase()===lower||navLabel(id).toLowerCase()===lower)return id;return''}
+  function sdkTabList(){const hidden=hiddenNavigation();return navigationOrder().map(id=>{const custom=id.startsWith('custom-'),tab=custom?tabForNavID(id):null;return{id:custom?tab?.id||id.slice(7):id,navId:id,name:navLabel(id),type:custom?'custom':'default',hidden:hidden.has(id),active:state.activeTab===id,loaded:custom?savedTabFrame(tab?.id||'')?.dataset?.sdkReady==='1':true}})}
+  async function activateSDKTab(target){const id=resolveSDKTabTarget(target);if(!id)throw actionError('TAB_NOT_FOUND','requested JACoB tab was not found');if(id.startsWith('custom-'))await ensureSavedTabLoaded(id.slice(7));switchTab(id);return{id,name:navLabel(id),hidden:hiddenNavigation().has(id)}}
+
   function switchTab(tabName){
     state.activeTab=tabName;
+    if(tabName==='settings')dismissSettingsUpdateBadge();
     document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.tab===tabName));
     document.querySelectorAll('.panel-page').forEach(x=>x.classList.toggle('active',x.id===tabName));
     if(tabName.startsWith('custom-'))ensureSavedTabLoaded(tabName.slice(7)).catch(e=>showSavedTabLoadError(tabName.slice(7),e));
@@ -502,7 +555,6 @@ Allow this capability on this browser?`);
   function wireNavButton(btn){btn.onclick=()=>switchTab(btn.dataset.tab)}
 
   const defaultNav={dashboard:'Home',tabmanager:'Tab Manager',tutorial:'Tutorial',settings:'Settings'};
-  const hideableDefaults=new Set(['dashboard','tutorial','settings']);
   function navIDForTab(tab){return `custom-${tab.id}`}
   function tabForNavID(id){return state.savedTabs.find(t=>navIDForTab(t)===id)}
   function navLabel(id){return defaultNav[id]?tr(defaultNav[id]):tabForNavID(id)?.name||id}
@@ -513,12 +565,12 @@ Allow this capability on this browser?`);
     for(const id of expected)if(!seen.has(id)){out.push(id);seen.add(id)}
     return out;
   }
-  function hiddenDefaults(){return new Set(state.navLayout?.hiddenDefaults||[])}
+  function hiddenNavigation(){return new Set(state.navLayout?.hiddenDefaults||[])}
   function renderNavigation(){
-    const nav=$('#nav-items');if(!nav)return;nav.innerHTML='';const hidden=hiddenDefaults();
+    const nav=$('#nav-items');if(!nav)return;nav.innerHTML='';const hidden=hiddenNavigation();
     for(const id of navigationOrder()){
       if(hidden.has(id)&&id!=='tabmanager')continue;
-      const btn=document.createElement('button');btn.className='nav';btn.dataset.tab=id;btn.textContent=navLabel(id);btn.title=navLabel(id);wireNavButton(btn);nav.appendChild(btn);
+      const btn=document.createElement('button');btn.className='nav';btn.dataset.tab=id;btn.textContent=navLabel(id);btn.title=navLabel(id);if(id==='settings')decorateSettingsUpdateBadge(btn);wireNavButton(btn);nav.appendChild(btn);
     }
     document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.tab===state.activeTab));
   }
@@ -526,15 +578,15 @@ Allow this capability on this browser?`);
     try{state.navLayout=await request('tabs.layout.save',{order,hiddenDefaults:hidden});renderNavigation();renderNavigationManager();if(hidden.includes(state.activeTab)&&state.activeTab!=='tabmanager')switchTab('tabmanager');$('#navigation-result').textContent=tr('Navigation manifest saved.')}
     catch(e){$('#navigation-result').textContent=pretty(e)}
   }
-  function moveNavigation(id,delta){const order=navigationOrder(),i=order.indexOf(id),j=i+delta;if(i<0||j<0||j>=order.length)return;[order[i],order[j]]=[order[j],order[i]];persistNavigation(order,[...hiddenDefaults()])}
-  function toggleDefaultNavigation(id){if(!hideableDefaults.has(id))return;const hidden=hiddenDefaults();hidden.has(id)?hidden.delete(id):hidden.add(id);persistNavigation(navigationOrder(),[...hidden])}
+  function moveNavigation(id,delta){const order=navigationOrder(),i=order.indexOf(id),j=i+delta;if(i<0||j<0||j>=order.length)return;[order[i],order[j]]=[order[j],order[i]];persistNavigation(order,[...hiddenNavigation()])}
+  function toggleNavigationVisibility(id){if(id==='tabmanager'||!navigationOrder().includes(id))return;const hidden=hiddenNavigation();hidden.has(id)?hidden.delete(id):hidden.add(id);persistNavigation(navigationOrder(),[...hidden])}
   function renderNavigationManager(){
-    const box=$('#navigation-list');if(!box)return;box.innerHTML='';const order=navigationOrder(),hidden=hiddenDefaults();
-    order.forEach((id,index)=>{const row=document.createElement('div');row.className='saved-tab-row';const meta=document.createElement('div');meta.className='saved-tab-meta';const custom=id.startsWith('custom-');meta.innerHTML=`<strong${custom?' data-jacob-no-i18n="true"':''}>${escapeHTML(navLabel(id))}</strong><span class="muted">${custom?tr('Custom tab'):id==='tabmanager'?tr('Default · required'):(hidden.has(id)?tr('Default · hidden'):tr('Default'))}</span>`;const actions=document.createElement('div');actions.className='row';const up=document.createElement('button');up.className='secondary compact-button';up.textContent='↑';up.title=tr('Move up');up.disabled=index===0;up.onclick=()=>moveNavigation(id,-1);const down=document.createElement('button');down.className='secondary compact-button';down.textContent='↓';down.title=tr('Move down');down.disabled=index===order.length-1;down.onclick=()=>moveNavigation(id,1);actions.append(up,down);if(!custom){const visibility=document.createElement('button');visibility.className='secondary';if(id==='tabmanager'){visibility.textContent=tr('Required');visibility.disabled=true}else{visibility.textContent=hidden.has(id)?tr('Show'):tr('Hide');visibility.onclick=()=>toggleDefaultNavigation(id)}actions.appendChild(visibility)}row.append(meta,actions);box.appendChild(row)});localizeDOM(box);
+    const box=$('#navigation-list');if(!box)return;box.innerHTML='';const order=navigationOrder(),hidden=hiddenNavigation();
+    order.forEach((id,index)=>{const row=document.createElement('div');row.className='saved-tab-row';const meta=document.createElement('div');meta.className='saved-tab-meta';const custom=id.startsWith('custom-'),isHidden=hidden.has(id);meta.innerHTML=`<strong${custom?' data-jacob-no-i18n="true"':''}>${escapeHTML(navLabel(id))}</strong><span class="muted">${id==='tabmanager'?tr('Default · required'):(custom?(isHidden?tr('Custom tab · hidden'):tr('Custom tab')):(isHidden?tr('Default · hidden'):tr('Default')))}</span>`;const actions=document.createElement('div');actions.className='row';const up=document.createElement('button');up.className='secondary compact-button';up.textContent='↑';up.title=tr('Move up');up.disabled=index===0;up.onclick=()=>moveNavigation(id,-1);const down=document.createElement('button');down.className='secondary compact-button';down.textContent='↓';down.title=tr('Move down');down.disabled=index===order.length-1;down.onclick=()=>moveNavigation(id,1);actions.append(up,down);const visibility=document.createElement('button');visibility.className='secondary';if(id==='tabmanager'){visibility.textContent=tr('Required');visibility.disabled=true}else{visibility.textContent=isHidden?tr('Show'):tr('Hide');visibility.onclick=()=>toggleNavigationVisibility(id)}actions.appendChild(visibility);row.append(meta,actions);box.appendChild(row)});localizeDOM(box);
   }
 
   async function loadSavedTabs(){
-    const result=await request('tabs.list');state.savedTabs=result.tabs||[];state.navLayout=result.layout||{order:[],hiddenDefaults:[]};
+    const before=state.savedTabs.map(t=>`${t.id}:${t.updatedAt||''}`).join('|');const result=await request('tabs.list');state.savedTabs=result.tabs||[];state.navLayout=result.layout||{order:[],hiddenDefaults:[]};const after=state.savedTabs.map(t=>`${t.id}:${t.updatedAt||''}`).join('|');if(before!==after)state.actionDiscoveryDone=false;
     const live=new Set(state.savedTabs.map(t=>t.id));
     for(const id of [...state.tabHTMLCache.keys()])if(!live.has(id))state.tabHTMLCache.delete(id);
     renderSavedTabs();return state.savedTabs;
@@ -542,7 +594,7 @@ Allow this capability on this browser?`);
   function savedTabMeta(id){return state.savedTabs.find(t=>t.id===id)}
   function savedTabFrame(id){return document.getElementById(`custom-${id}`)?.querySelector('iframe.jacob-sdk-frame')||null}
   function showSavedTabLoadError(id,error){const frame=savedTabFrame(id);if(!frame)return;const msg=escapeHTML(error?.message||error?.code||'Could not load saved tab');frame.srcdoc=`<!doctype html><body style="background:#080b0d;color:#eee;font:14px system-ui;padding:20px"><h2>Tab load failed</h2><pre style="white-space:pre-wrap">${msg}</pre></body>`;frame.dataset.updatedAt=''}
-  function applySavedTabHTML(tab){const frame=savedTabFrame(tab.id);if(!frame)return;if(frame.dataset.updatedAt===String(tab.updatedAt||''))return;frame.dataset.updatedAt=tab.updatedAt||'';frame.srcdoc=composeTabHTML(tab.html||'')}
+  function applySavedTabHTML(tab){const frame=savedTabFrame(tab.id);if(!frame)return;if(frame.dataset.updatedAt===String(tab.updatedAt||''))return;clearActionsForFrame(frame);frame.dataset.sdkReady='';frame.dataset.updatedAt=tab.updatedAt||'';frame.srcdoc=composeTabHTML(tab.html||'')}
   async function ensureSavedTabLoaded(id){
     const meta=savedTabMeta(id);if(!meta)throw{code:'TAB_NOT_FOUND',message:'saved tab not found'};
     const cached=state.tabHTMLCache.get(id);
@@ -556,19 +608,19 @@ Allow this capability on this browser?`);
     let active=state.activeTab;
     list.innerHTML='';$('#saved-tab-count').textContent=String(state.savedTabs.length);if($('#home-tab-count'))$('#home-tab-count').textContent=String(state.savedTabs.length);
     const wanted=new Set(state.savedTabs.map(t=>`custom-${t.id}`));
-    for(const existing of [...pages.querySelectorAll('.custom-user-page')])if(!wanted.has(existing.id))existing.remove();
+    for(const existing of [...pages.querySelectorAll('.custom-user-page')])if(!wanted.has(existing.id)){const frame=existing.querySelector('iframe.jacob-sdk-frame');if(frame)clearActionsForFrame(frame,'target tab was removed');existing.remove()}
     for(const tab of state.savedTabs){
       const pageID=`custom-${tab.id}`;
       let section=document.getElementById(pageID);let iframe=section?.querySelector('iframe.jacob-sdk-frame');
       if(!section){section=document.createElement('section');section.id=pageID;section.className='panel-page custom-user-page';iframe=document.createElement('iframe');iframe.className='jacob-sdk-frame saved-tab-frame';iframe.sandbox='allow-scripts allow-downloads';iframe.dataset.savedTabId=tab.id;section.appendChild(iframe);pages.appendChild(section)}
       const cached=state.tabHTMLCache.get(tab.id);
-      if(cached&&cached.updatedAt===tab.updatedAt)applySavedTabHTML({...tab,html:cached.html});else if(iframe.dataset.updatedAt&&iframe.dataset.updatedAt!==String(tab.updatedAt||'')){iframe.removeAttribute('srcdoc');iframe.dataset.updatedAt=''}
+      if(cached&&cached.updatedAt===tab.updatedAt)applySavedTabHTML({...tab,html:cached.html});else if(iframe.dataset.updatedAt&&iframe.dataset.updatedAt!==String(tab.updatedAt||'')){clearActionsForFrame(iframe);iframe.removeAttribute('srcdoc');iframe.dataset.sdkReady='';iframe.dataset.updatedAt=''}
       const size=Number(tab.sizeBytes||0);const sizeLabel=size?` · ${size>=1024*1024?(size/1024/1024).toFixed(2)+' MB':(size/1024).toFixed(1)+' KB'}`:'';
       const row=document.createElement('div');row.className='saved-tab-row';const meta=document.createElement('div');meta.className='saved-tab-meta';meta.innerHTML=`<strong>${escapeHTML(tab.name)}</strong><span class="muted mono">${escapeHTML(tab.id)}${sizeLabel}</span>`;const actions=document.createElement('div');actions.className='row';const open=document.createElement('button');open.textContent=tr('Open');open.onclick=()=>switchTab(pageID);const edit=document.createElement('button');edit.textContent=tr('Edit');edit.className='secondary';edit.onclick=()=>editSavedTab(tab.id);const perms=document.createElement('button');perms.textContent='Reset permissions';perms.className='secondary';perms.title='Forget permissions granted to this tab on this browser';perms.onclick=()=>{if(confirm(`Reset permissions for \"${tab.name}\" on this browser?`)){resetTabPermissions(tab.id);$('#tab-manager-result').textContent=`Permissions reset for ${tab.name}. The tab will ask again when it needs sensitive access.`}};const del=document.createElement('button');del.textContent=tr('Remove');del.className='danger';del.onclick=()=>deleteSavedTab(tab.id);actions.append(open,edit,perms,del);row.append(meta,actions);list.appendChild(row);
     }
     if(!state.savedTabs.length)list.innerHTML=`<div class="muted empty-state">${escapeHTML(tr('No saved tabs in the manifest.'))}</div>`;
     localizeDOM(list);renderNavigation();renderNavigationManager();
-    if(hiddenDefaults().has(active)&&active!=='tabmanager')active=navigationOrder().find(id=>id==='tabmanager'||!hiddenDefaults().has(id))||'tabmanager';
+    if(hiddenNavigation().has(active)&&active!=='tabmanager')active=navigationOrder().find(id=>id==='tabmanager'||!hiddenNavigation().has(id))||'tabmanager';
     if(active.startsWith('custom-')&&!document.getElementById(active))switchTab('tabmanager');else switchTab(active);
   }
 
@@ -620,17 +672,17 @@ Allow this capability on this browser?`);
   $('#press-binding').onclick=async()=>{try{$('#binding-detail').textContent=pretty(await request('binding.press',{action:$('#binding-action').value}))}catch(e){$('#binding-detail').textContent=pretty(e)}};
   $('#save-token').onclick=()=>{const t=$('#remote-token').value.trim();if(t)localStorage.setItem('jacob-pair-token',t);else localStorage.removeItem('jacob-pair-token');$('#network-result').textContent=tr('Pair token saved. Reconnecting…');stopVideo();connect()};
 
-  async function checkForUpdates(){
-    const out=$('#update-result'),btn=$('#check-update'),install=$('#install-update');btn.disabled=true;install.disabled=true;out.textContent=tr('Querying the release channel…');
-    try{const info=await request('update.check');state.updateInfo=info;$('#update-latest').textContent=info.latestVersion||'—';if(info.available){out.textContent=`${info.releaseName||('JACoB '+info.latestVersion)} is available.${info.installable?' Ready for installation.':' '+(info.installNote||'Manual installation required.')}`;install.disabled=!(info.installable&&state.core?.localClient)}else{out.textContent=tr('Current release confirmed. No newer published build was found.')}}
-    catch(e){out.textContent=e?.message||pretty(e)}finally{btn.disabled=false}
+  async function checkForUpdates({quiet=false}={}){
+    const out=$('#update-result'),btn=$('#check-update'),install=$('#install-update');if(!state.socket||state.socket.readyState!==WebSocket.OPEN)return;if(quiet&&!state.core?.localClient)return;if(!quiet){btn.disabled=true;install.disabled=true;out.textContent=tr('Querying the release channel…')}
+    try{const info=await request('update.check');state.updateInfo=info;$('#update-latest').textContent=info.latestVersion||'—';install.disabled=!(info.available&&info.installable&&state.core?.localClient);if(info.available&&state.activeTab==='settings'&&info.latestVersion){try{localStorage.setItem(UPDATE_BADGE_KEY,String(info.latestVersion))}catch{}}renderNavigation();if(info.available){out.textContent=`${info.releaseName||('JACoB '+info.latestVersion)} is available.${info.installable?' Ready for installation.':' '+(info.installNote||'Manual installation required.')}`}else{out.textContent=tr('Current release confirmed. No newer published build was found.')}}
+    catch(e){if(!quiet)out.textContent=e?.message||pretty(e)}finally{if(!quiet)btn.disabled=false}
   }
   async function installUpdate(){
     const info=state.updateInfo;if(!info?.available)return;if(!confirm(`Install JACoB ${info.latestVersion}?\n\nJACoB will restart after the update is staged.`))return;
     const btn=$('#install-update');btn.disabled=true;state.updating=true;$('#update-result').textContent=tr('Downloading update package…');
     try{const r=await request('update.install');$('#update-result').textContent=`Installing ${r.version||info.latestVersion}…`;$('#connection').textContent=tr('UPDATING')}catch(e){state.updating=false;btn.disabled=false;$('#update-result').textContent=e?.message||pretty(e)}
   }
-  $('#check-update').onclick=checkForUpdates;$('#install-update').onclick=installUpdate;
+  $('#check-update').onclick=()=>checkForUpdates({quiet:false});$('#install-update').onclick=installUpdate;
 
   function setVideoState(on,msg=''){const el=$('#video-state');el.textContent=on?tr('STREAMING'):tr('STOPPED');el.className=`status-mark ${on?'online':'offline'}`;if(msg)$('#video-result').textContent=msg}
   function startVideo(){if(state.core?.capture&&!state.core.capture.available){setVideoState(false,`Capture unavailable: ${state.core.capture.driver}`);return}const opts={width:Number($('#video-width').value),fps:Number($('#video-fps').value),quality:Number($('#video-quality').value)};$('#game-view-img').src=videoURL(opts);setVideoState(true,pretty({mode:'mjpeg',...opts,url:'authenticated local/LAN stream'}))}
@@ -651,9 +703,16 @@ Allow this capability on this browser?`);
   addEventListener('message',async ev=>{
     const frame=allSDKFrames().find(f=>f.contentWindow===ev.source);if(!frame)return;
     const m=ev.data;if(!m||m.channel!=='jacob-tab')return;
-    if(m.kind==='ready'){seedFrame(frame);return}
+    if(m.kind==='ready'){markFrameReady(frame);seedFrame(frame);return}
+    if(m.kind==='action-result'){const pending=state.actionInvocations.get(m.id);if(!pending||pending.targetFrame!==frame)return;clearTimeout(pending.timer);state.actionInvocations.delete(m.id);m.ok?pending.resolve(m.result):pending.reject(m.error||actionError('ACTION_FAILED','action failed'));return}
     if(m.kind==='request'){
       if(!allowTabRequest(frame,m.method)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'RATE_LIMITED',message:'custom-tab request rate exceeded'}});return}
+      if(m.method==='actions.register'){try{const result=registerTabAction(frame,m.params);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}return}
+      if(m.method==='actions.unregister'){try{const result=unregisterTabAction(frame,m.params?.name);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}return}
+      if(m.method==='actions.list'){try{if(m.params?.discover!==false)await discoverTabActions();sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result:{actions:listRegisteredActions()}})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}return}
+      if(m.method==='actions.invoke'){if(!requireTabCapability(frame,'intertab')){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:'inter-tab control permission was not granted'}});return}try{const result=await invokeRegisteredAction(frame,m.params);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}return}
+      if(m.method==='tabs.sdk.list'){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result:{tabs:sdkTabList()}});return}
+      if(m.method==='tabs.activate'){try{const result=await activateSDKTab(m.params?.target);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}return}
       if(m.method==='video.url'){
         if(!requireTabCapability(frame,'video')){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:'video permission was not granted'}});return}
         sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result:videoURL(m.params||{})});return
@@ -684,5 +743,6 @@ Allow this capability on this browser?`);
   }
 
   ensurePairUI();
+  startPeriodicUpdateChecks();
   connect();
 })();

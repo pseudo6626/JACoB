@@ -17,7 +17,6 @@ import (
 const maxHTMLBytes = 1024 * 1024
 
 var defaultNavIDs = []string{"dashboard", "tabmanager", "tutorial", "settings"}
-var hideableDefaultNavIDs = map[string]bool{"dashboard": true, "tutorial": true, "settings": true}
 
 type Tab struct {
 	ID        string `json:"id"`
@@ -290,7 +289,7 @@ func (s *Store) normalizedLayoutLocked() Layout {
 	hiddenSeen := map[string]bool{}
 	for _, id := range s.layout.HiddenDefaults {
 		id = strings.TrimSpace(id)
-		if hideableDefaultNavIDs[id] && !hiddenSeen[id] {
+		if valid[id] && id != "tabmanager" && !hiddenSeen[id] {
 			hidden = append(hidden, id)
 			hiddenSeen[id] = true
 		}

@@ -6,21 +6,34 @@ import (
 )
 
 const (
-	Version    = "0.2.8-alpha"
-	Display    = "Alpha 0.2.8 SDK7 Hotfix4"
+	Version    = "0.2.10-alpha"
+	Display    = "Alpha 0.2.10 SDK9 Recovery"
 	Repository = "pseudo6626/JACoB"
 )
 
 // CompareVersion compares dotted semantic-ish versions used by JACoB.
-// It returns 1 when a>b, -1 when a<b, and 0 when they are equivalent.
+// Numeric core components are compared left to right, so future recovery
+// versions such as 0.2.10.1 remain meaningful. A release without a prerelease
+// suffix sorts after the same numeric version with a suffix.
 func CompareVersion(a, b string) int {
-	amaj, amin, apat, apre := parseVersion(a)
-	bmaj, bmin, bpat, bpre := parseVersion(b)
-	for _, pair := range [][2]int{{amaj, bmaj}, {amin, bmin}, {apat, bpat}} {
-		if pair[0] > pair[1] {
+	acore, apre := parseVersion(a)
+	bcore, bpre := parseVersion(b)
+	n := len(acore)
+	if len(bcore) > n {
+		n = len(bcore)
+	}
+	for i := 0; i < n; i++ {
+		av, bv := 0, 0
+		if i < len(acore) {
+			av = acore[i]
+		}
+		if i < len(bcore) {
+			bv = bcore[i]
+		}
+		if av > bv {
 			return 1
 		}
-		if pair[0] < pair[1] {
+		if av < bv {
 			return -1
 		}
 	}
@@ -36,19 +49,20 @@ func CompareVersion(a, b string) int {
 	if apre > bpre {
 		return 1
 	}
-	if apre < bpre {
-		return -1
-	}
-	return 0
+	return -1
 }
 
-func parseVersion(v string) (int, int, int, string) {
+func parseVersion(v string) ([]int, string) {
 	v = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(v, "v"), "V"))
 	core, pre, _ := strings.Cut(v, "-")
 	parts := strings.Split(core, ".")
-	vals := [3]int{}
-	for i := 0; i < len(parts) && i < len(vals); i++ {
-		vals[i], _ = strconv.Atoi(parts[i])
+	values := make([]int, 0, len(parts))
+	for _, part := range parts {
+		n, _ := strconv.Atoi(part)
+		values = append(values, n)
 	}
-	return vals[0], vals[1], vals[2], strings.ToLower(pre)
+	for len(values) > 1 && values[len(values)-1] == 0 {
+		values = values[:len(values)-1]
+	}
+	return values, strings.ToLower(pre)
 }

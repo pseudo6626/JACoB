@@ -3,14 +3,19 @@ package platform
 import "sync"
 
 type RecordedInputEvent struct {
-	PressID    uint64   `json:"pressId"`
-	Type       string   `json:"type"`
-	Key        string   `json:"key"`
-	Modifiers  []string `json:"modifiers,omitempty"`
-	AtMs       int64    `json:"atMs"`
-	DeltaMs    int64    `json:"deltaMs"`
-	DurationMs int64    `json:"durationMs,omitempty"`
-	IsModifier bool     `json:"isModifier,omitempty"`
+	PressID       uint64   `json:"pressId"`
+	Type          string   `json:"type"`
+	Key           string   `json:"key"`
+	Physical      string   `json:"physical,omitempty"`
+	LocalizedName string   `json:"localizedName,omitempty"`
+	ScanCode      uint32   `json:"scanCode,omitempty"`
+	VirtualKey    uint32   `json:"virtualKey,omitempty"`
+	Extended      bool     `json:"extended,omitempty"`
+	Modifiers     []string `json:"modifiers,omitempty"`
+	AtMs          int64    `json:"atMs"`
+	DeltaMs       int64    `json:"deltaMs"`
+	DurationMs    int64    `json:"durationMs,omitempty"`
+	IsModifier    bool     `json:"isModifier,omitempty"`
 }
 
 type RecorderStatus struct {

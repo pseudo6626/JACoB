@@ -95,7 +95,7 @@ type apiError struct {
 
 func New(cfg Config) *Server {
 	if cfg.LANEnabled && cfg.PairToken == "" {
-		token, err := secureRandomToken()
+		token, err := persistentPairToken(cfg.DataDir)
 		if err != nil {
 			log.Printf("JACoB LAN access disabled because a secure pairing token could not be generated: %v", err)
 			cfg.LANEnabled = false
@@ -952,7 +952,7 @@ func (s *Server) systemInfo(includeSecret bool) map[string]any {
 	// token. A tab with Video permission must never receive a WebSocket credential.
 	mediaToken := s.mediaToken
 	return map[string]any{
-		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 7, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken,
+		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 9, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken,
 		"journalDir": journalDir, "bindingsDir": bindingsDir, "bindingsFile": bindingsFile, "bindingsFiles": bindingsFiles, "bindingsSource": s.bindings.ActiveSource(), "bindingsCount": len(s.bindings.ListActions()), "autoBind": s.autoBind,
 		"input": map[string]any{"enabled": s.cfg.EnableInput, "available": s.input.Available(), "driver": s.input.Name()}, "recorder": s.recorder.Status(), "capture": map[string]any{"available": s.capture.Available(), "driver": s.capture.Name(), "eliteOnly": true, "foregroundOnly": true}, "vision": func() map[string]any {
 			if s.vision != nil {
@@ -1429,4 +1429,34 @@ func localIPv4s() []string {
 		}
 	}
 	return out
+}
+
+func persistentPairToken(dataDir string) (string, error) {
+	path := filepath.Join(dataDir, "pairing-token.txt")
+	if b, err := os.ReadFile(path); err == nil {
+		token := strings.TrimSpace(string(b))
+		if len(token) >= 16 {
+			return token, nil
+		}
+	}
+	token, err := secureRandomToken()
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(dataDir) == "" {
+		return token, nil
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return "", err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(token+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	_ = os.Remove(path)
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	return token, nil
 }

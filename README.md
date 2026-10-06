@@ -1,6 +1,6 @@
 # JACoB — Journal Aligned Control Bridge
 
-> Current field build: **0.2.4 Alpha**
+> Current field build: **0.2.10 Alpha · SDK 9**
 
 JACoB is a local companion bridge for **Elite Dangerous**. It reads the live journal and `Status.json`, resolves control bindings, sends game input, hosts persistent custom HTML tabs, supplies a game-view stream, renders native HUD overlays, exports tab-generated files, and provides bounded access to public web APIs.
 
@@ -32,7 +32,7 @@ The standard console carries:
 - **Tutorial** — first-run operating notes
 - **Settings** — appearance, LAN access, software updates, bindings, capture, and diagnostics
 
-Home, Tutorial, and Settings may be removed from the navigation bar through Tab Manager. Tab Manager remains present as the recovery point.
+Any default or custom tab may be hidden from the navigation bar through Tab Manager. Hidden custom tabs remain installed and can keep running in the background. Tab Manager remains present as the recovery point.
 
 ## Release channel
 
@@ -46,8 +46,14 @@ The full custom-tab contract is recorded in:
 
 [`docs/JACOB_CUSTOM_TAB_REFERENCE.md`](docs/JACOB_CUSTOM_TAB_REFERENCE.md)
 
-SDK / protocol version **2** adds:
+SDK / protocol version **9** includes:
 
+- host-brokered cross-tab actions through `Elite.actions`, allowing tools such as Touch Deck to invoke actions explicitly published by another saved tab
+- `Elite.tabs.list()` / `Elite.tabs.activate()` for safe host-mediated tab discovery and navigation
+- navigation visibility for saved custom tabs as well as default pages; hidden tabs remain installed
+- physical scan-code tokens (`SC:xx` / `SC:E0:xx`) for layout-independent keyboard control and recorder replay
+- layout-aware Unicode text entry, including AltGr/international layouts where the host supports it
+- richer recorder events with physical scan code, virtual key, extended-key flag, and localized key label
 - `Elite.files.download()` and `Elite.files.json()` for browser file exports
 - `Elite.net.fetch()` for bounded `GET` and `POST` requests to public HTTP/HTTPS APIs
 

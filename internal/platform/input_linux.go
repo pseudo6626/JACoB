@@ -108,34 +108,6 @@ func verifyLinuxEliteForeground() error {
 	return fmt.Errorf("Elite Dangerous is not verified as the foreground window; Linux input was blocked for safety")
 }
 
-func parseXWindowID(s string) string {
-	for _, field := range strings.Fields(s) {
-		f := strings.Trim(field, " ,\t\r\n")
-		if strings.HasPrefix(strings.ToLower(f), "0x") {
-			if _, err := strconv.ParseUint(strings.TrimPrefix(strings.ToLower(f), "0x"), 16, 64); err == nil {
-				return f
-			}
-		}
-	}
-	return ""
-}
-
-func parseXPropPID(s string) int {
-	for _, line := range strings.Split(s, "\n") {
-		if !strings.Contains(line, "_NET_WM_PID") {
-			continue
-		}
-		i := strings.LastIndex(line, "=")
-		if i < 0 {
-			continue
-		}
-		if pid, err := strconv.Atoi(strings.TrimSpace(line[i+1:])); err == nil {
-			return pid
-		}
-	}
-	return 0
-}
-
 func linuxPIDTreeIsElite(pid int) bool {
 	for depth := 0; depth < 8 && pid > 1; depth++ {
 		cmdline, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
@@ -199,13 +171,13 @@ func (l *linuxInput) resolveChordLocked(key string, modifiers []string) (uint16,
 	}
 	mods := make([]uint16, 0, len(modifiers))
 	for _, m := range modifiers {
-		code, ok := evdevKey(m)
+		code, ok := resolveLinuxKey(m)
 		if !ok {
 			return 0, nil, fmt.Errorf("unsupported Linux key %q", m)
 		}
 		mods = append(mods, code)
 	}
-	main, ok := evdevKey(key)
+	main, ok := resolveLinuxKey(key)
 	if !ok {
 		return 0, nil, fmt.Errorf("unsupported Linux key %q", key)
 	}
@@ -325,4 +297,77 @@ func evdevKey(key string) (uint16, bool) {
 	}
 	v, ok := m[k]
 	return v, ok
+}
+
+func resolveLinuxKey(key string) (uint16, bool) {
+	if physical, ok := ParsePhysicalKeyToken(key); ok {
+		return set1ScanToEvdev(physical)
+	}
+	return evdevKey(key)
+}
+
+// set1ScanToEvdev translates the canonical PC/AT set-1 physical identity used
+// by JACoB into Linux input-event key codes. The base keyboard block largely
+// retains the same numeric positions; extended/navigation and international
+// keys need explicit translation.
+func set1ScanToEvdev(k PhysicalKey) (uint16, bool) {
+	if !k.Extended {
+		if k.Scan >= 0x01 && k.Scan <= 0x58 {
+			return k.Scan, true
+		}
+		switch k.Scan {
+		case 0x70: // JIS Kana / Katakana-Hiragana
+			return 93, true
+		case 0x73: // JIS Ro / ISO international position
+			return 89, true
+		case 0x79: // JIS Henkan / Convert
+			return 92, true
+		case 0x7B: // JIS Muhenkan / Non-convert
+			return 94, true
+		case 0x7D: // JIS Yen
+			return 124, true
+		case 0x7E: // ABNT/JIS keypad comma position
+			return 121, true
+		}
+		return 0, false
+	}
+	switch k.Scan {
+	case 0x1C:
+		return 96, true // keypad enter
+	case 0x1D:
+		return 97, true // right ctrl
+	case 0x35:
+		return 98, true // keypad slash
+	case 0x37:
+		return 99, true // print/sysrq
+	case 0x38:
+		return 100, true // right alt / AltGr
+	case 0x47:
+		return 102, true
+	case 0x48:
+		return 103, true
+	case 0x49:
+		return 104, true
+	case 0x4B:
+		return 105, true
+	case 0x4D:
+		return 106, true
+	case 0x4F:
+		return 107, true
+	case 0x50:
+		return 108, true
+	case 0x51:
+		return 109, true
+	case 0x52:
+		return 110, true
+	case 0x53:
+		return 111, true
+	case 0x5B:
+		return 125, true // left meta
+	case 0x5C:
+		return 126, true // right meta
+	case 0x5D:
+		return 127, true // menu/compose
+	}
+	return 0, false
 }
