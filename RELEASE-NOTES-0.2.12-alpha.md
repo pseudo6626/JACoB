@@ -22,7 +22,7 @@ Existing installations that previously chose no recorder retain the privacy choi
 - SDK/API version: 10.
 - JACoB version: 0.2.12-alpha.
 - Existing SDK 9 tabs remain compatible.
-- Vision regions in SDK 10 are screen-relative. Anchor-relative tracking is deferred to SDK 10.x.
+- Vision regions in SDK 10 are normalized to the canonical Elite client frame. Moving or resizing the Elite window on the desktop does not change the region coordinate system. Anchor-relative tracking for HUD elements that move inside the game view is deferred to SDK 10.x.
 
 - Vision calibration now uses an automatic frozen-frame workflow on Windows: JACoB briefly focuses Elite, captures the verified client frame, restores the prior window, then calibrates on that screenshot.
 - Added generic SDK 10 example tabs for text recognition, vertical color-fill recognition, and simple color detection.
