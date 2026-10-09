@@ -243,13 +243,28 @@ try{Object.defineProperty(window,'open',{value:()=>null,writable:false,configura
 function request(method,params={}){const id='tab-'+(++seq)+'-'+Date.now();parent.postMessage({channel:'jacob-tab',kind:'request',id,method,params},'*');return new Promise((resolve,reject)=>pending.set(id,{resolve,reject}))}
 function onEvent(name,cb){if(!eventSubs.has(name))eventSubs.set(name,new Set());eventSubs.get(name).add(cb);return()=>eventSubs.get(name)?.delete(cb)}
 window.Elite=Object.freeze({
- api:Object.freeze({version:9}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
+ api:Object.freeze({version:10}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
  bindings:Object.freeze({list:()=>request('bindings.list'),diagnostics:()=>request('bindings.diagnostics'),get:name=>request('bindings.get',{name}),reload:()=>request('bindings.reload'),press:action=>request('binding.press',{action}),down:action=>request('binding.down',{action}),up:action=>request('binding.up',{action}),hold:(action,durationMs=1000)=>request('binding.hold',{action,durationMs})}),
  input:Object.freeze({tap:(key,options={})=>request('input.tap',{key,delayMs:options.delayMs||0,modifiers:options.modifiers||[]}),hold:(key,durationMs=250,options={})=>request('input.hold',{key,durationMs,modifiers:options.modifiers||[]}),text:(text,options={})=>request('input.text',{text,intervalMs:options.intervalMs??15})}),
  recorder:Object.freeze({status:()=>request('recorder.status'),start:()=>request('recorder.start'),stop:()=>request('recorder.stop'),subscribe:cb=>onEvent('recorder.input',cb)}),
  overlay:Object.freeze({info:()=>request('overlay.info'),set:scene=>request('overlay.set',{scene}),clear:()=>request('overlay.clear')}),
  video:Object.freeze({info:()=>request('video.info'),url:(options={})=>request('video.url',options),attach:async(el,options={})=>{const u=await request('video.url',options);el.src=u;return u}}),
- vision:Object.freeze({info:()=>request('vision.info'),sample:(options={})=>request('vision.sample',options)}),
+ vision:Object.freeze({
+ info:()=>request('vision.info'),
+ sample:(options={})=>request('vision.sample',options),
+ inspect:(spec={})=>request('vision.inspect',spec),
+ calibrate:(options={})=>request('vision.calibrate',options),
+ configure:async(id,options={})=>{
+  id=String(id||'').trim();if(!id)throw Object.assign(new Error('vision configuration id is required'),{code:'BAD_PARAMS'});
+  const key='__vision.config.'+id,saved=await request('tabstate.get',{key});
+  if(saved?.found&&!options.force)return saved.value;
+  if(options.defaults&&!options.force&&options.calibrate!==true){await request('tabstate.set',{key,value:options.defaults});return options.defaults}
+  const value=await request('vision.calibrate',{...options,id,defaults:options.defaults||null});
+  await request('tabstate.set',{key,value});return value
+ },
+ reset:async id=>request('tabstate.delete',{key:'__vision.config.'+String(id||'').trim()}),
+ debug:Object.freeze({show:(options={})=>request('vision.debug.show',options),clear:()=>request('vision.debug.clear')})
+}),
  net:Object.freeze({fetch:(url,options={})=>request('net.fetch',{url,method:options.method||'GET',headers:options.headers||{},body:typeof options.body==='string'?options.body:(options.body==null?'':JSON.stringify(options.body))})}),
  data:Object.freeze({list:()=>request('elitefiles.list'),get:name=>request('elitefiles.get',{name}),subscribe:(name,cb)=>{const wanted=String(name||'*');return onEvent('eliteFile',payload=>{if(wanted==='*'||String(payload?.name||'').toLowerCase()===wanted.toLowerCase()||String(payload?.file||'').toLowerCase()===wanted.toLowerCase())cb(payload)})}}),
  store:Object.freeze({get:async(key,fallback=null)=>{const r=await request('tabstate.get',{key});return r?.found?r.value:fallback},set:(key,value)=>request('tabstate.set',{key,value}),delete:key=>request('tabstate.delete',{key}),clear:()=>request('tabstate.clear')}),
@@ -302,7 +317,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     const box=document.createElement('div');box.appendChild(frag);return box.innerHTML;
   }
   const defaultBrand='<strong>JACoB</strong><span>Journal Aligned Control Bridge</span>';
-  const defaultFooter='<span>JACoB Alpha 0.2.11 · SDK 9</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';
+  const defaultFooter='<span>JACoB Alpha 0.2.12 · SDK 10</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';
   function applyAppearance(html=''){
     state.themeHTML=html||'';
     $('#jacob-user-theme').textContent='';
@@ -361,7 +376,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
   }
   function socketURL(){const proto=location.protocol==='https:'?'wss':'ws';const q=!isLocal&&token()?`?token=${encodeURIComponent(token())}`:'';return `${proto}://${location.host}/ws${q}`}
   function mediaURL(path,options={}){const q=new URLSearchParams();for(const [k,v] of Object.entries(options))if(v!==undefined&&v!==null)q.set(k,String(v));const auth=state.core?.mediaToken||'';if(auth)q.set('token',auth);q.set('_',Date.now());return `${path}?${q.toString()}`}
-  function videoURL(options={}){return mediaURL('/api/video.mjpeg',{width:options.width||960,fps:options.fps||5,quality:options.quality||60})}
+  function videoURL(options={}){const p={width:options.width||960,fps:options.fps||5,quality:options.quality||60};if(options.matte===true||options.matte===1||options.matte==='1')p.matte=1;return mediaURL('/api/video.mjpeg',p)}
   function pretty(v){return JSON.stringify(v,null,2)}
   function escapeHTML(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
@@ -371,7 +386,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     recorder:{label:'Record Elite keyboard input',detail:'observe keyboard input only while Elite Dangerous is the foreground window'},
     overlay:{label:'Draw an Elite overlay',detail:'place graphics in JACoB’s game overlay'},
     video:{label:'View the Elite video feed',detail:'display the focus-gated Elite Dangerous capture stream'},
-    vision:{label:'Use derived game vision',detail:'receive feature points and motion measurements computed from Elite-only frames; raw pixels are never exposed'},
+    vision:{label:'Use derived game vision',detail:'receive derived measurements, OCR text and calibration results computed from Elite-only frames; raw pixels are never exposed to custom tabs'},
     intertab:{label:'Control other JACoB tabs',detail:'invoke actions that other saved tabs explicitly publish through the JACoB action broker'}
   };
   function tabPermissionKey(frame){const id=frame?.dataset?.savedTabId||frame?.dataset?.overlayLayer||'preview';const version=frame?.dataset?.savedTabId?(savedTabMeta(id)?.updatedAt||'unknown'):'session';return `jacob-tab-permissions:${id}:${version}`}
@@ -414,7 +429,7 @@ Allow this capability on this browser?`);
     if(!r||now-r.windowStart>=1000)r={windowStart:now,count:0,last:new Map()};
     if(r.count>=120){tabRequestRates.set(frame,r);return false}
     let gap=0;
-    if(method==='vision.sample'||method==='journal.read')gap=75;
+    if(method==='vision.sample'||method==='vision.inspect'||method==='journal.read')gap=75;
     else if(method==='net.fetch')gap=100;
     else if(method==='tabstate.set'||method==='tabstate.delete'||method==='tabstate.clear')gap=50;
     const last=r.last.get(method)||-Infinity;if(now-last<gap){tabRequestRates.set(frame,r);return false}
@@ -453,7 +468,7 @@ Allow this capability on this browser?`);
     if(kind==='core.hello'){
       state.core=data;state.updating=false;if(data.locale)applyLocaleInfo(data.locale);if($('#quit-jacob'))$('#quit-jacob').hidden=!data.localClient;if($('#install-update'))$('#install-update').hidden=!data.localClient;$('#core-os').textContent=`${data.os}/${data.arch}`;$('#core-api').textContent=`v${data.apiVersion} (${data.product||'JACoB'} ${data.prototype})`;if($('#update-current'))$('#update-current').textContent=data.version||data.prototype||'—';queueUpdateCheckSoon();
       $('#binding-autofill').textContent=data.autoBind?`${data.autoBind.assigned||0} added / ${data.autoBind.scannedActions||0} scanned`:'—';
-      $('#input-driver').textContent=`${data.input?.driver||'—'} / ${data.input?.enabled?'enabled':'disabled'}`;$('#capture-driver').textContent=`${data.capture?.driver||'—'} / ${data.capture?.available?'available':'unavailable'}`;if($('#overlay-driver'))$('#overlay-driver').textContent=`${data.overlay?.driver||'—'} / ${data.overlay?.available?'available':'unavailable'}`;
+      $('#input-driver').textContent=`${data.input?.driver||'—'} / ${data.input?.enabled?'enabled':'disabled'}`;$('#capture-driver').textContent=`${data.capture?.driver||'—'} / ${data.capture?.available?'available':'unavailable'}`;const gameViewBlock=$('#game-view-img')?.closest('details.settings-block');if(gameViewBlock)gameViewBlock.hidden=!data.capture?.available;if($('#overlay-driver'))$('#overlay-driver').textContent=`${data.overlay?.driver||'—'} / ${data.overlay?.available?'available':'unavailable'}`;
       $('#journal-dir').textContent=data.journalDir||tr('not detected');$('#bindings-file').textContent=data.bindingsFile||tr('not detected');if($('#home-journal-state'))$('#home-journal-state').textContent=data.journalDir?'Connected':tr('not detected');renderLAN(data.lan);if(data.health)renderHealth(data.health);
     }
     if(kind==='state'){state.snapshot=data;renderSnapshot(data)}
@@ -685,9 +700,9 @@ Allow this capability on this browser?`);
   $('#check-update').onclick=()=>checkForUpdates({quiet:false});$('#install-update').onclick=installUpdate;
 
   function setVideoState(on,msg=''){const el=$('#video-state');el.textContent=on?tr('STREAMING'):tr('STOPPED');el.className=`status-mark ${on?'online':'offline'}`;if(msg)$('#video-result').textContent=msg}
-  function startVideo(){if(state.core?.capture&&!state.core.capture.available){setVideoState(false,`Capture unavailable: ${state.core.capture.driver}`);return}const opts={width:Number($('#video-width').value),fps:Number($('#video-fps').value),quality:Number($('#video-quality').value)};$('#game-view-img').src=videoURL(opts);setVideoState(true,pretty({mode:'mjpeg',...opts,url:'authenticated local/LAN stream'}))}
+  function startVideo(){if(state.core?.capture&&!state.core.capture.available){setVideoState(false,`Capture unavailable: ${state.core.capture.driver}`);return}const opts={width:Number($('#video-width').value),fps:Number($('#video-fps').value),quality:Number($('#video-quality').value),matte:!!$('#video-privacy-matte')?.checked};$('#game-view-img').src=videoURL(opts);setVideoState(true,pretty({mode:'mjpeg',...opts,url:'authenticated local/LAN stream'}))}
   function stopVideo(){$('#game-view-img').removeAttribute('src');setVideoState(false)}
-  $('#video-start').onclick=startVideo;$('#video-stop').onclick=stopVideo;$('#video-snapshot').onclick=()=>{const opts={width:Number($('#video-width').value),quality:Number($('#video-quality').value)};$('#game-view-img').src=mediaURL('/api/video/frame.jpg',opts);setVideoState(false,pretty({mode:'snapshot',...opts}))};
+  $('#video-start').onclick=startVideo;$('#video-stop').onclick=stopVideo;$('#video-snapshot').onclick=()=>{const opts={width:Number($('#video-width').value),quality:Number($('#video-quality').value),matte:!!$('#video-privacy-matte')?.checked};$('#game-view-img').src=mediaURL('/api/video/frame.jpg',{...opts,matte:opts.matte?1:undefined});setVideoState(false,pretty({mode:'snapshot',...opts}))};
 
   $('#run-tab').onclick=previewCurrent;$('#save-tab').onclick=saveCurrentTab;$('#new-tab').onclick=()=>clearEditor(false);$('#reset-tab').onclick=()=>clearEditor(true);
   $('#upload-html').onchange=async e=>{const f=e.target.files?.[0];if(!f)return;$('#custom-html').value=await f.text();if(!$('#custom-tab-name').value.trim())$('#custom-tab-name').value=f.name.replace(/\.html?$/i,'');previewCurrent();e.target.value=''};
@@ -698,6 +713,113 @@ Allow this capability on this browser?`);
   if($('#home-tutorial'))$('#home-tutorial').onclick=()=>switchTab('tutorial');
   if($('#tutorial-tab-manager'))$('#tutorial-tab-manager').onclick=()=>switchTab('tabmanager');
 
+
+  const visionCalibrationState={active:null};
+  function visionRegionOK(r){
+    return !!r&&Number.isFinite(Number(r.x))&&Number.isFinite(Number(r.y))&&Number.isFinite(Number(r.width))&&Number.isFinite(Number(r.height))&&
+      Number(r.x)>=0&&Number(r.y)>=0&&Number(r.width)>0&&Number(r.height)>0&&Number(r.x)+Number(r.width)<=1.000001&&Number(r.y)+Number(r.height)<=1.000001;
+  }
+  function visionDebugLayerForFrame(frame){return `${overlayLayerForFrame(frame)}:vision-debug`}
+  function visionDebugScene(spec={}){
+    const region=spec.region||spec.config?.region;
+    if(!visionRegionOK(region))throw actionError('BAD_PARAMS','vision debug requires a normalized region');
+    const palette=['#00d7ff','#ff8b2c','#85ff8b','#ff61d2','#d7ff54','#9c8cff','#ff5757','#ffffff'];
+    const items=[
+      {type:'rect',x:Number(region.x),y:Number(region.y),w:Number(region.width),h:Number(region.height),stroke:palette[0],fill:'#00000000',lineWidth:2},
+      {type:'text',x:Number(region.x),y:Math.max(0,Number(region.y)-.018),text:String(spec.label||'VISION'),color:palette[0],fontSize:15}
+    ];
+    const ops=spec.operations||spec.config?.operations||{};
+    let i=1;
+    for(const [name,op] of Object.entries(ops)){
+      const sub=op?.subregion;if(!visionRegionOK(sub))continue;
+      const r={x:Number(region.x)+Number(sub.x)*Number(region.width),y:Number(region.y)+Number(sub.y)*Number(region.height),width:Number(sub.width)*Number(region.width),height:Number(sub.height)*Number(region.height)};
+      const color=palette[i%palette.length];i++;
+      items.push({type:'rect',x:r.x,y:r.y,w:r.width,h:r.height,stroke:color,fill:'#00000000',lineWidth:2});
+      items.push({type:'text',x:r.x,y:Math.max(0,r.y-.015),text:String(name).slice(0,32),color,fontSize:13});
+    }
+    return {space:'normalized',items};
+  }
+  async function showVisionDebug(frame,spec={}){
+    if(!requireTabCapability(frame,'vision'))throw actionError('PERMISSION_DENIED','vision permission was not granted');
+    if(!state.core?.capture?.available)throw actionError('VISION_UNAVAILABLE','screen capture is not installed or unavailable in this build');
+    const layer=visionDebugLayerForFrame(frame),scene=visionDebugScene(spec);
+    const result=await request('overlay.set',{layer,scene});
+    return {shown:true,layer,items:scene.items.length,overlay:result?.overlay||null};
+  }
+  async function clearVisionDebug(frame){
+    const layer=visionDebugLayerForFrame(frame);
+    try{return await request('overlay.clear',{layer})}catch(error){if(error?.code==='OVERLAY_UNAVAILABLE')return{cleared:false,layer};throw error}
+  }
+  function rgbHex(r,g,b){return '#'+[r,g,b].map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('').toUpperCase()}
+  function rgbToHSV(r,g,b){
+    r/=255;g/=255;b/=255;const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;let h=0;
+    if(d){if(max===r)h=((g-b)/d)%6;else if(max===g)h=(b-r)/d+2;else h=(r-g)/d+4;h*=60;if(h<0)h+=360}
+    return{h:Math.round(h),s:Math.round((max?d/max:0)*100),v:Math.round(max*100)}
+  }
+  function ensureVisionCalibrationUI(){
+    let root=$('#jacob-vision-calibration');if(root)return root;
+    const style=document.createElement('style');
+    style.textContent=`#jacob-vision-calibration{position:fixed;inset:0;z-index:2147483000;background:#050708f2;color:#e9eef1;font:14px system-ui;display:flex;flex-direction:column}#jacob-vision-calibration[hidden]{display:none}.vision-cal-head{display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid #543014;background:#0a0d0f}.vision-cal-head strong{font-size:16px}.vision-cal-head .spacer{flex:1}.vision-cal-stage{position:relative;flex:1;min-height:0;display:grid;place-items:center;overflow:hidden;background:#000}.vision-cal-stage canvas{max-width:100%;max-height:100%;cursor:crosshair;image-rendering:auto}.vision-cal-foot{padding:10px 14px;border-top:1px solid #543014;background:#0a0d0f;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.vision-cal-foot button,.vision-cal-head button,.vision-cal-foot select{background:#111416;color:#eee;border:1px solid #8a430e;border-radius:0;padding:7px 10px}.vision-cal-foot button.primary{background:#9a4a11}.vision-cal-status{font:12px ui-monospace,Consolas,monospace;color:#aeb6bb;min-width:320px}.vision-cal-mode.active{outline:1px solid #00d7ff}.vision-cal-help{color:#b8b1a8}`;
+    document.head.appendChild(style);
+    root=document.createElement('div');root.id='jacob-vision-calibration';root.hidden=true;
+    root.innerHTML=`<div class="vision-cal-head"><strong>JACoB Vision calibration</strong><span id="vision-cal-title" class="vision-cal-help"></span><span class="spacer"></span><button id="vision-cal-cancel">Cancel</button></div><div class="vision-cal-stage"><canvas id="vision-cal-canvas"></canvas></div><div class="vision-cal-foot"><button id="vision-cal-region" class="vision-cal-mode active">Drag region</button><button id="vision-cal-color" class="vision-cal-mode">Pick color</button><label>Average <select id="vision-cal-average"><option>1</option><option>5</option><option selected>11</option><option>21</option></select></label><button id="vision-cal-preview">Preview saved bounds in Elite</button><span id="vision-cal-status" class="vision-cal-status">Waiting for Elite frame…</span><span class="spacer"></span><button id="vision-cal-use" class="primary">Use calibration</button></div>`;
+    document.body.appendChild(root);
+    return root;
+  }
+  async function runVisionCalibration(frame,options={}){
+    if(!requireTabCapability(frame,'vision'))throw actionError('PERMISSION_DENIED','vision permission was not granted');
+    if(!state.core?.capture?.available)throw actionError('VISION_UNAVAILABLE','screen capture is not installed or unavailable in this build');
+    if(visionCalibrationState.active)throw actionError('VISION_CALIBRATION_BUSY','another Vision calibration is already active');
+    const root=ensureVisionCalibrationUI(),canvas=$('#vision-cal-canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true}),status=$('#vision-cal-status'),title=$('#vision-cal-title');
+    const defaults=options.defaults||{};
+    let region=visionRegionOK(defaults.region)?{...defaults.region}:visionRegionOK(options.region)?{...options.region}:{x:.2,y:.2,width:.6,height:.5};
+    let color=String(defaults.color||options.color||'#FF8B2C').toUpperCase();
+    let sample=null,mode='region',drag=null,img=null,sourceCanvas=document.createElement('canvas'),sourceCtx=sourceCanvas.getContext('2d',{willReadFrequently:true});
+    const pickColor=options.pickColor===true||options.mode==='regionColor'||options.mode==='color';
+    const avgSelect=$('#vision-cal-average');avgSelect.value=String([1,5,11,21].includes(Number(options.averageSize))?Number(options.averageSize):11);
+    title.textContent=String(options.label||options.id||'Select the area JACoB should inspect');
+    $('#vision-cal-color').hidden=!pickColor;
+    function cssPoint(ev){const r=canvas.getBoundingClientRect();return{x:(ev.clientX-r.left)*canvas.width/r.width,y:(ev.clientY-r.top)*canvas.height/r.height}}
+    function normRect(a,b){const x0=Math.max(0,Math.min(a.x,b.x)),y0=Math.max(0,Math.min(a.y,b.y)),x1=Math.min(canvas.width,Math.max(a.x,b.x)),y1=Math.min(canvas.height,Math.max(a.y,b.y));return{x:x0/canvas.width,y:y0/canvas.height,width:Math.max(2,x1-x0)/canvas.width,height:Math.max(2,y1-y0)/canvas.height}}
+    function sampleColorAt(p){
+      const n=Number(avgSelect.value)||11,h=Math.floor(n/2),x0=Math.max(0,Math.floor(p.x)-h),y0=Math.max(0,Math.floor(p.y)-h),x1=Math.min(canvas.width,x0+n),y1=Math.min(canvas.height,y0+n),data=sourceCtx.getImageData(x0,y0,Math.max(1,x1-x0),Math.max(1,y1-y0)).data;
+      let r=0,g=0,b=0,count=0;for(let i=0;i<data.length;i+=4){if(data[i+3]<16)continue;r+=data[i];g+=data[i+1];b+=data[i+2];count++}
+      if(!count)return; r/=count;g/=count;b/=count;color=rgbHex(r,g,b);sample={x:p.x/canvas.width,y:p.y/canvas.height,averageSize:n,rgb:{r:Math.round(r),g:Math.round(g),b:Math.round(b)},hsv:rgbToHSV(r,g,b)};draw()
+    }
+    function draw(){
+      if(!img)return;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);
+      const x=region.x*canvas.width,y=region.y*canvas.height,w=region.width*canvas.width,h=region.height*canvas.height;
+      ctx.save();ctx.lineWidth=Math.max(2,canvas.width/700);ctx.strokeStyle='#00D7FF';ctx.fillStyle='#00D7FF18';ctx.fillRect(x,y,w,h);ctx.strokeRect(x,y,w,h);ctx.fillStyle='#00D7FF';ctx.font=`${Math.max(13,canvas.width/90)}px sans-serif`;ctx.fillText('VISION',x+4,Math.max(16,y-5));if(sample){const sx=sample.x*canvas.width,sy=sample.y*canvas.height;ctx.strokeStyle=color;ctx.beginPath();ctx.arc(sx,sy,Math.max(7,canvas.width/160),0,Math.PI*2);ctx.stroke()}ctx.restore();
+      const hsv=sample?.hsv;status.textContent=`region x ${region.x.toFixed(4)} y ${region.y.toFixed(4)} w ${region.width.toFixed(4)} h ${region.height.toFixed(4)}${pickColor?`  ·  ${color}${hsv?`  HSV ${hsv.h}° ${hsv.s}% ${hsv.v}%`:''}`:''}`;
+    }
+    function setMode(next){mode=next;$('#vision-cal-region').classList.toggle('active',mode==='region');$('#vision-cal-color').classList.toggle('active',mode==='color')}
+    root.hidden=false;visionCalibrationState.active={frame,root};
+    try{
+      status.textContent='Focusing Elite and taking a calibration snapshot…';
+      await request('vision.calibration.arm',{timeoutMs:8000});
+      const ready=await new Promise((resolve,reject)=>{
+        const started=Date.now(),timer=setInterval(async()=>{try{const s=await request('vision.calibration.status');if(s.ready){clearInterval(timer);resolve(s)}else if(!s.armed&&Date.now()-started>1000){clearInterval(timer);reject(actionError('VISION_CALIBRATION_FAILED',s.reason||'no Elite frame captured'))}else if(Date.now()-started>12000){clearInterval(timer);reject(actionError('VISION_CALIBRATION_TIMEOUT','JACoB could not capture a verified Elite frame'))}}catch(e){clearInterval(timer);reject(e)}},120);
+      });
+      img=new Image();img.decoding='async';
+      const loaded=new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(actionError('VISION_CALIBRATION_FRAME','captured frame could not be loaded'))});
+      img.src=mediaURL('/api/vision/calibration.jpg',{_v:Date.now()});await loaded;
+      canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;sourceCanvas.width=img.naturalWidth;sourceCanvas.height=img.naturalHeight;sourceCtx.drawImage(img,0,0,img.naturalWidth,img.naturalHeight);draw();
+      status.textContent='Frozen Elite snapshot. Drag the area to inspect'+(pickColor?' or choose Pick color and click the target color.':'.');
+      if(pickColor)setMode(options.startMode==='color'?'color':'region');
+      canvas.onpointerdown=ev=>{if(mode==='region'){drag=cssPoint(ev);canvas.setPointerCapture?.(ev.pointerId)}};
+      canvas.onpointermove=ev=>{if(mode==='region'&&drag){region=normRect(drag,cssPoint(ev));draw()}};
+      canvas.onpointerup=ev=>{const p=cssPoint(ev);if(mode==='region'&&drag){region=normRect(drag,p);drag=null;draw()}else if(mode==='color')sampleColorAt(p)};
+      $('#vision-cal-region').onclick=()=>setMode('region');$('#vision-cal-color').onclick=()=>setMode('color');
+      avgSelect.onchange=()=>{if(sample)sampleColorAt({x:sample.x*canvas.width,y:sample.y*canvas.height})};
+      $('#vision-cal-preview').onclick=async()=>{try{await showVisionDebug(frame,{region,label:options.label||options.id||'VISION'});status.textContent+='  ·  bounds sent to Elite overlay'}catch(e){status.textContent=e.message||String(e)}};
+      return await new Promise((resolve,reject)=>{
+        $('#vision-cal-use').onclick=()=>{if(!visionRegionOK(region)){reject(actionError('BAD_PARAMS','select a valid Vision region'));return}resolve({region:{x:+region.x.toFixed(6),y:+region.y.toFixed(6),width:+region.width.toFixed(6),height:+region.height.toFixed(6)},...(pickColor?{color,sample}:{}),capturedAt:ready.capturedAt||null})};
+        $('#vision-cal-cancel').onclick=()=>reject(actionError('VISION_CALIBRATION_CANCELLED','Vision calibration was cancelled'));
+      });
+    }finally{
+      root.hidden=true;canvas.onpointerdown=canvas.onpointermove=canvas.onpointerup=null;visionCalibrationState.active=null;request('vision.calibration.clear').catch(()=>{});
+    }
+  }
   function overlayLayerForFrame(frame){if(frame?.dataset?.savedTabId)return `tab:${frame.dataset.savedTabId}`;return frame?.dataset?.overlayLayer||'preview'}
 
   addEventListener('message',async ev=>{
@@ -713,11 +835,21 @@ Allow this capability on this browser?`);
       if(m.method==='actions.invoke'){if(!requireTabCapability(frame,'intertab')){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:'inter-tab control permission was not granted'}});return}try{const result=await invokeRegisteredAction(frame,m.params);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}return}
       if(m.method==='tabs.sdk.list'){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result:{tabs:sdkTabList()}});return}
       if(m.method==='tabs.activate'){try{const result=await activateSDKTab(m.params?.target);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}return}
+      if(m.method==='vision.calibrate'){
+        if(!requireTabCapability(frame,'vision')){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:'vision permission was not granted'}});return}
+        try{const result=await runVisionCalibration(frame,m.params||{});sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}return
+      }
+      if(m.method==='vision.debug.show'){
+        try{const result=await showVisionDebug(frame,m.params||{});sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}return
+      }
+      if(m.method==='vision.debug.clear'){
+        try{const result=await clearVisionDebug(frame);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}return
+      }
       if(m.method==='video.url'){
         if(!requireTabCapability(frame,'video')){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:'video permission was not granted'}});return}
         sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result:videoURL(m.params||{})});return
       }
-      const allowed=new Set(['core.ping','system.health','state.get','bindings.list','bindings.diagnostics','bindings.get','bindings.reload','input.tap','input.hold','input.text','binding.press','binding.down','binding.up','binding.hold','recorder.status','recorder.start','recorder.stop','video.info','vision.info','vision.sample','overlay.info','overlay.set','overlay.clear','net.fetch','elitefiles.list','elitefiles.get','journal.files','journal.read','tabstate.get','tabstate.set','tabstate.delete','tabstate.clear','locale.get']);
+      const allowed=new Set(['core.ping','system.health','state.get','bindings.list','bindings.diagnostics','bindings.get','bindings.reload','input.tap','input.hold','input.text','binding.press','binding.down','binding.up','binding.hold','recorder.status','recorder.start','recorder.stop','video.info','vision.info','vision.sample','vision.inspect','overlay.info','overlay.set','overlay.clear','net.fetch','elitefiles.list','elitefiles.get','journal.files','journal.read','tabstate.get','tabstate.set','tabstate.delete','tabstate.clear','locale.get']);
       if(!allowed.has(m.method)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'SDK_DENIED',message:'method not exposed by JACoB SDK'}});return}
       const capability=capabilityForMethod(m.method);if(capability&&!requireTabCapability(frame,capability)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:`${capability} permission was not granted`}});return}
       try{let params=m.params||{};if(m.method==='overlay.set'||m.method==='overlay.clear')params={...params,layer:overlayLayerForFrame(frame)};if(m.method.startsWith('tabstate.')){const tabId=frame?.dataset?.savedTabId||'';if(!tabId)throw{code:'TAB_STATE_PREVIEW',message:'persistent state is available after the tab is saved'};params={...params,tabId}}const result=await request(m.method,params);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}

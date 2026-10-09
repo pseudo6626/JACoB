@@ -1,7 +1,7 @@
 # JACoB Custom Tab Developer Reference
 
-Version: Alpha 0.2.11  
-SDK version: 9
+Version: Alpha 0.2.12  
+SDK version: 10
 
 This is the canonical reference for building JACoB custom HTML tabs. It describes the tab runtime, the browser SDK, the direct WebSocket protocol, state and event shapes, input behavior, overlays, video, recorder support, persistence, security boundaries, and platform limitations.
 
@@ -1913,3 +1913,98 @@ Elite.state.subscribe(status => {
 - Keep platform-specific assumptions out of the tab unless the tab is intentionally platform-specific.
 
 This document is intended to be sufficient for implementing JACoB custom tabs without reading the JACoB source tree.
+
+## SDK 10 Vision
+
+SDK 10 adds host-owned game vision. A custom tab tells JACoB what region of the Elite window to inspect and what derived observation it wants. Captured pixels remain inside JACoB. The tab receives measurements, booleans, recognized text, and normalized geometry.
+
+### Basic inspection
+
+```js
+const result = await Elite.vision.inspect({
+  region: {x:0.30, y:0.50, width:0.70, height:0.48},
+  operations: {
+    rows: {
+      type: 'textLines',
+      subregion: {x:0.10, y:0.06, width:0.57, height:0.62},
+      preprocess: {scale:2, grayscale:true, autoContrast:true}
+    }
+  }
+});
+```
+
+Supported operations are `colorPresent`, `colorCoverage`, `colorVerticalFill`, `luma`, `contrast`, `edgeDensity`, `text`, and `textLines`. `textLines` returns line and word bounds normalized to the requested OCR region.
+
+### Standard calibration
+
+Tabs should use the shared SDK setup utility rather than implementing their own screenshot or coordinate picker.
+
+```js
+const cfg = await Elite.vision.configure('nav-list', {
+  defaults: {
+    region: {x:0.30, y:0.50, width:0.70, height:0.48}
+  }
+});
+```
+
+Defaults are used until the user explicitly recalibrates. To ask the user to set both a region and color:
+
+```js
+const cfg = await Elite.vision.configure('target-color', {
+  calibrate: true,
+  pickColor: true,
+  averageSize: 11,
+  label: 'Target indicator'
+});
+```
+
+JACoB owns the calibration UI. It arms a one-frame Elite-only capture, asks the user to switch to Elite, freezes the first verified Elite frame, then presents a standard drag-to-select region tool. Color calibration can sample an exact pixel or an averaged square and returns hex/RGB/HSV values. The custom tab never receives the calibration image.
+
+Saved calibration is namespaced to the saved tab through JACoB tab storage. Use `Elite.vision.reset(id)` to discard it.
+
+### Debug bounds
+
+```js
+await Elite.vision.debug.show({
+  region: cfg.region,
+  operations: {
+    label: {type:'textLines', subregion:{x:.1,y:.06,width:.57,height:.62}}
+  },
+  label: 'NAV OCR'
+});
+
+await Elite.vision.debug.clear();
+```
+
+Bounds are drawn through JACoB's native overlay on a reserved per-tab debug layer.
+
+### Security boundary
+
+Vision capture uses the same verified Elite-only foreground capture driver as Game View. The Windows driver identifies the foreground process as Elite before capture and checks it again after capture. Vision API results never contain captured image bytes. The host-owned calibration interface is the only SDK 10 Vision feature that displays a frozen frame, and that frame is displayed by JACoB itself rather than inside the requesting custom tab.
+
+### Current limitation
+
+SDK 10 regions are screen-relative. Cockpit HUD elements that move with headlook or ship/camera motion may move out of a calibrated region. Anchor-relative regions are reserved for a later SDK 10.x extension.
+
+## Frozen calibration snapshot
+
+On Windows, `Elite.vision.calibrate()` briefly focuses the verified Elite Dangerous window and uses a dedicated client-only snapshot routine. It copies only the Elite client rectangle (no monitor, desktop, title bar, or privacy-matte canvas), restores the previously focused JACoB/browser window, and presents that frozen image in the host calibration UI. The user drags region bounds and samples colors on the frozen frame. Custom tabs receive only the normalized calibration result; captured frame bytes remain host-only.
+
+This keeps calibration coordinates in exactly the same normalized Elite-client coordinate space used by `vision.inspect()`.
+
+
+### Game View privacy matte
+
+`Elite.video.url({matte:true})` places the verified Elite client frame on a black monitor-sized canvas. This is intended for windowed Elite so desktop content around the game is never streamed. The matte is a video presentation feature only; Vision, OCR, color sampling and calibration continue to use the tight Elite-client frame and keep the same normalized coordinates.
+
+## Canonical Elite frame service
+
+SDK 10 capture consumers share one OS-neutral frame contract. Game View, Vision, OCR and calibration all originate from a canonical frame whose pixel coordinates are the verified Elite Dangerous client area. A platform backend may use any native mechanism that satisfies that contract. It must never substitute a desktop or monitor image when it cannot safely isolate Elite.
+
+Current backends:
+
+- Windows: verified foreground Elite client capture. The backend is replaceable by Windows Graphics Capture without changing Vision or tabs.
+- Linux / Steam Deck: backend slot reserved for XDG Desktop Portal + PipeWire window capture. Until that safe window source exists, capture reports unavailable.
+- No Capture build: the capture backend is omitted entirely on every OS.
+
+`CaptureIntentCalibration` lets a backend temporarily focus Elite and obtain a frozen canonical frame. The calibration UI therefore uses the same 0..1 coordinate surface as live Vision.

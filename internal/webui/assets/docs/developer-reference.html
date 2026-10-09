@@ -11,8 +11,8 @@
 <main class="doc">
 <h1 id="jacob-custom-tab-developer-reference">JACoB Custom Tab Developer
 Reference</h1>
-<p>Version: Alpha 0.2.11<br />
-SDK version: 9</p>
+<p>Version: Alpha 0.2.12<br />
+SDK version: 10</p>
 <p>This is the canonical reference for building JACoB custom HTML tabs.
 It describes the tab runtime, the browser SDK, the direct WebSocket
 protocol, state and event shapes, input behavior, overlays, video,
@@ -1576,5 +1576,5 @@ intentionally platform-specific.</li>
 custom tabs without reading the JACoB source tree.</p>
 
 </main>
-</body>
+<section id="sdk-10-vision"><h2>SDK 10 Vision</h2><p>SDK 10 adds <code>Elite.vision.inspect()</code>, shared <code>configure()</code>/<code>calibrate()</code> setup, and <code>vision.debug</code> bounds overlays. Calibration is owned by JACoB: tabs receive only normalized region/color results, never the captured frame.</p><p>See the installed plain-text developer reference for operation schemas and worked examples.</p></section><section id="game-view-privacy-matte"><h3>Game View privacy matte</h3><p><code>Elite.video.url({matte:true})</code> places the verified Elite client on a black monitor canvas. Vision continues to use the tight Elite-client frame, so Vision regions and colors are unchanged.</p></section></body>
 </html>

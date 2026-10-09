@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jacob.local/schemas/vision-inspect-request.schema.json",
+  "title": "JACoB Vision Inspect Request",
+  "type": "object",
+  "required": [
+    "region",
+    "operations"
+  ],
+  "properties": {
+    "region": {
+      "$ref": "#/$defs/region"
+    },
+    "maxWidth": {
+      "type": "integer",
+      "minimum": 480,
+      "maximum": 1600
+    },
+    "operations": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 8,
+      "additionalProperties": {
+        "$ref": "#/$defs/operation"
+      }
+    }
+  },
+  "$defs": {
+    "region": {
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "colorPresent",
+            "colorCoverage",
+            "colorVerticalFill",
+            "luma",
+            "contrast",
+            "edgeDensity",
+            "text",
+            "textLines"
+          ]
+        },
+        "color": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "tolerance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "minimumCoverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "fullThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "subregion": {
+          "$ref": "#/$defs/region"
+        },
+        "preprocess": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

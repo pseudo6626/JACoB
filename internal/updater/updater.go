@@ -129,7 +129,7 @@ func selectAsset(assets []Asset) *Asset {
 			if !strings.Contains(n, "jacob") || !strings.HasSuffix(n, ".exe") {
 				return false
 			}
-			if strings.Contains(n, "portable") || strings.Contains(n, "no-recorder") {
+			if strings.Contains(n, "portable") || strings.Contains(n, "no-recorder") || strings.Contains(n, "no-capture") {
 				return false
 			}
 			if strings.Contains(n, "win-x64") {

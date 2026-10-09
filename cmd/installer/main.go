@@ -105,7 +105,7 @@ func main() {
 		_ = exec.Command("taskkill", "/IM", "JACoB.exe", "/F").Run()
 		time.Sleep(700 * time.Millisecond)
 	} else {
-		choice := msg("JACoB Setup", "Install the optional Action Recorder?\n\nThe recorder captures keyboard actions only when you explicitly start a recording and Elite Dangerous is the foreground window.\n\nYes  — install with Action Recorder\nNo   — install without recording support\nCancel — exit setup", mbYesNoCancel|mbIconQuestion)
+		choice := msg("JACoB Setup", "Install the full capture-capable JACoB build?\n\nYes  — Full build: Action Recorder, Game View, Vision and OCR\nNo   — No Capture build: no keyboard recorder, no screen/video capture, no Vision or OCR\nCancel — exit setup", mbYesNoCancel|mbIconQuestion)
 		if choice == idCancel {
 			return
 		}
@@ -162,7 +162,7 @@ func install(includeRecorder bool) error {
 		return err
 	}
 
-	appName := "payload/JACoB-no-recorder.exe"
+	appName := "payload/JACoB-no-capture.exe"
 	if includeRecorder {
 		appName = "payload/JACoB.exe"
 	}
@@ -192,9 +192,14 @@ func install(includeRecorder bool) error {
 	if len(theme) > 0 {
 		_ = os.WriteFile(filepath.Join(examples, "UI Theme Example.html"), theme, 0o644)
 	}
-	visionDiagnostics, _ := payload.ReadFile("payload/Vision-Diagnostics.html")
-	if len(visionDiagnostics) > 0 {
-		_ = os.WriteFile(filepath.Join(examples, "Vision Diagnostics.html"), visionDiagnostics, 0o644)
+	visionDiagnosticsPath := filepath.Join(examples, "Vision Diagnostics.html")
+	if includeRecorder {
+		visionDiagnostics, _ := payload.ReadFile("payload/Vision-Diagnostics.html")
+		if len(visionDiagnostics) > 0 {
+			_ = os.WriteFile(visionDiagnosticsPath, visionDiagnostics, 0o644)
+		}
+	} else {
+		_ = os.Remove(visionDiagnosticsPath)
 	}
 	miningCompanion, _ := payload.ReadFile("payload/Ring-Mining-Companion.html")
 	if len(miningCompanion) > 0 {
@@ -269,7 +274,10 @@ func installedVersion() string {
 }
 
 func installedRecorderEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(regValue("RecorderEnabled")))
+	v := strings.ToLower(strings.TrimSpace(regValue("CaptureEnabled")))
+	if v != "0x1" && v != "1" && v != "0x0" && v != "0" {
+		v = strings.ToLower(strings.TrimSpace(regValue("RecorderEnabled")))
+	}
 	if v == "0x1" || v == "1" {
 		return true
 	}
@@ -352,7 +360,7 @@ func registerUninstall(dir string, recorder bool) error {
 		{"InstallLocation", dir},
 		{"DisplayIcon", filepath.Join(dir, "JACoB.ico")},
 		{"UninstallString", `"` + filepath.Join(dir, "Uninstall.exe") + `" --uninstall`},
-		{"Comments", map[bool]string{true: "Action Recorder installed", false: "Action Recorder not installed"}[recorder]},
+		{"Comments", map[bool]string{true: "Full capture build installed", false: "No Capture build installed"}[recorder]},
 	}
 	for _, f := range fields {
 		if err := hidden("reg", "add", uninstallKey, "/v", f[0], "/t", "REG_SZ", "/d", f[1], "/f").Run(); err != nil {
@@ -363,7 +371,10 @@ func registerUninstall(dir string, recorder bool) error {
 	if recorder {
 		recorderDWORD = "1"
 	}
-	return hidden("reg", "add", uninstallKey, "/v", "RecorderEnabled", "/t", "REG_DWORD", "/d", recorderDWORD, "/f").Run()
+	if err := hidden("reg", "add", uninstallKey, "/v", "RecorderEnabled", "/t", "REG_DWORD", "/d", recorderDWORD, "/f").Run(); err != nil {
+		return err
+	}
+	return hidden("reg", "add", uninstallKey, "/v", "CaptureEnabled", "/t", "REG_DWORD", "/d", recorderDWORD, "/f").Run()
 }
 
 func hidden(name string, args ...string) *exec.Cmd {

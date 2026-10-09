@@ -1,212 +1,187 @@
-//go:build windows
+//go:build windows && !nocapture
 
 package platform
 
 import (
-	"bytes"
 	"fmt"
-	"image"
-	"image/color"
-	"image/jpeg"
+	"runtime"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
-const (
-	biRGB           = 0
-	dibRGBColors    = 0
-	srcCopy         = 0x00CC0020
-	stretchHalftone = 4
-)
-
-type point struct{ X, Y int32 }
-type rect struct{ Left, Top, Right, Bottom int32 }
-type bitmapInfoHeader struct {
-	Size          uint32
-	Width         int32
-	Height        int32
-	Planes        uint16
-	BitCount      uint16
-	Compression   uint32
-	SizeImage     uint32
-	XPelsPerMeter int32
-	YPelsPerMeter int32
-	ClrUsed       uint32
-	ClrImportant  uint32
-}
-type rgbQuad struct{ Blue, Green, Red, Reserved byte }
-type bitmapInfo struct {
-	Header bitmapInfoHeader
-	Colors [1]rgbQuad
+type windowsCapture struct {
+	worker *wgcCaptureWorker
 }
 
-type windowsCapture struct{}
+var procIsIconicCapture = user32.NewProc("IsIconic")
 
-var (
-	gdi32                  = syscall.NewLazyDLL("gdi32.dll")
-	procGetDC              = user32.NewProc("GetDC")
-	procReleaseDC          = user32.NewProc("ReleaseDC")
-	procGetClientRect      = user32.NewProc("GetClientRect")
-	procClientToScreen     = user32.NewProc("ClientToScreen")
-	procIsIconicCapture    = user32.NewProc("IsIconic")
-	procCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
-	procDeleteDC           = gdi32.NewProc("DeleteDC")
-	procCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
-	procSelectObject       = gdi32.NewProc("SelectObject")
-	procDeleteObject       = gdi32.NewProc("DeleteObject")
-	procStretchBlt         = gdi32.NewProc("StretchBlt")
-	procSetStretchBltMode  = gdi32.NewProc("SetStretchBltMode")
-)
-
-func newCaptureDriver() CaptureDriver     { return &windowsCapture{} }
-func (w *windowsCapture) Name() string    { return "windows-gdi-live-foreground-elite-only" }
-func (w *windowsCapture) Available() bool { return true }
-
-func captureDimensions(hwnd uintptr, maxWidth int) (sw, sh, dw, dh int, err error) {
-	var rc rect
-	if r, _, e := procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc))); r == 0 {
-		return 0, 0, 0, 0, syscallError("GetClientRect", e)
-	}
-	sw, sh = int(rc.Right-rc.Left), int(rc.Bottom-rc.Top)
-	if sw <= 0 || sh <= 0 {
-		sw, sh = 1280, 720
-	}
-	if maxWidth < 160 {
-		maxWidth = 160
-	}
-	if maxWidth > sw {
-		maxWidth = sw
-	}
-	dw = maxWidth
-	dh = int(float64(sh) * float64(dw) / float64(sw))
-	if dh < 90 {
-		dh = 90
-	}
-	return sw, sh, dw, dh, nil
+func newCaptureDriver() CaptureDriver {
+	return &windowsCapture{worker: newWGCCaptureWorker()}
 }
 
-func encodeBlackJPEG(dw, dh, quality int, reason string) ([]byte, CaptureInfo, error) {
-	if quality < 20 {
-		quality = 20
-	}
-	if quality > 95 {
-		quality = 95
-	}
-	img := image.NewRGBA(image.Rect(0, 0, dw, dh))
-	black := color.RGBA{0, 0, 0, 255}
-	for y := 0; y < dh; y++ {
-		for x := 0; x < dw; x++ {
-			img.SetRGBA(x, y, black)
-		}
-	}
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
-		return nil, CaptureInfo{}, err
-	}
-	return buf.Bytes(), CaptureInfo{Driver: "windows-gdi-live-foreground-elite-only", Width: dw, Height: dh, SourceWidth: dw, SourceHeight: dh, Blanked: true, Reason: reason}, nil
+func (w *windowsCapture) Name() string {
+	return "windows-wgc-elite-client"
+}
+
+func (w *windowsCapture) Available() bool {
+	return w != nil && w.worker != nil
 }
 
 func (w *windowsCapture) CaptureJPEG(maxWidth int, quality int) ([]byte, CaptureInfo, error) {
-	// Hotfix3: identify the foreground window first. Only a verified Elite
-	// foreground frame is ever retained.
-	hwnd, _, _ := procGetForegroundWindow.Call()
+	frame, err := w.CaptureFrame(maxWidth, CaptureIntentLive)
+	if err != nil {
+		return nil, CaptureInfo{}, err
+	}
+	return EncodeGameFrameJPEG(frame, quality)
+}
+
+func (w *windowsCapture) CaptureFrame(maxWidth int, intent CaptureIntent) (GameFrame, error) {
+	if w == nil || w.worker == nil {
+		return GameFrame{}, fmt.Errorf("Windows Graphics Capture backend is unavailable")
+	}
+
+	previous, _, _ := procGetForegroundWindow.Call()
+	var hwnd uintptr
+
+	if intent == CaptureIntentCalibration {
+		found, exe, err := findEliteWindow()
+		if err != nil {
+			return GameFrame{}, err
+		}
+		if found == 0 || !isEliteExecutable(exe) {
+			return GameFrame{}, fmt.Errorf("verified Elite Dangerous window was not found")
+		}
+		input := &windowsInput{}
+		if err := input.FocusGame(); err != nil {
+			return GameFrame{}, err
+		}
+		hwnd = found
+		if previous != 0 && previous != hwnd {
+			defer restoreCalibrationForeground(previous)
+		}
+		// Give Elite and DWM a moment to present after focus changes. WGC still
+		// captures the HWND surface directly; this wait is only for a fresh frame.
+		time.Sleep(90 * time.Millisecond)
+	} else {
+		hwnd, _, _ = procGetForegroundWindow.Call()
+		if hwnd == 0 {
+			return blankGameFrame(w.Name(), maxWidthOrDefault(maxWidth), blackHeight(maxWidthOrDefault(maxWidth)), "no-foreground-window"), nil
+		}
+	}
+
+	pid, reason := verifyEliteCaptureWindow(hwnd)
+	if reason != "" {
+		return blankGameFrame(w.Name(), maxWidthOrDefault(maxWidth), blackHeight(maxWidthOrDefault(maxWidth)), reason), nil
+	}
+
+	timeout := 650 * time.Millisecond
+	if intent == CaptureIntentCalibration {
+		timeout = 1400 * time.Millisecond
+	}
+	frame, err := w.worker.Capture(hwnd, maxWidth, timeout)
+	if err != nil {
+		return GameFrame{}, err
+	}
+
+	// The WGC source is the Elite HWND, but foreground/process state is checked
+	// again before any pixels are released to the caller.
+	after, _, _ := procGetForegroundWindow.Call()
+	if after != hwnd {
+		return blankGameFrame(w.Name(), frame.Width, frame.Height, "elite-capture-state-changed"), nil
+	}
+	var afterPID uint32
+	procGetWindowThreadProcessId.Call(after, uintptr(unsafe.Pointer(&afterPID)))
+	if afterPID != pid {
+		return blankGameFrame(w.Name(), frame.Width, frame.Height, "elite-process-changed"), nil
+	}
+
+	frame.Driver = w.Name()
+	frame.Verified = true
+	frame.Foreground = true
+	frame.Blanked = false
+	frame.Reason = ""
+	return frame, nil
+}
+
+func verifyEliteCaptureWindow(hwnd uintptr) (uint32, string) {
 	if hwnd == 0 {
-		return encodeBlackJPEG(maxWidthOrDefault(maxWidth), blackHeight(maxWidthOrDefault(maxWidth)), quality, "no-foreground-window")
+		return 0, "no-foreground-window"
+	}
+	fg, _, _ := procGetForegroundWindow.Call()
+	if fg != hwnd {
+		return 0, "foreground-is-not-elite"
 	}
 	var pid uint32
 	procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
 	if pid == 0 {
-		return encodeBlackJPEG(maxWidthOrDefault(maxWidth), blackHeight(maxWidthOrDefault(maxWidth)), quality, "foreground-process-unknown")
+		return 0, "foreground-process-unknown"
 	}
 	exe, err := processBaseName(pid)
 	if err != nil || !isEliteExecutable(exe) {
-		return encodeBlackJPEG(maxWidthOrDefault(maxWidth), blackHeight(maxWidthOrDefault(maxWidth)), quality, "foreground-is-not-elite")
-	}
-
-	sw, sh, dw, dh, err := captureDimensions(hwnd, maxWidth)
-	if err != nil {
-		return nil, CaptureInfo{}, err
-	}
-	if quality < 20 {
-		quality = 20
-	}
-	if quality > 95 {
-		quality = 95
+		return 0, "foreground-is-not-elite"
 	}
 	visible, _, _ := procIsWindowVisible.Call(hwnd)
 	iconic, _, _ := procIsIconicCapture.Call(hwnd)
 	if visible == 0 {
-		return encodeBlackJPEG(dw, dh, quality, "elite-not-visible")
+		return 0, "elite-not-visible"
 	}
 	if iconic != 0 {
-		return encodeBlackJPEG(dw, dh, quality, "elite-minimized")
+		return 0, "elite-minimized"
+	}
+	return pid, ""
+}
+
+func restoreCalibrationForeground(hwnd uintptr) {
+	if hwnd == 0 {
+		return
+	}
+	valid, _, _ := procIsWindow.Call(hwnd)
+	if valid == 0 {
+		return
 	}
 
-	// DirectX/Elite does not reliably paint into its window DC. Capture the
-	// on-screen compositor region only after positively verifying that the
-	// foreground process is Elite, then re-check focus before releasing pixels.
-	p := point{0, 0}
-	if r, _, e := procClientToScreen.Call(hwnd, uintptr(unsafe.Pointer(&p))); r == 0 {
-		return nil, CaptureInfo{}, syscallError("ClientToScreen", e)
-	}
-	screenDC, _, e := procGetDC.Call(0)
-	if screenDC == 0 {
-		return nil, CaptureInfo{}, syscallError("GetDC(screen)", e)
-	}
-	defer procReleaseDC.Call(0, screenDC)
-	memDC, _, e := procCreateCompatibleDC.Call(screenDC)
-	if memDC == 0 {
-		return nil, CaptureInfo{}, syscallError("CreateCompatibleDC", e)
-	}
-	defer procDeleteDC.Call(memDC)
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
-	bmi := bitmapInfo{}
-	bmi.Header.Size = uint32(unsafe.Sizeof(bmi.Header))
-	bmi.Header.Width = int32(dw)
-	bmi.Header.Height = -int32(dh)
-	bmi.Header.Planes = 1
-	bmi.Header.BitCount = 32
-	bmi.Header.Compression = biRGB
-	var bits unsafe.Pointer
-	hbmp, _, e := procCreateDIBSection.Call(screenDC, uintptr(unsafe.Pointer(&bmi)), dibRGBColors, uintptr(unsafe.Pointer(&bits)), 0, 0)
-	if hbmp == 0 || bits == nil {
-		return nil, CaptureInfo{}, syscallError("CreateDIBSection", e)
-	}
-	defer procDeleteObject.Call(hbmp)
-	old, _, _ := procSelectObject.Call(memDC, hbmp)
-	defer procSelectObject.Call(memDC, old)
-	procSetStretchBltMode.Call(memDC, stretchHalftone)
-	if r, _, e := procStretchBlt.Call(memDC, 0, 0, uintptr(dw), uintptr(dh), screenDC, uintptr(int32(p.X)), uintptr(int32(p.Y)), uintptr(sw), uintptr(sh), srcCopy); r == 0 {
-		return nil, CaptureInfo{}, syscallError("StretchBlt(Elite compositor region)", e)
-	}
+	currentThread, _, _ := procGetCurrentThreadID.Call()
+	fg, _, _ := procGetForegroundWindow.Call()
+	fgThread := windowThreadID(fg)
+	targetThread := windowThreadID(hwnd)
 
-	// Close the focus-change race: if the foreground/visibility state changed
-	// at any point while BitBlt was running, discard the captured pixels.
-	after, _, _ := procGetForegroundWindow.Call()
-	visibleAfter, _, _ := procIsWindowVisible.Call(hwnd)
-	iconicAfter, _, _ := procIsIconicCapture.Call(hwnd)
-	if after != hwnd || visibleAfter == 0 || iconicAfter != 0 {
-		return encodeBlackJPEG(dw, dh, quality, "elite-capture-state-changed")
-	}
-
-	n := dw * dh * 4
-	raw := unsafe.Slice((*byte)(bits), n)
-	img := image.NewRGBA(image.Rect(0, 0, dw, dh))
-	for y := 0; y < dh; y++ {
-		for x := 0; x < dw; x++ {
-			i := (y*dw + x) * 4
-			o := y*img.Stride + x*4
-			img.Pix[o+0] = raw[i+2]
-			img.Pix[o+1] = raw[i+1]
-			img.Pix[o+2] = raw[i+0]
-			img.Pix[o+3] = 0xff
+	attachedFG := false
+	attachedTarget := false
+	if fgThread != 0 && fgThread != currentThread {
+		if r, _, _ := procAttachThreadInput.Call(currentThread, fgThread, 1); r != 0 {
+			attachedFG = true
 		}
 	}
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
-		return nil, CaptureInfo{}, err
+	if targetThread != 0 && targetThread != currentThread && targetThread != fgThread {
+		if r, _, _ := procAttachThreadInput.Call(currentThread, targetThread, 1); r != 0 {
+			attachedTarget = true
+		}
 	}
-	return buf.Bytes(), CaptureInfo{Driver: w.Name(), Width: dw, Height: dh, SourceWidth: sw, SourceHeight: sh}, nil
+	defer func() {
+		if attachedTarget {
+			procAttachThreadInput.Call(currentThread, targetThread, 0)
+		}
+		if attachedFG {
+			procAttachThreadInput.Call(currentThread, fgThread, 0)
+		}
+	}()
+
+	procShowWindow.Call(hwnd, swRestore)
+	procBringWindowToTop.Call(hwnd)
+	procSetForegroundWindow.Call(hwnd)
+
+	deadline := time.Now().Add(650 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		now, _, _ := procGetForegroundWindow.Call()
+		if now == hwnd {
+			return
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
 }
 
 func maxWidthOrDefault(v int) int {
@@ -225,6 +200,10 @@ func blackHeight(width int) int {
 		h = 90
 	}
 	return h
+}
+
+func encodeBlackJPEG(dw, dh, quality int, reason string) ([]byte, CaptureInfo, error) {
+	return EncodeGameFrameJPEG(blankGameFrame("windows-wgc-elite-client", dw, dh, reason), quality)
 }
 
 func syscallError(name string, e error) error {

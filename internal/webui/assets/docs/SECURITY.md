@@ -6,7 +6,7 @@ JACoB intentionally has privileges that ordinary web pages do not: it can read E
 
 - **Elite-targeted input.** Input methods focus the verified `EliteDangerous64.exe` / `EliteDangerous.exe` window before injecting keys. Custom tabs cannot ask JACoB to target another process.
 - **Elite-only video.** Windows capture reads the verified Elite client window, never a rectangle from the desktop framebuffer. If Elite is absent, hidden, minimized, or not foreground, capture returns a freshly generated black frame.
-- **Derived vision only.** SDK 7 exposes `Elite.vision.info()` and `Elite.vision.sample()`. Samples contain feature coordinates, coarse frame motion, brightness and contrast. Raw pixels are not exposed to custom tabs.
+- **Derived vision only.** SDK 10 exposes derived Vision methods including `Elite.vision.info()`, `Elite.vision.sample()`, and `Elite.vision.inspect()`. Samples contain feature coordinates, coarse frame motion, brightness and contrast. Raw pixels are not exposed to custom tabs.
 - **Same-origin WebSockets and DNS-rebinding defense.** Browser WebSocket connections must originate from the same JACoB host and port. Cross-site and sandbox-`null` origins are rejected, and HTTP Host values are limited to `localhost`, loopback literals, or IP addresses actually assigned to this computer. This prevents a hostile website or rebinding domain from silently reaching localhost JACoB.
 - **Strong LAN pairing.** Automatically generated pairing tokens are 128-bit cryptographically random values. Configured LAN tokens shorter than 16 characters disable LAN access rather than silently weakening authentication.
 - **Remote mutation limits.** Installing/editing/removing custom tabs, changing Appearance HTML, and modifying Elite binding files are host-computer-only operations.
@@ -51,3 +51,24 @@ LAN mode currently uses plain HTTP/WebSocket transport. The 128-bit pairing toke
 ## Installed-tab trust boundary
 
 Custom tabs remain executable code chosen by the user. The sandbox and capability prompts block common direct network/control channels and protect host secrets, but they are not a formal information-flow sandbox. In particular, browser navigation behavior should not be relied on as a guarantee that a malicious tab can never disclose read-only game data. Only install custom tabs you trust with the journal/state data they are designed to consume.
+
+## No Capture distribution
+
+The Windows installer offers a privacy-focused No Capture build. It is compiled with both `norecorder` and `nocapture`.
+
+That build does not include the Windows keyboard recorder implementation or the Windows Elite screen-capture implementation. Game View/video, Vision inspection, OCR, and Vision calibration therefore report unavailable. Journal, Status.json, bindings, input automation, custom tabs, storage, networking, and overlays remain available.
+
+The installer preserves the previous optional-recorder choice when upgrading older installations: an installation that previously selected the no-recorder build upgrades to No Capture.
+
+
+## Canonical Elite frame service
+
+SDK 10 capture consumers share one OS-neutral frame contract. Game View, Vision, OCR and calibration all originate from a canonical frame whose pixel coordinates are the verified Elite Dangerous client area. A platform backend may use any native mechanism that satisfies that contract. It must never substitute a desktop or monitor image when it cannot safely isolate Elite.
+
+Current backends:
+
+- Windows: verified foreground Elite client capture. The backend is replaceable by Windows Graphics Capture without changing Vision or tabs.
+- Linux / Steam Deck: backend slot reserved for XDG Desktop Portal + PipeWire window capture. Until that safe window source exists, capture reports unavailable.
+- No Capture build: the capture backend is omitted entirely on every OS.
+
+`CaptureIntentCalibration` lets a backend temporarily focus Elite and obtain a frozen canonical frame. The calibration UI therefore uses the same 0..1 coordinate surface as live Vision.

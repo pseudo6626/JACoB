@@ -59,6 +59,7 @@ type Server struct {
 	recorder      platform.InputRecorder
 	capture       platform.CaptureDriver
 	vision        *vision.Tracker
+	calibration   *vision.Calibration
 	overlay       platform.OverlayDriver
 	tabs          *customtabs.Store
 	tabState      *tabstate.Store
@@ -114,6 +115,7 @@ func New(cfg Config) *Server {
 		s.mediaToken = mediaToken
 	}
 	s.vision = vision.New(s.capture)
+	s.calibration = vision.NewCalibration(s.capture)
 	localeStore, localeErr := localization.New(cfg.DataDir)
 	if localeErr != nil {
 		log.Printf("JACoB locale store unavailable: %v", localeErr)
@@ -189,6 +191,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/video/frame.jpg", s.handleVideoFrame)
 	mux.HandleFunc("/api/video.mjpeg", s.handleVideoMJPEG)
+	mux.HandleFunc("/api/vision/calibration.jpg", s.handleVisionCalibrationFrame)
 	mux.Handle("/", webui.Handler())
 	httpServer := &http.Server{
 		Addr:              s.cfg.Bind,
@@ -815,7 +818,8 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		}
 		s.sendResult(c, req.ID, map[string]any{"layer": layer, "cleared": true, "overlay": s.overlay.Info()})
 	case "video.info":
-		s.sendResult(c, req.ID, map[string]any{"available": s.capture.Available(), "driver": s.capture.Name(), "eliteOnly": true, "foregroundOnly": true, "rawFramesExposed": false})
+		_, privacyMatte := s.capture.(platform.PrivacyMatteCaptureDriver)
+		s.sendResult(c, req.ID, map[string]any{"available": s.capture.Available(), "driver": s.capture.Name(), "eliteOnly": true, "foregroundOnly": true, "rawFramesExposed": false, "privacyMatte": privacyMatte, "frameModel": "canonical-elite-client-v1", "desktopFallback": false})
 	case "vision.info":
 		if s.vision == nil {
 			s.sendResult(c, req.ID, map[string]any{"available": false, "eliteOnly": true, "foregroundOnly": true, "rawFramesExposed": false})
@@ -840,6 +844,55 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			return
 		}
 		s.sendResult(c, req.ID, sample)
+	case "vision.inspect":
+		if s.vision == nil {
+			_ = s.sendError(c, req.ID, "VISION_UNAVAILABLE", "derived game vision is unavailable")
+			return
+		}
+		raw, err := json.Marshal(req.Params)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		var inspectReq vision.InspectRequest
+		if err := json.Unmarshal(raw, &inspectReq); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		result, err := s.vision.Inspect(inspectReq)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "VISION_INSPECT_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "vision.calibration.arm":
+		if s.calibration == nil {
+			_ = s.sendError(c, req.ID, "VISION_UNAVAILABLE", "Vision calibration is unavailable")
+			return
+		}
+		timeoutMs := intParam(req.Params, "timeoutMs", 30000)
+		if timeoutMs < 5000 {
+			timeoutMs = 5000
+		}
+		if timeoutMs > 60000 {
+			timeoutMs = 60000
+		}
+		if err := s.calibration.Arm(time.Duration(timeoutMs) * time.Millisecond); err != nil {
+			_ = s.sendError(c, req.ID, "VISION_UNAVAILABLE", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, s.calibration.Status())
+	case "vision.calibration.status":
+		if s.calibration == nil {
+			s.sendResult(c, req.ID, map[string]any{"available": false, "armed": false, "ready": false})
+			return
+		}
+		s.sendResult(c, req.ID, s.calibration.Status())
+	case "vision.calibration.clear":
+		if s.calibration != nil {
+			s.calibration.Clear()
+		}
+		s.sendResult(c, req.ID, map[string]any{"cleared": true})
 	case "binding.press":
 		if !s.requireInput(c, req.ID) {
 			return
@@ -910,6 +963,26 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 	}
 }
 
+func (s *Server) handleVisionCalibrationFrame(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeMedia(r) {
+		http.Error(w, "media authorization required", http.StatusUnauthorized)
+		return
+	}
+	if s.calibration == nil {
+		http.Error(w, "Vision calibration unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	frame, _, ok := s.calibration.Frame()
+	if !ok {
+		http.Error(w, "no captured calibration frame", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	_, _ = w.Write(frame)
+}
+
 func stringMapParam(params map[string]any, key string) map[string]string {
 	out := map[string]string{}
 	raw, ok := params[key].(map[string]any)
@@ -952,7 +1025,7 @@ func (s *Server) systemInfo(includeSecret bool) map[string]any {
 	// token. A tab with Video permission must never receive a WebSocket credential.
 	mediaToken := s.mediaToken
 	return map[string]any{
-		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 9, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken,
+		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 10, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken,
 		"journalDir": journalDir, "bindingsDir": bindingsDir, "bindingsFile": bindingsFile, "bindingsFiles": bindingsFiles, "bindingsSource": s.bindings.ActiveSource(), "bindingsCount": len(s.bindings.ListActions()), "autoBind": s.autoBind,
 		"input": map[string]any{"enabled": s.cfg.EnableInput, "available": s.input.Available(), "driver": s.input.Name()}, "recorder": s.recorder.Status(), "capture": map[string]any{"available": s.capture.Available(), "driver": s.capture.Name(), "eliteOnly": true, "foregroundOnly": true}, "vision": func() map[string]any {
 			if s.vision != nil {
@@ -1103,7 +1176,7 @@ func validateWebSocketOrigin(r *http.Request) error {
 	return nil
 }
 
-func videoParams(r *http.Request) (int, int, int) {
+func videoParams(r *http.Request) (int, int, int, bool) {
 	q := r.URL.Query()
 	width := 960
 	quality := 60
@@ -1117,7 +1190,18 @@ func videoParams(r *http.Request) (int, int, int) {
 	if v, err := strconv.Atoi(q.Get("fps")); err == nil && v >= 1 && v <= 15 {
 		fps = v
 	}
-	return width, quality, fps
+	matteRaw := strings.ToLower(strings.TrimSpace(q.Get("matte")))
+	matte := matteRaw == "1" || matteRaw == "true" || matteRaw == "yes" || matteRaw == "on"
+	return width, quality, fps, matte
+}
+
+func captureVideoJPEG(c platform.CaptureDriver, maxWidth, quality int, matte bool) ([]byte, platform.CaptureInfo, error) {
+	if matte {
+		if m, ok := c.(platform.PrivacyMatteCaptureDriver); ok {
+			return m.CapturePrivacyMatteJPEG(maxWidth, quality)
+		}
+	}
+	return c.CaptureJPEG(maxWidth, quality)
 }
 
 func (s *Server) handleVideoFrame(w http.ResponseWriter, r *http.Request) {
@@ -1129,8 +1213,8 @@ func (s *Server) handleVideoFrame(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "capture unavailable: "+s.capture.Name(), http.StatusNotImplemented)
 		return
 	}
-	width, quality, _ := videoParams(r)
-	b, info, err := s.capture.CaptureJPEG(width, quality)
+	width, quality, _, matte := videoParams(r)
+	b, info, err := captureVideoJPEG(s.capture, width, quality, matte)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -1154,7 +1238,7 @@ func (s *Server) handleVideoMJPEG(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "capture unavailable: "+s.capture.Name(), http.StatusNotImplemented)
 		return
 	}
-	width, quality, fps := videoParams(r)
+	width, quality, fps, matte := videoParams(r)
 	boundary := "jacobframe"
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary="+boundary)
 	w.Header().Set("Cache-Control", "no-store")
@@ -1170,7 +1254,7 @@ func (s *Server) handleVideoMJPEG(w http.ResponseWriter, r *http.Request) {
 	tick := time.NewTicker(time.Second / time.Duration(fps))
 	defer tick.Stop()
 	for {
-		b, info, err := s.capture.CaptureJPEG(width, quality)
+		b, info, err := captureVideoJPEG(s.capture, width, quality, matte)
 		if err != nil {
 			return
 		}

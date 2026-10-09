@@ -1,6 +1,6 @@
 # JACoB — Journal Aligned Control Bridge
 
-> Current field build: **0.2.10 Alpha · SDK 9**
+> Current field build: **0.2.12 Alpha · SDK 10**
 
 JACoB is a local companion bridge for **Elite Dangerous**. It reads the live journal and `Status.json`, resolves control bindings, sends game input, hosts persistent custom HTML tabs, supplies a game-view stream, renders native HUD overlays, exports tab-generated files, and provides bounded access to public web APIs.
 
@@ -8,9 +8,9 @@ The core carries the common interfaces. User tabs carry route queues, race syste
 
 ## Installation
 
-Windows commanders should use the installer attached to the current [GitHub release](https://github.com/pseudo6626/JACoB/releases). It installs for the current Windows account, creates Start Menu entries, and registers an uninstaller. The Action Recorder is optional on the first installation.
+Windows commanders should use the installer attached to the current [GitHub release](https://github.com/pseudo6626/JACoB/releases). It installs for the current Windows account, creates Start Menu entries, and registers an uninstaller. The installer offers either the full capture-capable build or the No Capture privacy build on first installation.
 
-A newer setup detects the existing JACoB installation and offers an in-place update. Saved tabs, navigation settings, appearance files, and the existing Action Recorder choice are retained.
+A newer setup detects the existing JACoB installation and offers an in-place update. Saved tabs, navigation settings, appearance files, and the existing capture/privacy choice is retained.
 
 Installed user data is kept under:
 
@@ -46,7 +46,13 @@ The full custom-tab contract is recorded in:
 
 [`docs/JACOB_CUSTOM_TAB_REFERENCE.md`](docs/JACOB_CUSTOM_TAB_REFERENCE.md)
 
-SDK / protocol version **9** includes:
+SDK / protocol version **10** includes:
+
+- OS-neutral canonical Elite frame service: capture backends may differ by platform, while Vision/calibration coordinates and the no-desktop-fallback privacy rule remain identical
+
+- `Elite.vision.inspect()` plus standard host-owned Vision calibration/debug bounds
+- Game View privacy matte for windowed Elite; the built-in viewer blacks everything outside the verified Elite client while Vision keeps tight Elite-relative coordinates
+- a No Capture Windows build that omits the recorder and Windows screen-capture implementation, leaving Game View, Vision and OCR unavailable
 
 - host-brokered cross-tab actions through `Elite.actions`, allowing tools such as Touch Deck to invoke actions explicitly published by another saved tab
 - `Elite.tabs.list()` / `Elite.tabs.activate()` for safe host-mediated tab discovery and navigation

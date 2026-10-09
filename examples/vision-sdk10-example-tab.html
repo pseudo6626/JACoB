@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body{margin:0;padding:18px;background:#0a0e12;color:#e8edf0;font:14px system-ui}
+button{margin:4px;padding:8px 11px;background:#111315;color:#eee5dc;border:1px solid #8a430e;border-radius:0}
+pre{background:#050607;padding:10px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<h2>SDK 10 Vision example</h2>
+<button id="setup">Configure region + color</button>
+<button id="bounds">Show bounds</button>
+<button id="read">Inspect</button>
+<button id="clear">Clear bounds</button>
+<pre id="out">Ready.</pre>
+<script>
+const out=document.querySelector('#out');
+let config=null;
+
+document.querySelector('#setup').onclick=async()=>{
+  try{
+    config=await Elite.vision.configure('example-color-region',{
+      calibrate:true,
+      pickColor:true,
+      averageSize:11,
+      label:'Example Vision region'
+    });
+    out.textContent=JSON.stringify(config,null,2);
+  }catch(e){out.textContent=e.code+': '+e.message}
+};
+
+document.querySelector('#bounds').onclick=async()=>{
+  try{
+    if(!config) config=await Elite.vision.configure('example-color-region',{calibrate:true,pickColor:true});
+    out.textContent=JSON.stringify(await Elite.vision.debug.show({region:config.region,label:'EXAMPLE'}),null,2);
+  }catch(e){out.textContent=e.code+': '+e.message}
+};
+
+document.querySelector('#read').onclick=async()=>{
+  try{
+    if(!config) config=await Elite.vision.configure('example-color-region',{calibrate:true,pickColor:true});
+    out.textContent=JSON.stringify(await Elite.vision.inspect({
+      region:config.region,
+      operations:{
+        target:{type:'colorPresent',color:config.color,tolerance:70,minimumCoverage:.03}
+      }
+    }),null,2);
+  }catch(e){out.textContent=e.code+': '+e.message}
+};
+
+document.querySelector('#clear').onclick=()=>Elite.vision.debug.clear();
+</script>
+</body>
+</html>

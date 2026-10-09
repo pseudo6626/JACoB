@@ -1,9 +1,7 @@
 package vision
 
 import (
-	"bytes"
 	"image"
-	_ "image/jpeg"
 	"math"
 	"sort"
 	"sync"
@@ -61,12 +59,13 @@ func (t *Tracker) Info() map[string]any {
 		driver = t.capture.Name()
 	}
 	return map[string]any{
-		"available":        available,
-		"captureDriver":    driver,
-		"eliteOnly":        true,
-		"foregroundOnly":   true,
-		"rawFramesExposed": false,
-		"derived":          []string{"features", "frame-motion", "luma", "contrast"},
+		"available":         available,
+		"captureDriver":     driver,
+		"eliteOnly":         true,
+		"foregroundOnly":    true,
+		"rawFramesExposed":  false,
+		"derived":           []string{"features", "frame-motion", "luma", "contrast", "region-color", "region-color-fill", "region-statistics", "text", "text-lines"},
+		"inspectOperations": []string{"colorPresent", "colorCoverage", "colorVerticalFill", "luma", "contrast", "edgeDensity", "text", "textLines"},
 	}
 }
 
@@ -90,10 +89,11 @@ func (t *Tracker) Sample(maxWidth int) (Sample, error) {
 	if maxWidth > 640 {
 		maxWidth = 640
 	}
-	jpegBytes, info, err := t.capture.CaptureJPEG(maxWidth, 72)
+	frame, err := t.capture.CaptureFrame(maxWidth, platform.CaptureIntentLive)
 	if err != nil {
 		return out, err
 	}
+	info := platform.CaptureInfoForFrame(frame)
 	out.Available = true
 	out.Blanked = info.Blanked
 	out.Reason = info.Reason
@@ -105,7 +105,7 @@ func (t *Tracker) Sample(maxWidth int) (Sample, error) {
 		t.lastSample = cloneSample(out)
 		return out, nil
 	}
-	img, _, err := image.Decode(bytes.NewReader(jpegBytes))
+	img, err := frame.Image()
 	if err != nil {
 		return out, err
 	}
