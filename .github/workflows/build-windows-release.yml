@@ -6,7 +6,7 @@ on:
       version:
         description: Version from internal/buildinfo/version.go
         required: true
-        default: 0.2.11-alpha
+        default: 0.2.12-alpha
       create_draft_release:
         description: Create/update a draft GitHub release with the built assets
         required: true
@@ -52,31 +52,43 @@ jobs:
 
           $env:GOOS="linux"
           go build -trimpath -o "dist/JACoB-$v-linux-amd64" ./cmd/jacob
+          go build -trimpath -tags "norecorder,nocapture" -o "dist/JACoB-$v-linux-amd64-no-capture" ./cmd/jacob
 
           $env:GOOS="windows"
           go build -trimpath -ldflags="-H=windowsgui" -o "dist/JACoB-$v-win-x64-portable.exe" ./cmd/jacob
-          go build -trimpath -tags norecorder -ldflags="-H=windowsgui" -o "dist/JACoB-$v-win-x64-no-recorder.exe" ./cmd/jacob
+          go build -trimpath -tags "norecorder,nocapture" -ldflags="-H=windowsgui" -o "dist/JACoB-$v-win-x64-no-capture.exe" ./cmd/jacob
 
           Copy-Item "dist/JACoB-$v-win-x64-portable.exe" cmd/installer/payload/JACoB.exe
-          Copy-Item "dist/JACoB-$v-win-x64-no-recorder.exe" cmd/installer/payload/JACoB-no-recorder.exe
+          Copy-Item "dist/JACoB-$v-win-x64-no-capture.exe" cmd/installer/payload/JACoB-no-capture.exe
           try {
             go build -trimpath -ldflags="-H=windowsgui" -o "dist/JACoB-$v-win-x64.exe" ./cmd/installer
           } finally {
-            Remove-Item cmd/installer/payload/JACoB.exe,cmd/installer/payload/JACoB-no-recorder.exe -Force -ErrorAction SilentlyContinue
+            Remove-Item cmd/installer/payload/JACoB.exe,cmd/installer/payload/JACoB-no-capture.exe -Force -ErrorAction SilentlyContinue
           }
 
-          $hash=(Get-FileHash "dist/JACoB-$v-win-x64.exe" -Algorithm SHA256).Hash.ToLower()
-          "$hash  JACoB-$v-win-x64.exe" | Out-File "dist/JACoB-$v-win-x64.exe.sha256" -Encoding ascii
+          $files = @(
+            "dist/JACoB-$v-win-x64.exe",
+            "dist/JACoB-$v-win-x64-portable.exe",
+            "dist/JACoB-$v-win-x64-no-capture.exe",
+            "dist/JACoB-$v-linux-amd64",
+            "dist/JACoB-$v-linux-amd64-no-capture"
+          )
+          $sumLines = foreach ($file in $files) {
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+            "$hash  $([IO.Path]::GetFileName($file))"
+          }
+          $sumLines | Out-File "dist/SHA256SUMS.txt" -Encoding ascii
 
       - uses: actions/upload-artifact@v4
         with:
           name: JACoB-${{ inputs.version }}
           path: |
             dist/JACoB-${{ inputs.version }}-win-x64.exe
-            dist/JACoB-${{ inputs.version }}-win-x64.exe.sha256
             dist/JACoB-${{ inputs.version }}-win-x64-portable.exe
-            dist/JACoB-${{ inputs.version }}-win-x64-no-recorder.exe
+            dist/JACoB-${{ inputs.version }}-win-x64-no-capture.exe
             dist/JACoB-${{ inputs.version }}-linux-amd64
+            dist/JACoB-${{ inputs.version }}-linux-amd64-no-capture
+            dist/SHA256SUMS.txt
             RELEASE-NOTES-${{ inputs.version }}.md
 
       - name: Create or update draft release
@@ -89,10 +101,11 @@ jobs:
           $tag="v$v"
           $assets=@(
             "dist/JACoB-$v-win-x64.exe",
-            "dist/JACoB-$v-win-x64.exe.sha256",
             "dist/JACoB-$v-win-x64-portable.exe",
-            "dist/JACoB-$v-win-x64-no-recorder.exe",
-            "dist/JACoB-$v-linux-amd64"
+            "dist/JACoB-$v-win-x64-no-capture.exe",
+            "dist/JACoB-$v-linux-amd64",
+            "dist/JACoB-$v-linux-amd64-no-capture",
+            "dist/SHA256SUMS.txt"
           )
           $releaseTags = @(gh release list --limit 100 --json tagName --jq '.[].tagName')
           $exists = $releaseTags -contains $tag
