@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"jacob/internal/buildinfo"
+	"jacob/internal/networkdiag"
 )
 
 //go:embed payload/*
@@ -139,6 +140,10 @@ func main() {
 			return
 		}
 
+		if err := networkdiag.EnsureInteractive(target, opts.healthPort); err != nil {
+			updateLog(dataDir, "LAN firewall reconciliation warning: %v", err)
+		}
+
 		newPID, err := startJACoB(target, dataDir)
 		if err != nil {
 			updateLog(dataDir, "new executable could not start: %v", err)
@@ -202,6 +207,10 @@ func main() {
 	if err := install(includeRecorder); err != nil {
 		msg("JACoB Setup", "Installation failed:\n\n"+err.Error(), mbOK|mbIconWarning)
 		return
+	}
+
+	if err := networkdiag.EnsureInteractive(filepath.Join(installDir(), "JACoB.exe"), 6626); err != nil {
+		msg("JACoB Network Setup", "JACoB was installed, but Windows network access could not be fully configured.\n\n"+err.Error()+"\n\nYou can repair this later from Settings → LAN access → Network Doctor.", mbOK|mbIconWarning)
 	}
 
 	verb := "installed"
@@ -355,6 +364,7 @@ func uninstall() {
 
 	dir := installDir()
 	_ = exec.Command("taskkill", "/IM", "JACoB.exe", "/F").Run()
+	_ = networkdiag.RemoveInteractive()
 	removeShortcuts()
 	_ = hidden("reg", "delete", uninstallKey, "/f").Run()
 

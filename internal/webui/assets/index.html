@@ -108,17 +108,19 @@
     </article>
     <article class="card">
       <h2>LAN access</h2>
-      <p class="muted">Open JACoB from another browser on the same network.</p>
-      <div class="pairing-layout">
-        <div class="pairing-details">
-          <dl class="facts"><dt>LAN</dt><dd id="lan-enabled">—</dd><dt>Addresses</dt><dd id="lan-addresses" class="mono wrap">—</dd><dt>Pair token</dt><dd><span id="pair-token" class="mono">—</span> <button id="copy-pair-token" class="secondary compact" type="button" disabled>Copy</button></dd></dl>
-          <div class="row"><input id="remote-token" placeholder="Pair token"><button id="save-token">Pair / reconnect</button></div>
-        </div>
-        <div id="pair-qr-wrap" class="pair-qr-panel" hidden>
-          <div id="pair-qr" class="pair-qr-code" aria-live="polite"></div>
-          <div class="pair-qr-label">Scan pairing key</div>
-        </div>
+      <p class="muted">Open JACoB from a phone or tablet on the same home network.</p>
+      <dl class="facts network-facts">
+        <dt>LAN</dt><dd id="lan-enabled">—</dd>
+        <dt>Connect URL</dt><dd><span id="lan-url" class="mono wrap">—</span> <button id="copy-lan-url" class="secondary compact" type="button" disabled>Copy</button></dd>
+        <dt>Other addresses</dt><dd id="lan-addresses" class="mono wrap">—</dd>
+        <dt>Pair token</dt><dd><span id="pair-token" class="mono wrap">—</span> <button id="copy-pair-token" class="secondary compact" type="button" disabled>Copy</button></dd>
+      </dl>
+      <div id="pair-qr-wrap" class="pairing-qr-grid" hidden>
+        <div class="pair-qr-panel"><div id="url-qr" class="pair-qr-code" aria-live="polite"></div><div class="pair-qr-label">Open JACoB</div></div>
+        <div class="pair-qr-panel"><div id="pair-qr" class="pair-qr-code" aria-live="polite"></div><div class="pair-qr-label">Pair key</div></div>
       </div>
+      <div class="row network-actions"><button id="run-network-doctor" class="secondary" type="button">Run Network Doctor</button><button id="repair-network" class="secondary" type="button" hidden>Repair Windows access</button></div>
+      <div class="row"><input id="remote-token" placeholder="Pair token"><button id="save-token">Pair / reconnect</button></div>
       <pre id="network-result" class="output small">Local browsers do not need a token.</pre>
     </article>
     <article class="card">
@@ -174,7 +176,7 @@
 </section>
 </main>
 <div id="shutdown-screen" class="shutdown-screen" hidden><div><strong>JACoB closed</strong><span>You can close this browser tab.</span></div></div>
-<footer id="footer-slot"><span>JACoB Alpha 0.2.12.1 · SDK 10</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a></footer>
+<footer id="footer-slot"><span>JACoB Alpha 0.2.13 · SDK 10</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a></footer>
 <script src="/locales.js"></script>
 <script src="/app.js"></script>
 </body></html>

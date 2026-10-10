@@ -49,11 +49,13 @@ JACoB prefers Secondary keyboard bindings when executing commands and falls back
 
 ## Phone or tablet
 
-Open **Settings → LAN access**.
+Open **Settings → LAN access** on the computer running JACoB. The **Connect URL** is the preferred address for the home network. Scan **Open JACoB** or type that URL on the phone/tablet, then scan or copy the separate **Pair key**.
 
-Use one of the shown LAN addresses from the other device. Enter the pairing token in that browser and reconnect.
+If the mobile device cannot connect, run **Network Doctor**. On Windows it checks the effective listener, active network category, preferred LAN address, and the managed `JACoB Local Network` firewall rule. **Repair Windows access** requests elevation only when the firewall rule needs to be created or corrected. The managed rule allows TCP 6626 only for `LocalSubnet` on Private/Domain profiles and does not open JACoB on Public networks.
 
-Software installation is restricted to a browser running on the host computer.
+If Network Doctor reports the listener and firewall as ready but the mobile device still cannot load the page, check for guest Wi-Fi/client isolation, separate VLANs, or VPN software that blocks local-network traffic.
+
+Software installation, network repair, and other host mutations are restricted to a browser running on the host computer.
 
 ## HUD overlays
 

@@ -30,6 +30,7 @@ import (
 	"jacob/internal/customtabs"
 	"jacob/internal/journal"
 	"jacob/internal/localization"
+	"jacob/internal/networkdiag"
 	"jacob/internal/platform"
 	"jacob/internal/tabstate"
 	"jacob/internal/updater"
@@ -354,6 +355,22 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		s.sendResult(c, req.ID, map[string]any{"events": events, "info": info})
 	case "system.health":
 		s.sendResult(c, req.ID, s.healthForClient(c.local))
+	case "network.diagnostics":
+		if !s.requireLocal(c, req.ID, "network diagnostics") {
+			return
+		}
+		s.sendResult(c, req.ID, s.networkDiagnostics())
+	case "network.repair":
+		if !s.requireLocal(c, req.ID, "network repair") {
+			return
+		}
+		exe, _ := os.Executable()
+		port, _ := strconv.Atoi(portOf(s.cfg.Bind))
+		if err := networkdiag.EnsureInteractive(exe, port); err != nil {
+			_ = s.sendError(c, req.ID, "NETWORK_REPAIR_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, s.networkDiagnostics())
 	case "locale.get":
 		if s.locale == nil {
 			s.sendResult(c, req.ID, map[string]any{"language": localization.DefaultLanguage, "supported": localization.Supported()})
@@ -1018,12 +1035,59 @@ func stringMapParam(params map[string]any, key string) map[string]string {
 	return out
 }
 
+func (s *Server) networkDiagnostics() map[string]any {
+	addresses := localIPv4s()
+	preferred := preferredLocalIPv4(addresses)
+	port := portOf(s.cfg.Bind)
+	preferredURL := ""
+	if preferred != "" {
+		preferredURL = "http://" + preferred + ":" + port + "/"
+	}
+	warnings := []string{}
+	bindHost, _, err := net.SplitHostPort(s.cfg.Bind)
+	bindOK := err == nil
+	if err != nil {
+		warnings = append(warnings, "configured bind address is invalid: "+s.cfg.Bind)
+	} else if s.cfg.LANEnabled && net.ParseIP(bindHost) != nil && net.ParseIP(bindHost).IsLoopback() {
+		bindOK = false
+		warnings = append(warnings, "LAN is enabled but JACoB is bound only to loopback")
+	} else if !s.cfg.LANEnabled && (bindHost == "0.0.0.0" || bindHost == "::") {
+		bindOK = false
+		warnings = append(warnings, "LAN is disabled but JACoB is listening on all interfaces")
+	}
+	if s.cfg.LANEnabled && preferred == "" {
+		warnings = append(warnings, "no usable IPv4 LAN address was found")
+	}
+	exe, _ := os.Executable()
+	portNum, _ := strconv.Atoi(port)
+	host := networkdiag.Inspect(exe, portNum)
+	for _, p := range host.Profiles {
+		if strings.EqualFold(p.NetworkCategory, "Public") {
+			warnings = append(warnings, "Windows reports an active Public network profile; JACoB intentionally opens its managed firewall rule only on Private/Domain networks")
+		}
+	}
+	return map[string]any{
+		"lanEnabled":       s.cfg.LANEnabled,
+		"bind":             s.cfg.Bind,
+		"bindOK":           bindOK,
+		"port":             port,
+		"addresses":        addresses,
+		"preferredAddress": preferred,
+		"preferredURL":     preferredURL,
+		"host":             host,
+		"warnings":         warnings,
+	}
+}
+
 func (s *Server) systemInfo(includeSecret bool) map[string]any {
 	host, _ := os.Hostname()
 	lan := map[string]any{"enabled": s.cfg.LANEnabled}
 	if s.cfg.LANEnabled {
+		addresses := localIPv4s()
 		lan["port"] = portOf(s.cfg.Bind)
-		lan["addresses"] = localIPv4s()
+		lan["addresses"] = addresses
+		lan["preferredAddress"] = preferredLocalIPv4(addresses)
+		lan["effectiveBind"] = s.cfg.Bind
 		if includeSecret {
 			lan["pairToken"] = s.cfg.PairToken
 		}
@@ -1503,6 +1567,44 @@ func portOf(bind string) string {
 	return "6626"
 }
 
+func isRFC1918(ip net.IP) bool {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	return ip4[0] == 10 || (ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31) || (ip4[0] == 192 && ip4[1] == 168)
+}
+
+func preferredRouteIPv4() string {
+	conn, err := net.Dial("udp4", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	if a, ok := conn.LocalAddr().(*net.UDPAddr); ok && a.IP != nil && a.IP.To4() != nil {
+		return a.IP.String()
+	}
+	return ""
+}
+
+func preferredLocalIPv4(addresses []string) string {
+	if len(addresses) == 0 {
+		return ""
+	}
+	route := preferredRouteIPv4()
+	for _, address := range addresses {
+		if address == route {
+			return address
+		}
+	}
+	for _, address := range addresses {
+		if isRFC1918(net.ParseIP(address)) {
+			return address
+		}
+	}
+	return addresses[0]
+}
+
 func localIPv4s() []string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
@@ -1523,16 +1625,30 @@ func localIPv4s() []string {
 			case *net.IPAddr:
 				ip = v.IP
 			}
-			if ip == nil || ip.IsLoopback() || ip.To4() == nil {
+			if ip == nil || ip.IsLoopback() || ip.To4() == nil || ip.IsLinkLocalUnicast() {
 				continue
 			}
-			s := ip.String()
-			if !seen[s] {
-				seen[s] = true
-				out = append(out, s)
+			value := ip.String()
+			if !seen[value] {
+				seen[value] = true
+				out = append(out, value)
 			}
 		}
 	}
+	route := preferredRouteIPv4()
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i] == route {
+			return true
+		}
+		if out[j] == route {
+			return false
+		}
+		ai, aj := isRFC1918(net.ParseIP(out[i])), isRFC1918(net.ParseIP(out[j]))
+		if ai != aj {
+			return ai
+		}
+		return out[i] < out[j]
+	})
 	return out
 }
 

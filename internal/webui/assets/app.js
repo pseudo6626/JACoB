@@ -1,4 +1,4 @@
-/* JACoB local pairing QR renderer.
+/* JACoB local QR renderer.
    Encodes the JACoB pairing token as QR Version 2-L, byte mode (up to 32 UTF-8 bytes).
    No network requests, third-party services, or token disclosure leave the host. */
 (() => {
@@ -48,7 +48,7 @@
 
   function dataCodewords(text) {
     const bytes = new TextEncoder().encode(String(text || ''));
-    if (bytes.length < 1 || bytes.length > 32) throw new Error('Pair token must be 1-32 UTF-8 bytes for QR v2-L.');
+    if (bytes.length < 1 || bytes.length > 32) throw new Error('QR content must be 1-32 UTF-8 bytes for QR v2-L.');
     const bits = [];
     appendBits(bits, 0x4, 4); // Byte mode
     appendBits(bits, bytes.length, 8);
@@ -153,7 +153,7 @@
     const m = matrix(text), dim = SIZE + border * 2;
     let d = '';
     for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) if (m[y][x]) d += `M${x + border},${y + border}h1v1h-1z`;
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${dim} ${dim}" role="img" aria-label="JACoB pairing token QR code" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${dim} ${dim}" role="img" aria-label="JACoB local QR code" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
   }
 
   function render(el, text) {
@@ -317,7 +317,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     const box=document.createElement('div');box.appendChild(frag);return box.innerHTML;
   }
   const defaultBrand='<strong>JACoB</strong><span>Journal Aligned Control Bridge</span>';
-  const defaultFooter='<span>JACoB Alpha 0.2.12.1 · SDK 10</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';
+  const defaultFooter='<span>JACoB Alpha 0.2.13 · SDK 10</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';
   function applyAppearance(html=''){
     state.themeHTML=html||'';
     $('#jacob-user-theme').textContent='';
@@ -359,20 +359,50 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
   }
 
   function token(){return localStorage.getItem('jacob-pair-token')||''}
-  async function copyPairToken(){
-    const value=state.core?.lan?.pairToken||'';if(!value)return;
-    let ok=false;try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(value);ok=true}}catch{}
+  async function copyText(value,button){
+    value=String(value||'');if(!value)return false;let ok=false;
+    try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(value);ok=true}}catch{}
     if(!ok){const ta=document.createElement('textarea');ta.value=value;ta.readOnly=true;ta.style.cssText='position:fixed;opacity:0;pointer-events:none';document.body.appendChild(ta);ta.select();try{ok=document.execCommand('copy')}catch{}ta.remove()}
-    const b=$('#copy-pair-token');if(b){const t=b.textContent;b.textContent=ok?'Copied':'Copy failed';setTimeout(()=>b.textContent=t,1200)}
+    if(button){const t=button.textContent;button.textContent=ok?'Copied':'Copy failed';setTimeout(()=>button.textContent=t,1200)}
+    return ok
   }
+  async function copyPairToken(){return copyText(state.core?.lan?.pairToken||'',$('#copy-pair-token'))}
+  async function copyLANURL(){return copyText(state.lanURL||'',$('#copy-lan-url'))}
   function ensurePairUI(){
-    const tokenEl=$('#pair-token');if(!tokenEl||$('#copy-pair-token'))return;
-    const style=document.createElement('style');style.textContent='.jacob-pair-row{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.jacob-pair-copy{padding:4px 7px;font-size:11px}.jacob-pair-qr{width:148px;margin:10px 0 0 auto;padding:9px;border:1px solid #34383b;background:#090b0c;text-align:center}.jacob-pair-qr[hidden]{display:none}.jacob-pair-qr-code{width:128px;height:128px;margin:auto;background:#fff}.jacob-pair-qr-code svg{display:block;width:100%;height:100%}.jacob-pair-qr-label{margin-top:6px;color:#98918a;font:10px ui-monospace,Consolas,monospace;text-transform:uppercase;letter-spacing:.05em}@media(max-width:760px){.jacob-pair-qr{margin-left:0}}';document.head.appendChild(style);
-    const dd=tokenEl.parentElement,wrap=document.createElement('span');wrap.className='jacob-pair-row';dd.insertBefore(wrap,tokenEl);wrap.appendChild(tokenEl);const btn=document.createElement('button');btn.id='copy-pair-token';btn.type='button';btn.className='secondary jacob-pair-copy';btn.textContent='Copy';btn.disabled=true;btn.onclick=copyPairToken;wrap.appendChild(btn);
-    const card=tokenEl.closest('article.card')||tokenEl.closest('.card');if(card){const panel=document.createElement('div');panel.id='pair-qr-wrap';panel.className='jacob-pair-qr';panel.hidden=true;panel.innerHTML='<div id="pair-qr" class="jacob-pair-qr-code" aria-live="polite"></div><div class="jacob-pair-qr-label">Scan pairing key</div>';const net=$('#network-result');card.insertBefore(panel,net||null)}
+    const pair=$('#copy-pair-token'),url=$('#copy-lan-url');
+    if(pair&&!pair.dataset.bound){pair.dataset.bound='1';pair.onclick=copyPairToken}
+    if(url&&!url.dataset.bound){url.dataset.bound='1';url.onclick=copyLANURL}
   }
-  function renderPairQR(value=''){
-    ensurePairUI();value=String(value||'').trim();const w=$('#pair-qr-wrap'),b=$('#pair-qr'),c=$('#copy-pair-token');if(c)c.disabled=!value;if(!w||!b)return;if(!value){w.hidden=true;b.innerHTML='';return}w.hidden=false;if(globalThis.PairQR?.render)globalThis.PairQR.render(b,value);else{b.textContent='QR unavailable'}
+  function renderPairQR(tokenValue='',urlValue=''){
+    ensurePairUI();tokenValue=String(tokenValue||'').trim();urlValue=String(urlValue||'').trim();
+    const wrap=$('#pair-qr-wrap'),tokenQR=$('#pair-qr'),urlQR=$('#url-qr'),pairCopy=$('#copy-pair-token'),urlCopy=$('#copy-lan-url');
+    if(pairCopy)pairCopy.disabled=!tokenValue;if(urlCopy)urlCopy.disabled=!urlValue;if(!wrap)return;
+    wrap.hidden=!(tokenValue||urlValue);
+    if(tokenQR){tokenQR.innerHTML='';if(tokenValue){if(globalThis.PairQR?.render)globalThis.PairQR.render(tokenQR,tokenValue);else tokenQR.textContent='QR unavailable'}}
+    if(urlQR){urlQR.innerHTML='';if(urlValue){if(globalThis.PairQR?.render)globalThis.PairQR.render(urlQR,urlValue);else urlQR.textContent='QR unavailable'}}
+  }
+  function formatNetworkDoctor(r={}){
+    const lines=[];
+    lines.push(`Listener: ${r.bindOK?'READY':'CHECK'} · ${r.bind||'unknown'}`);
+    if(r.preferredURL)lines.push(`Recommended mobile URL: ${r.preferredURL}`);
+    if(Array.isArray(r.addresses)&&r.addresses.length>1)lines.push(`Other interfaces: ${r.addresses.filter(x=>x!==r.preferredAddress).join(', ')||'none'}`);
+    const host=r.host||{};
+    if(host.supported){
+      const profiles=(host.profiles||[]).map(p=>`${p.interfaceAlias||p.name||'network'}: ${p.networkCategory||'Unknown'}`).join(', ');
+      lines.push(`Windows network: ${profiles||'no active profile reported'}`);
+      lines.push(`Firewall: ${host.firewallOK?'READY':host.firewallRulePresent?'CHECK RULE':'RULE MISSING'}`);
+      if(host.firewallRulePresent)lines.push(`Firewall scope: ${host.firewallProfiles||'unknown'} · TCP ${host.firewallPort||'?'} · ${(host.firewallRemote||[]).join(', ')||'unknown remote scope'}`);
+      if(host.error)lines.push(`Windows check: ${host.error}`);
+    }
+    for(const warning of r.warnings||[])lines.push(`Warning: ${warning}`);
+    if(!r.warnings?.length&&r.bindOK&&(!host.supported||host.firewallOK))lines.push('Result: READY FOR MOBILE CONNECTION');
+    return lines.join('\n')
+  }
+  async function runNetworkDoctor(repair=false){
+    const out=$('#network-result');if(!isLocal){if(out)out.textContent=tr('Network Doctor is available on the host computer.');return null}
+    if(out)out.textContent=repair?'Requesting Windows network repair…':'Checking listener, network profile, addresses and firewall…';
+    try{const r=await request(repair?'network.repair':'network.diagnostics');if(out)out.textContent=formatNetworkDoctor(r);const b=$('#repair-network');if(b)b.hidden=!(r?.host?.supported&&!r?.host?.firewallOK);return r}
+    catch(e){if(out)out.textContent=`${e?.code||'NETWORK'}: ${e?.message||e}`;throw e}
   }
   function socketURL(){const proto=location.protocol==='https:'?'wss':'ws';const q=!isLocal&&token()?`?token=${encodeURIComponent(token())}`:'';return `${proto}://${location.host}/ws${q}`}
   function mediaURL(path,options={}){const q=new URLSearchParams();for(const [k,v] of Object.entries(options))if(v!==undefined&&v!==null)q.set(k,String(v));const auth=state.core?.mediaToken||'';if(auth)q.set('token',auth);q.set('_',Date.now());return `${path}?${q.toString()}`}
@@ -450,9 +480,9 @@ Allow this capability on this browser?`);
     clearTimeout(state.reconnectTimer);
     if(state.socket)try{state.socket.close()}catch{}
     const ws=new WebSocket(socketURL());state.socket=ws;
-    ws.onopen=()=>{setConnection(true);bootstrap()};
-    ws.onclose=()=>{setConnection(false);if(state.quitting){showClosed();return}if(state.updating){$('#connection').textContent=tr('UPDATING');state.reconnectTimer=setTimeout(connect,3000);return}state.reconnectTimer=setTimeout(connect,1800)};
-    ws.onerror=()=>{};
+    ws.onopen=()=>{setConnection(true);if(!isLocal&&$('#network-result'))$('#network-result').textContent=tr('Paired. Mobile connection is online.');bootstrap()};
+    ws.onclose=()=>{setConnection(false);if(state.quitting){showClosed();return}if(state.updating){$('#connection').textContent=tr('UPDATING');state.reconnectTimer=setTimeout(connect,3000);return}if(!isLocal&&$('#network-result'))$('#network-result').textContent=token()?tr('The JACoB page loaded, but pairing failed. Check the pair key shown on the host computer.'):tr('Enter the pair token shown on the computer running JACoB.');state.reconnectTimer=setTimeout(connect,1800)};
+    ws.onerror=()=>{if(!isLocal&&$('#network-result')&&!token())$('#network-result').textContent=tr('JACoB is reachable. Enter the pair token to finish connecting.')};
     ws.onmessage=ev=>{let m;try{m=JSON.parse(ev.data)}catch{return}if(m.type==='response'){const p=state.pending.get(m.id);if(p){state.pending.delete(m.id);m.ok?p.resolve(m.result):p.reject(m.error)}return}if(m.type==='event')handleEvent(m.event,m.data)};
   }
   function request(method,params={}){
@@ -497,7 +527,12 @@ Allow this capability on this browser?`);
     if($('#home-event-name'))$('#home-event-name').textContent=s.lastJournalEvent?.event||tr('Waiting…');
     if($('#home-journal-state'))$('#home-journal-state').textContent=s.journalFile||tr('Waiting for journal');
   }
-  function renderLAN(lan={}){$('#lan-enabled').textContent=lan.enabled?tr('enabled'):tr('disabled');$('#lan-addresses').textContent=(lan.addresses||[]).map(a=>`http://${a}:${lan.port||6626}/`).join('\n')||'—';const p=lan.pairToken||'';$('#pair-token').textContent=p||(!isLocal?tr('hidden on remote clients'):'—');$('#remote-token').value=token();renderPairQR(p)}
+  function renderLAN(lan={}){
+    $('#lan-enabled').textContent=lan.enabled?tr('enabled'):tr('disabled');
+    const addresses=lan.addresses||[],preferred=lan.preferredAddress||addresses[0]||'',port=lan.port||6626,url=preferred?`http://${preferred}:${port}/`:'';state.lanURL=url;
+    const other=addresses.filter(a=>a!==preferred).map(a=>`http://${a}:${port}/`);$('#lan-url').textContent=url||'—';$('#lan-addresses').textContent=other.join('\n')||'—';
+    const p=lan.pairToken||'';$('#pair-token').textContent=p||(!isLocal?tr('hidden on remote clients'):'—');$('#remote-token').value=token();renderPairQR(p,url)
+  }
   function setConnection(on){const el=$('#connection');el.textContent=on?tr('ONLINE'):tr('OFFLINE');el.className=`status-mark ${on?'online':'offline'}`}
   function addStream(kind,data){const row=document.createElement('div');row.className='stream-line';const summary=kind==='journal'?(data?.event||''):kind==='recorder.input'?`${data?.type||''} ${data?.key||''}`:'';row.innerHTML=`<span class="time">${new Date().toLocaleTimeString()}</span><span class="kind">${escapeHTML(kind)}</span>${escapeHTML(summary)}`;const box=$('#stream');box.prepend(row);while(box.children.length>60)box.lastChild.remove()}
 
@@ -686,6 +721,8 @@ Allow this capability on this browser?`);
   $('#binding-filter').oninput=renderBindingOptions;$('#binding-action').onchange=renderBindingDetail;
   $('#press-binding').onclick=async()=>{try{$('#binding-detail').textContent=pretty(await request('binding.press',{action:$('#binding-action').value}))}catch(e){$('#binding-detail').textContent=pretty(e)}};
   $('#save-token').onclick=()=>{const t=$('#remote-token').value.trim();if(t)localStorage.setItem('jacob-pair-token',t);else localStorage.removeItem('jacob-pair-token');$('#network-result').textContent=tr('Pair token saved. Reconnecting…');stopVideo();connect()};
+  if($('#run-network-doctor'))$('#run-network-doctor').onclick=()=>runNetworkDoctor(false);
+  if($('#repair-network'))$('#repair-network').onclick=()=>runNetworkDoctor(true);
 
   async function checkForUpdates({quiet=false}={}){
     const out=$('#update-result'),btn=$('#check-update'),install=$('#install-update');if(!state.socket||state.socket.readyState!==WebSocket.OPEN)return;if(quiet&&!state.core?.localClient)return;if(!quiet){btn.disabled=true;install.disabled=true;out.textContent=tr('Querying the release channel…')}

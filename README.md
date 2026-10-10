@@ -1,6 +1,6 @@
 # JACoB — Journal Aligned Control Bridge
 
-> Current field build: **0.2.12.1 Alpha · SDK 10**
+> Current field build: **0.2.13 Alpha · SDK 10**
 
 JACoB is a local companion bridge for **Elite Dangerous**. It reads the live journal and `Status.json`, resolves control bindings, sends game input, hosts persistent custom HTML tabs, supplies a game-view stream, renders native HUD overlays, exports tab-generated files, and provides bounded access to public web APIs.
 
