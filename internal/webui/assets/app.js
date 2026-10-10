@@ -242,13 +242,17 @@ addEventListener('submit',ev=>{ev.preventDefault();ev.stopImmediatePropagation()
 try{Object.defineProperty(window,'open',{value:()=>null,writable:false,configurable:false})}catch{}
 function request(method,params={}){const id='tab-'+(++seq)+'-'+Date.now();parent.postMessage({channel:'jacob-tab',kind:'request',id,method,params},'*');return new Promise((resolve,reject)=>pending.set(id,{resolve,reject}))}
 function onEvent(name,cb){if(!eventSubs.has(name))eventSubs.set(name,new Set());eventSubs.get(name).add(cb);return()=>eventSubs.get(name)?.delete(cb)}
+function sdkID64(value){if(typeof value==='number'){if(!Number.isSafeInteger(value)||value<0)throw Object.assign(new Error('id64 Number is unsafe; pass the decimal ID64 as a string'),{code:'BAD_PARAMS'});return String(value)}const s=String(value??'').trim();if(!/^\d+$/.test(s))throw Object.assign(new Error('id64 must be an unsigned decimal integer string'),{code:'BAD_PARAMS'});return s}
+function sdkNetShape(url,options={}){const out={url:String(url||''),method:options.method||'GET',headers:options.headers||{},body:typeof options.body==='string'?options.body:(options.body==null?'':JSON.stringify(options.body))};for(const k of ['group','minIntervalMs','retry','cacheTtlMs'])if(options[k]!=null)out[k]=options[k];return out}
+function cloneSDKValue(value){if(value===undefined)return undefined;if(typeof structuredClone==='function')return structuredClone(value);return JSON.parse(JSON.stringify(value))}
+function closeVideoElement(el){if(!el||typeof el.removeAttribute!=='function')return false;try{if(typeof el.pause==='function')el.pause()}catch{};try{el.removeAttribute('src');el.removeAttribute('srcset');if(el.dataset)delete el.dataset.jacobVideoActive;if(typeof el.load==='function')el.load();return true}catch{return false}}
 window.Elite=Object.freeze({
  api:Object.freeze({version:11}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
  bindings:Object.freeze({list:()=>request('bindings.list'),diagnostics:()=>request('bindings.diagnostics'),get:name=>request('bindings.get',{name}),reload:()=>request('bindings.reload'),press:action=>request('binding.press',{action}),down:action=>request('binding.down',{action}),up:action=>request('binding.up',{action}),hold:(action,durationMs=1000)=>request('binding.hold',{action,durationMs})}),
  input:Object.freeze({tap:(key,options={})=>request('input.tap',{key,delayMs:options.delayMs||0,modifiers:options.modifiers||[]}),hold:(key,durationMs=250,options={})=>request('input.hold',{key,durationMs,modifiers:options.modifiers||[]}),text:(text,options={})=>request('input.text',{text,intervalMs:options.intervalMs??15})}),
  recorder:Object.freeze({status:()=>request('recorder.status'),start:()=>request('recorder.start'),stop:()=>request('recorder.stop'),subscribe:cb=>onEvent('recorder.input',cb)}),
  overlay:Object.freeze({info:()=>request('overlay.info'),set:scene=>request('overlay.set',{scene}),clear:()=>request('overlay.clear')}),
- video:Object.freeze({info:()=>request('video.info'),url:(options={})=>request('video.url',options),attach:async(el,options={})=>{const u=await request('video.url',options);el.src=u;return u}}),
+ video:Object.freeze({info:()=>request('video.info'),url:(options={})=>request('video.url',options),attach:async(el,options={})=>{if(!el)throw Object.assign(new Error('video element is required'),{code:'BAD_PARAMS'});closeVideoElement(el);const u=await request('video.url',options);el.src=u;if(el.dataset)el.dataset.jacobVideoActive='1';return u},close:el=>closeVideoElement(el)}),
  vision:Object.freeze({
  info:()=>request('vision.info'),
  sample:(options={})=>request('vision.sample',options),
@@ -277,9 +281,29 @@ window.Elite=Object.freeze({
  import:(data,options={})=>request('spatial.import',{data,...options}),
  end:scene=>request('spatial.end',{scene})
  }),
- net:Object.freeze({fetch:(url,options={})=>request('net.fetch',{url,method:options.method||'GET',headers:options.headers||{},body:typeof options.body==='string'?options.body:(options.body==null?'':JSON.stringify(options.body))})}),
+ galaxy:Object.freeze({
+  parseSystemName:name=>request('galaxy.parseSystemName',{name:String(name||'')}),
+  decodeAddress:id64=>request('galaxy.decodeAddress',{id64:sdkID64(id64)}),
+  encodeAddress:async spec=>{const r=await request('galaxy.encodeAddress',spec||{});return r?.id64||''},
+  addressForSequence:async(id64,sequence)=>{const r=await request('galaxy.addressForSequence',{id64:sdkID64(id64),sequence});return r?.id64||''},
+  boxel:id64=>request('galaxy.boxel',{id64:sdkID64(id64)}),
+  boxelHierarchy:(id64,options={})=>request('galaxy.boxelHierarchy',{id64:sdkID64(id64),position:options.position||null})
+ }),
+ catalog:Object.freeze({system:Object.freeze({get:(spec={})=>request('catalog.system.get',{...spec,id64:sdkID64(spec.id64),provider:spec.provider||'spansh',detail:spec.detail||'summary'})})}),
+ net:Object.freeze({
+  fetch:(url,options={})=>request('net.fetch',sdkNetShape(url,options)),
+  fetchQueued:(url,options={})=>request('net.fetchQueued',sdkNetShape(url,options)),
+  fetchBatch:(requests,options={})=>request('net.fetchBatch',{requests:(requests||[]).map(r=>sdkNetShape(r?.url,r||{})),group:options.group||'',concurrency:options.concurrency||0,minIntervalMs:options.minIntervalMs??null,pauseEvery:options.pauseEvery||0,pauseMs:options.pauseMs||0,retry:options.retry??null,cacheTtlMs:options.cacheTtlMs??null})
+ }),
  data:Object.freeze({list:()=>request('elitefiles.list'),get:name=>request('elitefiles.get',{name}),subscribe:(name,cb)=>{const wanted=String(name||'*');return onEvent('eliteFile',payload=>{if(wanted==='*'||String(payload?.name||'').toLowerCase()===wanted.toLowerCase()||String(payload?.file||'').toLowerCase()===wanted.toLowerCase())cb(payload)})}}),
- store:Object.freeze({get:async(key,fallback=null)=>{const r=await request('tabstate.get',{key});return r?.found?r.value:fallback},set:(key,value)=>request('tabstate.set',{key,value}),delete:key=>request('tabstate.delete',{key}),clear:()=>request('tabstate.clear')}),
+ store:Object.freeze({
+ get:async(key,fallback=null)=>{const r=await request('tabstate.get',{key});return r?.found?r.value:fallback},
+ set:(key,value)=>request('tabstate.set',{key,value}),
+ delete:key=>request('tabstate.delete',{key}),
+ clear:()=>request('tabstate.clear'),
+ update:async(key,updater,options={})=>{if(typeof updater!=='function')throw Object.assign(new Error('store.update requires an updater function'),{code:'BAD_PARAMS'});const retries=Math.max(1,Math.min(20,Number(options.retries)||8));for(let attempt=1;attempt<=retries;attempt++){const before=await request('tabstate.get',{key}),found=!!before?.found,current=found?cloneSDKValue(before.value):cloneSDKValue(options.defaultValue??null),next=await updater(cloneSDKValue(current),{found,attempt});if(next===undefined)throw Object.assign(new Error('store.update updater must return a JSON value; use store.delete() to remove a key'),{code:'BAD_PARAMS'});const result=await request('tabstate.cas',{key,expectedFound:found,expected:before?.value??null,value:next});if(result?.swapped)return result.value}throw Object.assign(new Error('store.update could not commit because the value kept changing'),{code:'TAB_STATE_CONFLICT'})},
+ batch:operations=>request('tabstate.batch',{operations:Array.isArray(operations)?operations:[]})
+}),
  actions:Object.freeze({
   register:async(name,handler,options={})=>{name=String(name||'').trim();if(!name)throw Object.assign(new Error('action name is required'),{code:'BAD_PARAMS'});if(typeof handler!=='function')throw Object.assign(new Error('action handler must be a function'),{code:'BAD_PARAMS'});actionHandlers.set(name,handler);try{await request('actions.register',{name,label:String(options.label||''),description:String(options.description||'')})}catch(error){if(actionHandlers.get(name)===handler)actionHandlers.delete(name);throw error}return async()=>{if(actionHandlers.get(name)===handler)actionHandlers.delete(name);try{return await request('actions.unregister',{name})}catch(error){if(error?.code!=='ACTION_NOT_FOUND')throw error;return{unregistered:true,name}}}},
   unregister:async name=>{name=String(name||'').trim();actionHandlers.delete(name);return request('actions.unregister',{name})},
@@ -443,7 +467,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
   }
   function resetTabPermissions(id){const prefix=`jacob-tab-permissions:${id}:`;for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k?.startsWith(prefix))localStorage.removeItem(k)}localStorage.removeItem(`jacob-tab-permissions:${id}`)}
   function capabilityForMethod(method){
-    if(method==='net.fetch')return'network';
+    if(method.startsWith('net.')||method.startsWith('catalog.'))return'network';
     if(method==='video.url')return'video';
     if(method.startsWith('vision.')||method.startsWith('spatial.'))return'vision';
     if(method==='recorder.start'||method==='recorder.stop')return'recorder';
@@ -472,8 +496,8 @@ Allow this capability on this browser?`);
     if(r.count>=120){tabRequestRates.set(frame,r);return false}
     let gap=0;
     if(method==='vision.sample'||method==='vision.inspect'||method==='spatial.update'||method==='journal.read')gap=75;
-    else if(method==='net.fetch')gap=100;
-    else if(method==='tabstate.set'||method==='tabstate.delete'||method==='tabstate.clear')gap=50;
+    else if(method==='net.fetch'||method==='net.fetchQueued'||method==='net.fetchBatch'||method==='catalog.system.get')gap=100;
+    else if(method==='tabstate.set'||method==='tabstate.cas'||method==='tabstate.batch'||method==='tabstate.delete'||method==='tabstate.clear')gap=50;
     const last=r.last.get(method)||-Infinity;if(now-last<gap){tabRequestRates.set(frame,r);return false}
     r.count++;r.last.set(method,now);tabRequestRates.set(frame,r);return true;
   }
@@ -898,7 +922,7 @@ Allow this capability on this browser?`);
         if(!requireTabCapability(frame,'video')){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:'video permission was not granted'}});return}
         sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result:videoURL(m.params||{})});return
       }
-      const allowed=new Set(['core.ping','system.health','state.get','bindings.list','bindings.diagnostics','bindings.get','bindings.reload','input.tap','input.hold','input.text','binding.press','binding.down','binding.up','binding.hold','recorder.status','recorder.start','recorder.stop','video.info','vision.info','vision.sample','vision.inspect','spatial.info','spatial.begin','spatial.update','spatial.observe','spatial.pose','spatial.landmarks','spatial.project','spatial.export','spatial.import','spatial.end','overlay.info','overlay.set','overlay.clear','net.fetch','elitefiles.list','elitefiles.get','journal.files','journal.read','tabstate.get','tabstate.set','tabstate.delete','tabstate.clear','locale.get']);
+      const allowed=new Set(['core.ping','system.health','state.get','bindings.list','bindings.diagnostics','bindings.get','bindings.reload','input.tap','input.hold','input.text','binding.press','binding.down','binding.up','binding.hold','recorder.status','recorder.start','recorder.stop','video.info','vision.info','vision.sample','vision.inspect','spatial.info','spatial.begin','spatial.update','spatial.observe','spatial.pose','spatial.landmarks','spatial.project','spatial.export','spatial.import','spatial.end','overlay.info','overlay.set','overlay.clear','galaxy.parseSystemName','galaxy.decodeAddress','galaxy.encodeAddress','galaxy.addressForSequence','galaxy.boxel','galaxy.boxelHierarchy','catalog.system.get','net.fetch','net.fetchQueued','net.fetchBatch','elitefiles.list','elitefiles.get','journal.files','journal.read','tabstate.get','tabstate.set','tabstate.cas','tabstate.batch','tabstate.delete','tabstate.clear','locale.get']);
       if(!allowed.has(m.method)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'SDK_DENIED',message:'method not exposed by JACoB SDK'}});return}
       const capability=capabilityForMethod(m.method);if(capability&&!requireTabCapability(frame,capability)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:`${capability} permission was not granted`}});return}
       try{let params=m.params||{};if(m.method==='overlay.set'||m.method==='overlay.clear')params={...params,layer:overlayLayerForFrame(frame)};if(m.method.startsWith('tabstate.')){const tabId=frame?.dataset?.savedTabId||'';if(!tabId)throw{code:'TAB_STATE_PREVIEW',message:'persistent state is available after the tab is saved'};params={...params,tabId}}const result=await request(m.method,params);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}

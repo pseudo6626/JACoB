@@ -26,8 +26,10 @@ import (
 	"jacob/internal/appearance"
 	"jacob/internal/bindings"
 	"jacob/internal/buildinfo"
+	"jacob/internal/catalog"
 	"jacob/internal/control"
 	"jacob/internal/customtabs"
+	"jacob/internal/galaxy"
 	"jacob/internal/journal"
 	"jacob/internal/localization"
 	"jacob/internal/networkdiag"
@@ -70,6 +72,7 @@ type Server struct {
 	locale        *localization.Store
 	updater       *updater.Client
 	webfetch      *webfetch.Client
+	catalog       *catalog.Client
 	clientsMu     sync.RWMutex
 	recorderMu    sync.Mutex
 	clients       map[*wsClient]struct{}
@@ -111,6 +114,7 @@ func New(cfg Config) *Server {
 		cfg.LANEnabled = false
 	}
 	s := &Server{cfg: cfg, input: platform.NewInputDriver(), recorder: platform.NewInputRecorder(), capture: platform.NewCaptureDriver(), overlay: platform.NewOverlayDriver(), updater: updater.New(), webfetch: webfetch.New(), clients: map[*wsClient]struct{}{}, started: time.Now(), shutdown: make(chan struct{})}
+	s.catalog = catalog.New(s.webfetch)
 	mediaToken, mediaErr := secureRandomToken()
 	if mediaErr != nil {
 		log.Printf("JACoB local media authorization unavailable because a secure token could not be generated: %v", mediaErr)
@@ -537,6 +541,46 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			return
 		}
 		s.sendResult(c, req.ID, map[string]any{"saved": true, "key": key})
+	case "tabstate.cas":
+		if s.tabState == nil {
+			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		key, _ := req.Params["key"].(string)
+		expectedFound, _ := req.Params["expectedFound"].(bool)
+		if tabID == "" || key == "" {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "tabId and key are required")
+			return
+		}
+		result, err := s.tabState.CompareSet(tabID, key, expectedFound, req.Params["expected"], req.Params["value"])
+		if err != nil {
+			_ = s.sendError(c, req.ID, "TAB_STATE_CAS_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "tabstate.batch":
+		if s.tabState == nil {
+			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		raw, err := json.Marshal(req.Params["operations"])
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		var operations []tabstate.BatchOperation
+		if err := json.Unmarshal(raw, &operations); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		result, err := s.tabState.Batch(tabID, operations)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "TAB_STATE_BATCH_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
 	case "tabstate.delete":
 		if s.tabState == nil {
 			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
@@ -624,6 +668,146 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			time.Sleep(180 * time.Millisecond)
 			s.shutdownOnce.Do(func() { close(s.shutdown) })
 		}()
+	case "galaxy.parseSystemName":
+		name, _ := req.Params["name"].(string)
+		result, err := galaxy.ParseSystemName(name)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "GALAXY_PARSE_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "galaxy.decodeAddress":
+		id64, _ := req.Params["id64"].(string)
+		result, err := galaxy.DecodeAddress(id64)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "GALAXY_ADDRESS_INVALID", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "galaxy.encodeAddress":
+		raw, err := json.Marshal(req.Params)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		var spec galaxy.EncodeRequest
+		if err := json.Unmarshal(raw, &spec); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		result, err := galaxy.EncodeAddress(spec)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "GALAXY_ADDRESS_INVALID", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"id64": result})
+	case "galaxy.addressForSequence":
+		id64, _ := req.Params["id64"].(string)
+		sequence := intParam(req.Params, "sequence", -1)
+		if sequence < 0 {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "sequence must be a non-negative integer")
+			return
+		}
+		result, err := galaxy.AddressForSequence(id64, uint64(sequence))
+		if err != nil {
+			_ = s.sendError(c, req.ID, "GALAXY_ADDRESS_INVALID", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"id64": result})
+	case "galaxy.boxel":
+		id64, _ := req.Params["id64"].(string)
+		result, err := galaxy.Boxel(id64)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "GALAXY_ADDRESS_INVALID", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "galaxy.boxelHierarchy":
+		raw, err := json.Marshal(req.Params)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		var spec galaxy.HierarchyRequest
+		if err := json.Unmarshal(raw, &spec); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		result, err := galaxy.BoxelHierarchy(spec)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "GALAXY_BOXEL_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "catalog.system.get":
+		if s.catalog == nil {
+			_ = s.sendError(c, req.ID, "CATALOG_UNAVAILABLE", "system catalog is unavailable")
+			return
+		}
+		raw, err := json.Marshal(req.Params)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		var spec catalog.SystemRequest
+		if err := json.Unmarshal(raw, &spec); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		result, err := s.catalog.SystemGet(ctx, spec)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "CATALOG_LOOKUP_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "net.fetchQueued":
+		if s.webfetch == nil {
+			_ = s.sendError(c, req.ID, "NET_FETCH_UNAVAILABLE", "outbound API access is unavailable")
+			return
+		}
+		raw, err := json.Marshal(req.Params)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		var spec webfetch.QueueRequest
+		if err := json.Unmarshal(raw, &spec); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		result, err := s.webfetch.FetchQueued(ctx, spec)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "NET_FETCH_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "net.fetchBatch":
+		if s.webfetch == nil {
+			_ = s.sendError(c, req.ID, "NET_FETCH_UNAVAILABLE", "outbound API access is unavailable")
+			return
+		}
+		raw, err := json.Marshal(req.Params)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		var spec webfetch.BatchRequest
+		if err := json.Unmarshal(raw, &spec); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		result, err := s.webfetch.FetchBatch(ctx, spec)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "NET_FETCH_BATCH_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
 	case "net.fetch":
 		if s.webfetch == nil {
 			_ = s.sendError(c, req.ID, "NET_FETCH_UNAVAILABLE", "outbound API access is unavailable")

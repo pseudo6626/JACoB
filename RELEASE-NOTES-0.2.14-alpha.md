@@ -38,3 +38,15 @@ Spatial methods use the existing **Vision** custom-tab permission. No new captur
 ## Important behavior
 
 The first release is intentionally confidence-aware. It does not claim centimetre-level SLAM. Metric scale is established by range observations, visual odometry carries the scene between anchors, and repeated known landmarks tighten the solution. Tabs should use the returned `pose.confidence`, `trackingQuality`, and scene `state` before drawing strong guidance cues.
+
+
+## SDK 11 utility services
+
+The same SDK 11 release now also includes reusable services extracted from the BOXEL/map-anchor work:
+
+- `Elite.net.fetchQueued()` and `Elite.net.fetchBatch()` provide core-wide polite request scheduling, bounded retries, conditional GET caching, and ordered batches.
+- `Elite.galaxy` parses procedural names, decodes/encodes ID64 values, changes a boxel sequence number, and exposes base/parent/physical boxel hierarchy geometry.
+- ID64 values cross the SDK boundary as decimal strings so JavaScript cannot round them.
+- `Elite.store.update()` uses compare-and-set retries; `Elite.store.batch()` commits a set/delete group atomically.
+- `Elite.catalog.system.get()` adds a provider-explicit shared system lookup/cache. SDK 11 initially supports Spansh.
+- `Elite.video.close(element)` explicitly detaches an active game-view stream from an element and closes that browser stream request.

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SDK 11 Utility Diagnostics</title>
+<style>body{margin:0;padding:18px;background:#080b0d;color:#e8edef;font:14px system-ui}button,input{background:#101619;color:#e8edef;border:1px solid #39464c;padding:7px 9px;margin:3px}button{cursor:pointer}pre{white-space:pre-wrap;background:#050708;border:1px solid #263238;padding:10px;min-height:160px}.row{display:flex;gap:5px;flex-wrap:wrap}img{display:block;width:min(720px,100%);min-height:180px;background:#000;border:1px solid #263238;margin-top:8px}</style></head><body>
+<h2>SDK 11 Utility Diagnostics</h2>
+<div class="row"><button id="galaxy">Galaxy self-test</button><button id="store">Atomic store test</button><button id="catalog">Catalog test</button><button id="view">Attach video</button><button id="close">Close video</button></div>
+<input id="id64" value="3309179996515" style="width:220px"><img id="game" alt="Elite game stream"><pre id="out">Ready.</pre>
+<script>
+const out=document.querySelector('#out'),id=()=>document.querySelector('#id64').value.trim();
+const show=x=>out.textContent=JSON.stringify(x,null,2);
+document.querySelector('#galaxy').onclick=async()=>{try{const d=await Elite.galaxy.decodeAddress(id()),r=await Elite.galaxy.encodeAddress(d),h=await Elite.galaxy.boxelHierarchy(id());show({decoded:d,roundTrip:r,hierarchy:h})}catch(e){show({code:e.code,message:e.message})}};
+document.querySelector('#store').onclick=async()=>{try{const v=await Elite.store.update('sdk11-utility-diagnostic',x=>({count:Number(x?.count||0)+1,at:new Date().toISOString()}));const b=await Elite.store.batch([{op:'set',key:'sdk11-batch-a',value:1},{op:'set',key:'sdk11-batch-b',value:2}]);show({update:v,batch:b})}catch(e){show({code:e.code,message:e.message})}};
+document.querySelector('#catalog').onclick=async()=>{try{show(await Elite.catalog.system.get({id64:id(),provider:'spansh',detail:'summary'}))}catch(e){show({code:e.code,message:e.message})}};
+document.querySelector('#view').onclick=async()=>{try{await Elite.video.attach(document.querySelector('#game'),{width:720,fps:6,quality:55})}catch(e){show({code:e.code,message:e.message})}};
+document.querySelector('#close').onclick=()=>show({closed:Elite.video.close(document.querySelector('#game'))});
+</script></body></html>
