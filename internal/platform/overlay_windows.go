@@ -158,6 +158,11 @@ func (o *windowsOverlay) ClearLayer(layer string) error {
 	o.requestRender()
 	return nil
 }
+func (o *windowsOverlay) ClearPrefix(prefix string) error {
+	o.state.clearPrefix(prefix)
+	o.requestRender()
+	return nil
+}
 func (o *windowsOverlay) ClearAll() error { o.state.clearAll(); o.requestRender(); return nil }
 func (o *windowsOverlay) SetVisible(v bool) error {
 	o.state.setVisible(v)

@@ -173,8 +173,13 @@ func (o *linuxOverlay) SetLayer(layer string, scene OverlayScene) error {
 	return nil
 }
 func (o *linuxOverlay) ClearLayer(layer string) error { o.state.clear(layer); o.render(); return nil }
-func (o *linuxOverlay) ClearAll() error               { o.state.clearAll(); o.render(); return nil }
-func (o *linuxOverlay) SetVisible(v bool) error       { o.state.setVisible(v); o.render(); return nil }
+func (o *linuxOverlay) ClearPrefix(prefix string) error {
+	o.state.clearPrefix(prefix)
+	o.render()
+	return nil
+}
+func (o *linuxOverlay) ClearAll() error         { o.state.clearAll(); o.render(); return nil }
+func (o *linuxOverlay) SetVisible(v bool) error { o.state.setVisible(v); o.render(); return nil }
 func (o *linuxOverlay) Info() OverlayInfo {
 	_, v := o.state.snapshot()
 	w, h := 0, 0

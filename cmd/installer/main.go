@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -45,6 +46,9 @@ type setupOptions struct {
 	uninstall   bool
 	autoUpdate  bool
 	waitPID     int
+	dataDir     string
+	sourceExe   string
+	healthPort  int
 	recorderSet bool
 	recorder    bool
 }
@@ -58,30 +62,113 @@ func main() {
 
 	if opts.autoUpdate {
 		previousVersion := installedVersion()
-		if opts.waitPID > 0 {
-			waitForPID(opts.waitPID, 30*time.Second)
+		dataDir := strings.TrimSpace(opts.dataDir)
+		if dataDir == "" {
+			dataDir = defaultJACoBDataDir()
 		}
+		if opts.healthPort <= 0 || opts.healthPort > 65535 {
+			opts.healthPort = 6626
+		}
+
+		updateLog(dataDir, "automatic update started: installed=%q target=%q waitPID=%d port=%d", previousVersion, buildinfo.Version, opts.waitPID, opts.healthPort)
+
+		if strings.TrimSpace(previousVersion) == "" {
+			updateLog(dataDir, "automatic update refused: no managed JACoB installation is registered")
+			msg("JACoB Update", "Automatic update requires an installed JACoB copy. Portable builds should be updated manually from GitHub.", mbOK|mbIconWarning)
+			return
+		}
+
+		installedExe := filepath.Join(installDir(), "JACoB.exe")
+		if strings.TrimSpace(opts.sourceExe) != "" && !samePath(opts.sourceExe, installedExe) {
+			updateLog(dataDir, "automatic update refused: running executable %q is not managed install %q", opts.sourceExe, installedExe)
+			msg("JACoB Update", "Automatic update is only available to the installed JACoB copy. This appears to be a portable build; update it manually from GitHub.", mbOK|mbIconWarning)
+			return
+		}
+
+		if opts.waitPID > 0 {
+			updateLog(dataDir, "waiting for old core PID %d to exit", opts.waitPID)
+			if !waitForPID(opts.waitPID, 8*time.Second) {
+				updateLog(dataDir, "old core PID %d did not exit cleanly; forcing that process closed", opts.waitPID)
+				_ = hidden("taskkill", "/PID", strconv.Itoa(opts.waitPID), "/T", "/F").Run()
+				if !waitForPID(opts.waitPID, 5*time.Second) {
+					updateLog(dataDir, "update aborted: old core PID %d is still running", opts.waitPID)
+					msg("JACoB Update", "The previous JACoB process would not close. The update was stopped before replacing any files.", mbOK|mbIconWarning)
+					return
+				}
+			}
+			updateLog(dataDir, "old core PID %d is stopped", opts.waitPID)
+		}
+
+		if anyJACoBProcess() {
+			updateLog(dataDir, "additional JACoB.exe process detected; closing stale instances")
+			_ = hidden("taskkill", "/IM", "JACoB.exe", "/T", "/F").Run()
+			if !waitForNoJACoB(5 * time.Second) {
+				updateLog(dataDir, "update aborted: a JACoB.exe process is still running")
+				msg("JACoB Update", "Another JACoB process is still running. The update was stopped before replacing any files.", mbOK|mbIconWarning)
+				return
+			}
+		}
+
+		if !waitForPortFree(opts.healthPort, 5*time.Second) {
+			updateLog(dataDir, "update aborted: localhost port %d is still occupied", opts.healthPort)
+			msg("JACoB Update", fmt.Sprintf("Local port %d is still in use after JACoB closed. The update was stopped before replacing any files.", opts.healthPort), mbOK|mbIconWarning)
+			return
+		}
+		updateLog(dataDir, "handoff clean: no JACoB.exe remains and port %d is free", opts.healthPort)
+
 		includeRecorder := installedRecorderEnabled()
 		if opts.recorderSet {
 			includeRecorder = opts.recorder
 		}
-		if err := install(includeRecorder); err != nil {
-			msg("JACoB Update", "Update failed:\n\n"+err.Error(), mbOK|mbIconWarning)
-			return
-		}
+		updateLog(dataDir, "preserving installed capture choice: full=%t", includeRecorder)
+
 		dir := installDir()
 		target := filepath.Join(dir, "JACoB.exe")
-		if err := exec.Command(target).Start(); err != nil {
-			rollbackErr := rollbackExecutable(dir, previousVersion)
+		backup := target + ".previous"
+		_ = os.Remove(backup)
+
+		if err := install(includeRecorder); err != nil {
+			updateLog(dataDir, "installation failed: %v", err)
+			var recoveryErr error
+			if _, statErr := os.Stat(backup); statErr == nil {
+				_, recoveryErr = rollbackExecutable(dir, previousVersion, dataDir)
+			} else {
+				_, recoveryErr = startJACoB(target, dataDir)
+			}
+			msg("JACoB Update", rollbackMessage("Update failed while replacing the installation: "+err.Error(), recoveryErr), mbOK|mbIconWarning)
+			return
+		}
+
+		newPID, err := startJACoB(target, dataDir)
+		if err != nil {
+			updateLog(dataDir, "new executable could not start: %v", err)
+			_, rollbackErr := rollbackExecutable(dir, previousVersion, dataDir)
 			msg("JACoB Update", rollbackMessage("Updated JACoB could not be started: "+err.Error(), rollbackErr), mbOK|mbIconWarning)
 			return
 		}
-		if err := verifyRunningVersion(buildinfo.Version, 15*time.Second); err != nil {
-			_ = hidden("taskkill", "/IM", "JACoB.exe", "/F").Run()
-			time.Sleep(500 * time.Millisecond)
-			rollbackErr := rollbackExecutable(dir, previousVersion)
+		updateLog(dataDir, "new core launched as PID %d; verifying health", newPID)
+
+		if err := verifyRunningVersion(buildinfo.Version, newPID, opts.healthPort, 15*time.Second); err != nil {
+			updateLog(dataDir, "new core verification failed: %v", err)
+			_ = hidden("taskkill", "/PID", strconv.Itoa(newPID), "/T", "/F").Run()
+			_ = waitForPID(newPID, 5*time.Second)
+			_ = waitForPortFree(opts.healthPort, 5*time.Second)
+
+			rollbackPID, rollbackErr := rollbackExecutable(dir, previousVersion, dataDir)
+			if rollbackErr == nil {
+				updateLog(dataDir, "rollback launched previous version as PID %d", rollbackPID)
+				if verifyErr := verifyRunningVersion(previousVersion, 0, opts.healthPort, 15*time.Second); verifyErr != nil {
+					rollbackErr = fmt.Errorf("previous executable was restored but did not pass health verification: %w", verifyErr)
+					updateLog(dataDir, "rollback verification failed: %v", verifyErr)
+				} else {
+					updateLog(dataDir, "rollback verified: version %s is online", previousVersion)
+				}
+			}
 			msg("JACoB Update", rollbackMessage("Updated JACoB failed its startup/version check: "+err.Error(), rollbackErr), mbOK|mbIconWarning)
+			return
 		}
+
+		updateLog(dataDir, "update complete: %s is online as PID %d", buildinfo.Version, newPID)
 		return
 	}
 
@@ -128,7 +215,7 @@ func main() {
 }
 
 func parseOptions(args []string) setupOptions {
-	var o setupOptions
+	o := setupOptions{healthPort: 6626}
 	for i := 0; i < len(args); i++ {
 		a := strings.TrimSpace(args[i])
 		switch {
@@ -139,6 +226,15 @@ func parseOptions(args []string) setupOptions {
 		case strings.EqualFold(a, "--wait-pid") && i+1 < len(args):
 			i++
 			o.waitPID, _ = strconv.Atoi(args[i])
+		case strings.EqualFold(a, "--data-dir") && i+1 < len(args):
+			i++
+			o.dataDir = strings.TrimSpace(args[i])
+		case strings.EqualFold(a, "--source-exe") && i+1 < len(args):
+			i++
+			o.sourceExe = strings.TrimSpace(args[i])
+		case strings.EqualFold(a, "--health-port") && i+1 < len(args):
+			i++
+			o.healthPort, _ = strconv.Atoi(args[i])
 		case strings.HasPrefix(strings.ToLower(a), "--recorder="):
 			o.recorderSet = true
 			v := strings.TrimSpace(strings.SplitN(a, "=", 2)[1])
@@ -307,17 +403,108 @@ func regValue(name string) string {
 	return ""
 }
 
-func waitForPID(pid int, timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	needle := strconv.Itoa(pid)
-	for time.Now().Before(deadline) {
-		out, _ := hidden("tasklist", "/FI", "PID eq "+needle, "/NH").CombinedOutput()
-		text := strings.ToLower(string(out))
-		if !strings.Contains(text, needle) || strings.Contains(text, "no tasks are running") {
-			return
-		}
-		time.Sleep(200 * time.Millisecond)
+func processRunning(pid int) bool {
+	if pid <= 0 {
+		return false
 	}
+	needle := `"` + strconv.Itoa(pid) + `"`
+	out, err := hidden("tasklist", "/FI", "PID eq "+strconv.Itoa(pid), "/FO", "CSV", "/NH").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), needle)
+}
+
+func waitForPID(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if !processRunning(pid) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+}
+
+func anyJACoBProcess() bool {
+	out, err := hidden("tasklist", "/FI", "IMAGENAME eq JACoB.exe", "/FO", "CSV", "/NH").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(string(out)), `"jacob.exe"`)
+}
+
+func waitForNoJACoB(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if !anyJACoBProcess() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+}
+
+func waitForPortFree(port int, timeout time.Duration) bool {
+	if port <= 0 || port > 65535 {
+		return false
+	}
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	deadline := time.Now().Add(timeout)
+	for {
+		conn, err := net.DialTimeout("tcp", addr, 180*time.Millisecond)
+		if err != nil {
+			return true
+		}
+		_ = conn.Close()
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+}
+
+func defaultJACoBDataDir() string {
+	if v := strings.TrimSpace(os.Getenv("JACOB_DATA_DIR")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(os.Getenv("EDBRIDGE_DATA_DIR")); v != "" {
+		return v
+	}
+	if base := strings.TrimSpace(os.Getenv("APPDATA")); base != "" {
+		return filepath.Join(base, "JACoB")
+	}
+	return filepath.Join(os.TempDir(), "JACoB")
+}
+
+func samePath(a, b string) bool {
+	aa, errA := filepath.Abs(filepath.Clean(a))
+	bb, errB := filepath.Abs(filepath.Clean(b))
+	if errA != nil || errB != nil {
+		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+	}
+	return strings.EqualFold(aa, bb)
+}
+
+func updateLog(dataDir, format string, args ...any) {
+	if strings.TrimSpace(dataDir) == "" {
+		return
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dataDir, "update.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	prefix := time.Now().Format("2006-01-02 15:04:05")
+	values := append([]any{prefix}, args...)
+	_, _ = fmt.Fprintf(f, "%s "+format+"\r\n", values...)
 }
 
 func installDir() string {
@@ -392,24 +579,30 @@ func msg(title, text string, flags uintptr) int {
 	return int(r)
 }
 
-func verifyRunningVersion(expected string, timeout time.Duration) error {
+func verifyRunningVersion(expected string, expectedPID, port int, timeout time.Duration) error {
 	client := http.Client{Timeout: 900 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
 	var last string
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/health", port)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get("http://127.0.0.1:6626/api/health")
+		resp, err := client.Get(url)
 		if err == nil {
 			var health struct {
 				Product string `json:"product"`
 				Version string `json:"version"`
+				PID     int    `json:"pid"`
 			}
 			decodeErr := json.NewDecoder(resp.Body).Decode(&health)
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK && decodeErr == nil && strings.EqualFold(health.Product, "JACoB") {
-				if health.Version == expected {
+				if health.Version == expected && (expectedPID <= 0 || health.PID == expectedPID) {
 					return nil
 				}
-				last = fmt.Sprintf("core reported version %q, expected %q", health.Version, expected)
+				if expectedPID > 0 {
+					last = fmt.Sprintf("core reported version %q PID %d; expected version %q PID %d", health.Version, health.PID, expected, expectedPID)
+				} else {
+					last = fmt.Sprintf("core reported version %q, expected %q", health.Version, expected)
+				}
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -420,26 +613,53 @@ func verifyRunningVersion(expected string, timeout time.Duration) error {
 	return fmt.Errorf("%s", last)
 }
 
-func rollbackExecutable(dir, previousVersion string) error {
+func envWithOverride(key, value string) []string {
+	prefix := strings.ToUpper(key) + "="
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, item := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(item), prefix) {
+			env = append(env, item)
+		}
+	}
+	if strings.TrimSpace(value) != "" {
+		env = append(env, key+"="+value)
+	}
+	return env
+}
+
+func startJACoB(target, dataDir string) (int, error) {
+	cmd := exec.Command(target)
+	cmd.Dir = filepath.Dir(target)
+	cmd.Env = envWithOverride("JACOB_DATA_DIR", dataDir)
+	if err := cmd.Start(); err != nil {
+		return 0, err
+	}
+	return cmd.Process.Pid, nil
+}
+
+func rollbackExecutable(dir, previousVersion, dataDir string) (int, error) {
 	target := filepath.Join(dir, "JACoB.exe")
 	backup := target + ".previous"
 	if _, err := os.Stat(backup); err != nil {
-		return fmt.Errorf("previous executable is unavailable: %w", err)
+		return 0, fmt.Errorf("previous executable is unavailable: %w", err)
 	}
 	_ = os.Remove(target + ".failed")
 	if _, err := os.Stat(target); err == nil {
-		_ = os.Rename(target, target+".failed")
+		if err := os.Rename(target, target+".failed"); err != nil {
+			return 0, fmt.Errorf("preserve failed executable: %w", err)
+		}
 	}
 	if err := os.Rename(backup, target); err != nil {
-		return fmt.Errorf("restore previous executable: %w", err)
+		return 0, fmt.Errorf("restore previous executable: %w", err)
 	}
 	if strings.TrimSpace(previousVersion) != "" {
 		_ = hidden("reg", "add", uninstallKey, "/v", "DisplayVersion", "/t", "REG_SZ", "/d", previousVersion, "/f").Run()
 	}
-	if err := exec.Command(target).Start(); err != nil {
-		return fmt.Errorf("restart previous JACoB: %w", err)
+	pid, err := startJACoB(target, dataDir)
+	if err != nil {
+		return 0, fmt.Errorf("restart previous JACoB: %w", err)
 	}
-	return nil
+	return pid, nil
 }
 
 func rollbackMessage(reason string, rollbackErr error) string {

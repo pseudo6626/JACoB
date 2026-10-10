@@ -60,6 +60,7 @@ type OverlayDriver interface {
 	Available() bool
 	SetLayer(layer string, scene OverlayScene) error
 	ClearLayer(layer string) error
+	ClearPrefix(prefix string) error
 	ClearAll() error
 	SetVisible(visible bool) error
 	Info() OverlayInfo
@@ -84,6 +85,15 @@ func (s *overlayState) clear(layer string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.layers, layer)
+}
+func (s *overlayState) clearPrefix(prefix string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for layer := range s.layers {
+		if layer == prefix || strings.HasPrefix(layer, prefix+":") {
+			delete(s.layers, layer)
+		}
+	}
 }
 func (s *overlayState) clearAll() {
 	s.mu.Lock()

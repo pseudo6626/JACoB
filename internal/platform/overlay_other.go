@@ -9,6 +9,7 @@ func (o *unavailableOverlay) Name() string                                    { 
 func (o *unavailableOverlay) Available() bool                                 { return false }
 func (o *unavailableOverlay) SetLayer(layer string, scene OverlayScene) error { return nil }
 func (o *unavailableOverlay) ClearLayer(layer string) error                   { return nil }
+func (o *unavailableOverlay) ClearPrefix(prefix string) error                 { return nil }
 func (o *unavailableOverlay) ClearAll() error                                 { return nil }
 func (o *unavailableOverlay) SetVisible(v bool) error                         { return nil }
 func (o *unavailableOverlay) Info() OverlayInfo {

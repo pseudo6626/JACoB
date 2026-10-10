@@ -481,7 +481,7 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			return
 		}
 		if s.overlay != nil {
-			_ = s.overlay.ClearLayer("tab:" + id)
+			_ = s.overlay.ClearPrefix("tab:" + id)
 		}
 		if s.tabState != nil {
 			_ = s.tabState.Clear(id)
@@ -580,7 +580,10 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		}
 		switch runtime.GOOS {
 		case "windows":
-			args := []string{"--update", "--wait-pid", strconv.Itoa(os.Getpid()), fmt.Sprintf("--recorder=%t", s.recorder.Available())}
+			args := []string{"--update", "--wait-pid", strconv.Itoa(os.Getpid()), "--data-dir", s.cfg.DataDir, "--health-port", portOf(s.cfg.Bind), fmt.Sprintf("--recorder=%t", s.recorder.Available())}
+			if sourceExe, exeErr := os.Executable(); exeErr == nil && strings.TrimSpace(sourceExe) != "" {
+				args = append(args, "--source-exe", sourceExe)
+			}
 			cmd := exec.Command(path, args...)
 			if err := cmd.Start(); err != nil {
 				_ = s.sendError(c, req.ID, "UPDATE_LAUNCH_FAILED", err.Error())
@@ -817,6 +820,24 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			return
 		}
 		s.sendResult(c, req.ID, map[string]any{"layer": layer, "cleared": true, "overlay": s.overlay.Info()})
+	case "overlay.clearPrefix":
+		if !s.requireLocal(c, req.ID, "tab overlay cleanup") {
+			return
+		}
+		if s.overlay == nil {
+			s.sendResult(c, req.ID, map[string]any{"cleared": true})
+			return
+		}
+		prefix, _ := req.Params["prefix"].(string)
+		if !strings.HasPrefix(prefix, "tab:") || len(prefix) > 160 {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "params.prefix must be a tab overlay namespace")
+			return
+		}
+		if err := s.overlay.ClearPrefix(prefix); err != nil {
+			_ = s.sendError(c, req.ID, "OVERLAY_CLEAR_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"prefix": prefix, "cleared": true, "overlay": s.overlay.Info()})
 	case "video.info":
 		_, privacyMatte := s.capture.(platform.PrivacyMatteCaptureDriver)
 		s.sendResult(c, req.ID, map[string]any{"available": s.capture.Available(), "driver": s.capture.Name(), "eliteOnly": true, "foregroundOnly": true, "rawFramesExposed": false, "privacyMatte": privacyMatte, "frameModel": "canonical-elite-client-v1", "desktopFallback": false})
@@ -1025,7 +1046,7 @@ func (s *Server) systemInfo(includeSecret bool) map[string]any {
 	// token. A tab with Video permission must never receive a WebSocket credential.
 	mediaToken := s.mediaToken
 	return map[string]any{
-		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 10, "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken,
+		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 10, "pid": os.Getpid(), "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken,
 		"journalDir": journalDir, "bindingsDir": bindingsDir, "bindingsFile": bindingsFile, "bindingsFiles": bindingsFiles, "bindingsSource": s.bindings.ActiveSource(), "bindingsCount": len(s.bindings.ListActions()), "autoBind": s.autoBind,
 		"input": map[string]any{"enabled": s.cfg.EnableInput, "available": s.input.Available(), "driver": s.input.Name()}, "recorder": s.recorder.Status(), "capture": map[string]any{"available": s.capture.Available(), "driver": s.capture.Name(), "eliteOnly": true, "foregroundOnly": true}, "vision": func() map[string]any {
 			if s.vision != nil {

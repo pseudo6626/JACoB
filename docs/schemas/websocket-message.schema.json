@@ -46,6 +46,7 @@
             "overlay.info",
             "overlay.set",
             "overlay.clear",
+            "overlay.clearPrefix",
             "update.check",
             "update.install",
             "tabs.layout.save",
