@@ -32,6 +32,7 @@ import (
 	"jacob/internal/localization"
 	"jacob/internal/networkdiag"
 	"jacob/internal/platform"
+	"jacob/internal/spatial"
 	"jacob/internal/tabstate"
 	"jacob/internal/updater"
 	"jacob/internal/vision"
@@ -60,6 +61,7 @@ type Server struct {
 	recorder      platform.InputRecorder
 	capture       platform.CaptureDriver
 	vision        *vision.Tracker
+	spatial       *spatial.Mapper
 	calibration   *vision.Calibration
 	overlay       platform.OverlayDriver
 	tabs          *customtabs.Store
@@ -116,6 +118,7 @@ func New(cfg Config) *Server {
 		s.mediaToken = mediaToken
 	}
 	s.vision = vision.New(s.capture)
+	s.spatial = spatial.New(s.vision)
 	s.calibration = vision.NewCalibration(s.capture)
 	localeStore, localeErr := localization.New(cfg.DataDir)
 	if localeErr != nil {
@@ -931,6 +934,151 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			s.calibration.Clear()
 		}
 		s.sendResult(c, req.ID, map[string]any{"cleared": true})
+	case "spatial.info":
+		if s.spatial == nil {
+			s.sendResult(c, req.ID, map[string]any{"available": false, "eliteOnly": true, "rawFramesExposed": false})
+			return
+		}
+		s.sendResult(c, req.ID, s.spatial.Info())
+	case "spatial.begin":
+		if s.spatial == nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_UNAVAILABLE", "spatial mapper is unavailable")
+			return
+		}
+		raw, err := json.Marshal(req.Params)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		var in spatial.BeginRequest
+		if err := json.Unmarshal(raw, &in); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		result, err := s.spatial.Begin(in)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_BEGIN_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "spatial.update":
+		if s.spatial == nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_UNAVAILABLE", "spatial mapper is unavailable")
+			return
+		}
+		scene, _ := req.Params["scene"].(string)
+		result, err := s.spatial.Update(scene)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_UPDATE_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "spatial.observe":
+		if s.spatial == nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_UNAVAILABLE", "spatial mapper is unavailable")
+			return
+		}
+		raw, err := json.Marshal(req.Params)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		var in spatial.ObserveRequest
+		if err := json.Unmarshal(raw, &in); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		result, err := s.spatial.Observe(in)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_OBSERVE_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "spatial.pose":
+		if s.spatial == nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_UNAVAILABLE", "spatial mapper is unavailable")
+			return
+		}
+		scene, _ := req.Params["scene"].(string)
+		result, err := s.spatial.Pose(scene)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_POSE_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "spatial.landmarks":
+		if s.spatial == nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_UNAVAILABLE", "spatial mapper is unavailable")
+			return
+		}
+		scene, _ := req.Params["scene"].(string)
+		result, err := s.spatial.Landmarks(scene)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_LANDMARKS_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"scene": scene, "landmarks": result})
+	case "spatial.project":
+		if s.spatial == nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_UNAVAILABLE", "spatial mapper is unavailable")
+			return
+		}
+		raw, err := json.Marshal(req.Params)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		var in spatial.ProjectRequest
+		if err := json.Unmarshal(raw, &in); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		result, err := s.spatial.Project(in)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_PROJECT_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "spatial.export":
+		if s.spatial == nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_UNAVAILABLE", "spatial mapper is unavailable")
+			return
+		}
+		scene, _ := req.Params["scene"].(string)
+		result, err := s.spatial.Export(scene)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_EXPORT_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "spatial.import":
+		if s.spatial == nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_UNAVAILABLE", "spatial mapper is unavailable")
+			return
+		}
+		raw, err := json.Marshal(req.Params)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		var in spatial.ImportRequest
+		if err := json.Unmarshal(raw, &in); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		result, err := s.spatial.Import(in)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_IMPORT_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "spatial.end":
+		if s.spatial == nil {
+			_ = s.sendError(c, req.ID, "SPATIAL_UNAVAILABLE", "spatial mapper is unavailable")
+			return
+		}
+		scene, _ := req.Params["scene"].(string)
+		s.sendResult(c, req.ID, map[string]any{"scene": scene, "ended": s.spatial.End(scene)})
 	case "binding.press":
 		if !s.requireInput(c, req.ID) {
 			return
@@ -1110,7 +1258,7 @@ func (s *Server) systemInfo(includeSecret bool) map[string]any {
 	// token. A tab with Video permission must never receive a WebSocket credential.
 	mediaToken := s.mediaToken
 	return map[string]any{
-		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 10, "pid": os.Getpid(), "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken,
+		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 11, "pid": os.Getpid(), "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken,
 		"journalDir": journalDir, "bindingsDir": bindingsDir, "bindingsFile": bindingsFile, "bindingsFiles": bindingsFiles, "bindingsSource": s.bindings.ActiveSource(), "bindingsCount": len(s.bindings.ListActions()), "autoBind": s.autoBind,
 		"input": map[string]any{"enabled": s.cfg.EnableInput, "available": s.input.Available(), "driver": s.input.Name()}, "recorder": s.recorder.Status(), "capture": map[string]any{"available": s.capture.Available(), "driver": s.capture.Name(), "eliteOnly": true, "foregroundOnly": true}, "vision": func() map[string]any {
 			if s.vision != nil {

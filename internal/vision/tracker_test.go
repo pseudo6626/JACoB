@@ -24,3 +24,18 @@ func TestEstimateTranslation(t *testing.T) {
 		t.Fatalf("confidence=%v", conf)
 	}
 }
+
+func TestFeatureSignatureStable(t *testing.T) {
+	w, h := 32, 24
+	gray := make([]uint8, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			gray[y*w+x] = uint8((x*17 + y*29) % 251)
+		}
+	}
+	a := featureSignature(gray, w, h, 16, 12)
+	b := featureSignature(gray, w, h, 16, 12)
+	if a != b {
+		t.Fatalf("signature changed: %x != %x", a, b)
+	}
+}

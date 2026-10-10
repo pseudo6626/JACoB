@@ -243,7 +243,7 @@ try{Object.defineProperty(window,'open',{value:()=>null,writable:false,configura
 function request(method,params={}){const id='tab-'+(++seq)+'-'+Date.now();parent.postMessage({channel:'jacob-tab',kind:'request',id,method,params},'*');return new Promise((resolve,reject)=>pending.set(id,{resolve,reject}))}
 function onEvent(name,cb){if(!eventSubs.has(name))eventSubs.set(name,new Set());eventSubs.get(name).add(cb);return()=>eventSubs.get(name)?.delete(cb)}
 window.Elite=Object.freeze({
- api:Object.freeze({version:10}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
+ api:Object.freeze({version:11}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
  bindings:Object.freeze({list:()=>request('bindings.list'),diagnostics:()=>request('bindings.diagnostics'),get:name=>request('bindings.get',{name}),reload:()=>request('bindings.reload'),press:action=>request('binding.press',{action}),down:action=>request('binding.down',{action}),up:action=>request('binding.up',{action}),hold:(action,durationMs=1000)=>request('binding.hold',{action,durationMs})}),
  input:Object.freeze({tap:(key,options={})=>request('input.tap',{key,delayMs:options.delayMs||0,modifiers:options.modifiers||[]}),hold:(key,durationMs=250,options={})=>request('input.hold',{key,durationMs,modifiers:options.modifiers||[]}),text:(text,options={})=>request('input.text',{text,intervalMs:options.intervalMs??15})}),
  recorder:Object.freeze({status:()=>request('recorder.status'),start:()=>request('recorder.start'),stop:()=>request('recorder.stop'),subscribe:cb=>onEvent('recorder.input',cb)}),
@@ -265,6 +265,18 @@ window.Elite=Object.freeze({
  reset:async id=>request('tabstate.delete',{key:'__vision.config.'+String(id||'').trim()}),
  debug:Object.freeze({show:(options={})=>request('vision.debug.show',options),clear:()=>request('vision.debug.clear')})
 }),
+ spatial:Object.freeze({
+ info:()=>request('spatial.info'),
+ begin:(options={})=>request('spatial.begin',options),
+ update:(scene,options={})=>request('spatial.update',{scene,...options}),
+ observe:(scene,observation={})=>request('spatial.observe',{scene,...observation}),
+ pose:scene=>request('spatial.pose',{scene}),
+ landmarks:scene=>request('spatial.landmarks',{scene}),
+ project:(scene,spec={})=>request('spatial.project',{scene,...spec}),
+ export:scene=>request('spatial.export',{scene}),
+ import:(data,options={})=>request('spatial.import',{data,...options}),
+ end:scene=>request('spatial.end',{scene})
+ }),
  net:Object.freeze({fetch:(url,options={})=>request('net.fetch',{url,method:options.method||'GET',headers:options.headers||{},body:typeof options.body==='string'?options.body:(options.body==null?'':JSON.stringify(options.body))})}),
  data:Object.freeze({list:()=>request('elitefiles.list'),get:name=>request('elitefiles.get',{name}),subscribe:(name,cb)=>{const wanted=String(name||'*');return onEvent('eliteFile',payload=>{if(wanted==='*'||String(payload?.name||'').toLowerCase()===wanted.toLowerCase()||String(payload?.file||'').toLowerCase()===wanted.toLowerCase())cb(payload)})}}),
  store:Object.freeze({get:async(key,fallback=null)=>{const r=await request('tabstate.get',{key});return r?.found?r.value:fallback},set:(key,value)=>request('tabstate.set',{key,value}),delete:key=>request('tabstate.delete',{key}),clear:()=>request('tabstate.clear')}),
@@ -433,7 +445,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
   function capabilityForMethod(method){
     if(method==='net.fetch')return'network';
     if(method==='video.url')return'video';
-    if(method.startsWith('vision.'))return'vision';
+    if(method.startsWith('vision.')||method.startsWith('spatial.'))return'vision';
     if(method==='recorder.start'||method==='recorder.stop')return'recorder';
     if(method==='overlay.set'||method==='overlay.clear')return'overlay';
     if(method==='actions.invoke')return'intertab';
@@ -459,7 +471,7 @@ Allow this capability on this browser?`);
     if(!r||now-r.windowStart>=1000)r={windowStart:now,count:0,last:new Map()};
     if(r.count>=120){tabRequestRates.set(frame,r);return false}
     let gap=0;
-    if(method==='vision.sample'||method==='vision.inspect'||method==='journal.read')gap=75;
+    if(method==='vision.sample'||method==='vision.inspect'||method==='spatial.update'||method==='journal.read')gap=75;
     else if(method==='net.fetch')gap=100;
     else if(method==='tabstate.set'||method==='tabstate.delete'||method==='tabstate.clear')gap=50;
     const last=r.last.get(method)||-Infinity;if(now-last<gap){tabRequestRates.set(frame,r);return false}
@@ -886,7 +898,7 @@ Allow this capability on this browser?`);
         if(!requireTabCapability(frame,'video')){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:'video permission was not granted'}});return}
         sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result:videoURL(m.params||{})});return
       }
-      const allowed=new Set(['core.ping','system.health','state.get','bindings.list','bindings.diagnostics','bindings.get','bindings.reload','input.tap','input.hold','input.text','binding.press','binding.down','binding.up','binding.hold','recorder.status','recorder.start','recorder.stop','video.info','vision.info','vision.sample','vision.inspect','overlay.info','overlay.set','overlay.clear','net.fetch','elitefiles.list','elitefiles.get','journal.files','journal.read','tabstate.get','tabstate.set','tabstate.delete','tabstate.clear','locale.get']);
+      const allowed=new Set(['core.ping','system.health','state.get','bindings.list','bindings.diagnostics','bindings.get','bindings.reload','input.tap','input.hold','input.text','binding.press','binding.down','binding.up','binding.hold','recorder.status','recorder.start','recorder.stop','video.info','vision.info','vision.sample','vision.inspect','spatial.info','spatial.begin','spatial.update','spatial.observe','spatial.pose','spatial.landmarks','spatial.project','spatial.export','spatial.import','spatial.end','overlay.info','overlay.set','overlay.clear','net.fetch','elitefiles.list','elitefiles.get','journal.files','journal.read','tabstate.get','tabstate.set','tabstate.delete','tabstate.clear','locale.get']);
       if(!allowed.has(m.method)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'SDK_DENIED',message:'method not exposed by JACoB SDK'}});return}
       const capability=capabilityForMethod(m.method);if(capability&&!requireTabCapability(frame,capability)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:`${capability} permission was not granted`}});return}
       try{let params=m.params||{};if(m.method==='overlay.set'||m.method==='overlay.clear')params={...params,layer:overlayLayerForFrame(frame)};if(m.method.startsWith('tabstate.')){const tabId=frame?.dataset?.savedTabId||'';if(!tabId)throw{code:'TAB_STATE_PREVIEW',message:'persistent state is available after the tab is saved'};params={...params,tabId}}const result=await request(m.method,params);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}

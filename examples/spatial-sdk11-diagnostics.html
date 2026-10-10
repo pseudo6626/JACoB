@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JACoB Spatial Mapper Diagnostics</title>
+<style>
+:root{color-scheme:dark;--bg:#080b0d;--panel:#0d1114;--line:#30383d;--text:#edf2f4;--muted:#87949b;--accent:#ff8b2c}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px ui-monospace,SFMono-Regular,Consolas,monospace}
+main{max-width:1050px;margin:auto;padding:20px}h1{font:700 24px system-ui;margin:0 0 4px}.sub{color:var(--muted);margin-bottom:18px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.card{border:1px solid var(--line);background:var(--panel);padding:14px;margin:10px 0}
+button,input{border:1px solid #4b555b;border-radius:0;background:#11171b;color:var(--text);padding:8px 10px;font:inherit}
+button{border-color:#8a4a16;cursor:pointer}button:hover{border-color:var(--accent)}label{color:var(--muted)}
+pre{white-space:pre-wrap;word-break:break-word;background:#06090b;border:1px solid #222a2f;padding:12px;min-height:180px}
+</style>
+</head>
+<body><main>
+<h1>SPATIAL MAPPER DIAGNOSTICS</h1>
+<div class="sub">SDK 11 · derived Elite-only scene mapping · no frame data reaches this tab</div>
+<div class="card">
+<div class="row">
+<label>HFOV <input id="fov" type="number" min="35" max="140" value="80" style="width:85px"></label>
+<button id="begin">Begin scene</button><button id="tick">Update once</button><button id="loop">Start 10 Hz</button><button id="stop">Stop</button>
+<button id="export">Export scene</button><button id="end">End scene</button>
+</div>
+<div class="row">
+<label>Landmark <input id="lid" value="test-rock"></label>
+<label>x <input id="x" type="number" step=".001" value=".5" style="width:85px"></label>
+<label>y <input id="y" type="number" step=".001" value=".5" style="width:85px"></label>
+<label>range m <input id="range" type="number" step=".1" value="1000" style="width:110px"></label>
+<button id="observe">Observe range</button>
+<button id="project">Project landmark</button>
+</div>
+</div>
+<pre id="out">Ready.</pre>
+<script>
+const $=s=>document.querySelector(s),out=$('#out');let scene='',timer=null;
+const show=v=>out.textContent=JSON.stringify(v,null,2);
+async function tick(){if(!scene)throw new Error('Begin a scene first');show(await Elite.spatial.update(scene))}
+$('#begin').onclick=async()=>{try{const r=await Elite.spatial.begin({horizontalFovDeg:Number($('#fov').value)||80,maxWidth:480});scene=r.scene;show(r)}catch(e){show({code:e.code,message:e.message})}};
+$('#tick').onclick=()=>tick().catch(e=>show({code:e.code,message:e.message}));
+$('#loop').onclick=()=>{clearInterval(timer);timer=setInterval(()=>tick().catch(e=>show({code:e.code,message:e.message})),100)};
+$('#stop').onclick=()=>{clearInterval(timer);timer=null};
+$('#observe').onclick=async()=>{try{show(await Elite.spatial.observe(scene,{landmark:$('#lid').value,screen:{x:Number($('#x').value),y:Number($('#y').value)},rangeM:Number($('#range').value),confidence:1}))}catch(e){show({code:e.code,message:e.message})}};
+$('#project').onclick=async()=>{try{show(await Elite.spatial.project(scene,{landmark:$('#lid').value}))}catch(e){show({code:e.code,message:e.message})}};
+$('#export').onclick=async()=>{try{show(await Elite.spatial.export(scene))}catch(e){show({code:e.code,message:e.message})}};
+$('#end').onclick=async()=>{try{show(await Elite.spatial.end(scene));scene=''}catch(e){show({code:e.code,message:e.message})}};
+</script>
+</main></body></html>

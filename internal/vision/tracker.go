@@ -26,6 +26,26 @@ type Motion struct {
 	Compared   bool    `json:"compared"`
 }
 
+// SpatialFeature is an internal low-information feature descriptor used by the
+// spatial mapper. It is never exposed through the custom-tab Vision API.
+type SpatialFeature struct {
+	X         float64
+	Y         float64
+	Score     float64
+	Signature uint64
+}
+
+type SpatialFrame struct {
+	At        string
+	Available bool
+	Blanked   bool
+	Reason    string
+	Width     int
+	Height    int
+	Features  []SpatialFeature
+	Motion    Motion
+}
+
 type Sample struct {
 	At           string    `json:"at"`
 	Available    bool      `json:"available"`
@@ -48,6 +68,7 @@ type Tracker struct {
 	prevH       int
 	lastCapture time.Time
 	lastSample  Sample
+	lastSpatial SpatialFrame
 }
 
 func New(c platform.CaptureDriver) *Tracker { return &Tracker{capture: c} }
@@ -103,6 +124,7 @@ func (t *Tracker) Sample(maxWidth int) (Sample, error) {
 		t.prev = nil
 		t.prevW, t.prevH = 0, 0
 		t.lastSample = cloneSample(out)
+		t.lastSpatial = SpatialFrame{At: out.At, Available: out.Available, Blanked: true, Reason: out.Reason, Width: out.Width, Height: out.Height}
 		return out, nil
 	}
 	img, err := frame.Image()
@@ -111,6 +133,7 @@ func (t *Tracker) Sample(maxWidth int) (Sample, error) {
 	}
 	gray, w, h := downsampleGray(img, 192)
 	features, mean, contrast := analyze(gray, w, h)
+	spatialFeatures := spatializeFeatures(gray, w, h, features)
 	out.Features = features
 	out.FeatureCount = len(features)
 	out.MeanLuma = mean
@@ -123,6 +146,10 @@ func (t *Tracker) Sample(maxWidth int) (Sample, error) {
 	t.prev = append(t.prev[:0], gray...)
 	t.prevW, t.prevH = w, h
 	t.lastSample = cloneSample(out)
+	t.lastSpatial = SpatialFrame{
+		At: out.At, Available: out.Available, Blanked: out.Blanked, Reason: out.Reason,
+		Width: out.Width, Height: out.Height, Features: spatialFeatures, Motion: out.Motion,
+	}
 	return out, nil
 }
 
@@ -130,6 +157,74 @@ func cloneSample(in Sample) Sample {
 	out := in
 	out.Features = append([]Feature(nil), in.Features...)
 	return out
+}
+
+// SpatialFrame returns derived feature descriptors for trusted core services.
+// The public custom-tab Vision API continues to expose only Sample/Inspect.
+func (t *Tracker) SpatialFrame(maxWidth int) (SpatialFrame, error) {
+	sample, err := t.Sample(maxWidth)
+	if err != nil {
+		return SpatialFrame{}, err
+	}
+	if !sample.Available {
+		return SpatialFrame{At: sample.At, Available: false}, nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := t.lastSpatial
+	out.Features = append([]SpatialFeature(nil), t.lastSpatial.Features...)
+	if out.At == "" {
+		out.At = sample.At
+		out.Available = sample.Available
+		out.Blanked = sample.Blanked
+		out.Reason = sample.Reason
+		out.Width = sample.Width
+		out.Height = sample.Height
+		out.Motion = sample.Motion
+	}
+	return out, nil
+}
+
+func spatializeFeatures(gray []uint8, w, h int, features []Feature) []SpatialFeature {
+	out := make([]SpatialFeature, 0, len(features))
+	if w <= 0 || h <= 0 || len(gray) != w*h {
+		return out
+	}
+	for _, f := range features {
+		x := int(math.Round(f.X * float64(w-1)))
+		y := int(math.Round(f.Y * float64(h-1)))
+		out = append(out, SpatialFeature{X: f.X, Y: f.Y, Score: f.Score, Signature: featureSignature(gray, w, h, x, y)})
+	}
+	return out
+}
+
+func featureSignature(gray []uint8, w, h, x, y int) uint64 {
+	if w <= 0 || h <= 0 || len(gray) != w*h {
+		return 0
+	}
+	var sig uint64
+	for i := 0; i < 64; i++ {
+		ax := ((i*5 + 1) % 9) - 4
+		ay := ((i*7 + 3) % 9) - 4
+		bx := ((i*11 + 2) % 9) - 4
+		by := ((i*13 + 5) % 9) - 4
+		x1, y1 := clampPixel(x+ax, w), clampPixel(y+ay, h)
+		x2, y2 := clampPixel(x+bx, w), clampPixel(y+by, h)
+		if gray[y1*w+x1] < gray[y2*w+x2] {
+			sig |= uint64(1) << uint(i)
+		}
+	}
+	return sig
+}
+
+func clampPixel(v, size int) int {
+	if v < 0 {
+		return 0
+	}
+	if v >= size {
+		return size - 1
+	}
+	return v
 }
 
 func downsampleGray(img image.Image, maxWidth int) ([]uint8, int, int) {
