@@ -10,12 +10,21 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 const firewallRuleName = "JACoB Local Network"
 
 func psQuote(v string) string {
 	return "'" + strings.ReplaceAll(v, "'", "''") + "'"
+}
+
+const createNoWindow = 0x08000000
+
+func hiddenCommand(name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	return cmd
 }
 
 func Inspect(exe string, port int) Report {
@@ -65,7 +74,7 @@ if($present){
   profiles=$profiles
 } | ConvertTo-Json -Depth 5 -Compress
 `, psQuote(exe), port, psQuote(firewallRuleName))
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script).Output()
+	out, err := hiddenCommand("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", script).Output()
 	if err != nil {
 		report.Error = err.Error()
 		return report
@@ -92,8 +101,8 @@ func elevatedScript(body string) error {
 		return err
 	}
 	abs, _ := filepath.Abs(path)
-	command := fmt.Sprintf(`$a='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + %s + '"'; $p=Start-Process powershell.exe -Verb RunAs -Wait -PassThru -ArgumentList $a; exit $p.ExitCode`, psQuote(abs))
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command)
+	command := fmt.Sprintf(`$a='-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + %s + '"'; $p=Start-Process powershell.exe -WindowStyle Hidden -Verb RunAs -Wait -PassThru -ArgumentList $a; exit $p.ExitCode`, psQuote(abs))
+	cmd := hiddenCommand("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", command)
 	if out, runErr := cmd.CombinedOutput(); runErr != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg != "" {

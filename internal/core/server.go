@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"mime/multipart"
 	"net"
@@ -29,10 +30,13 @@ import (
 	"jacob/internal/catalog"
 	"jacob/internal/control"
 	"jacob/internal/customtabs"
+	"jacob/internal/deviceauth"
 	"jacob/internal/galaxy"
 	"jacob/internal/journal"
 	"jacob/internal/localization"
+	"jacob/internal/macros"
 	"jacob/internal/networkdiag"
+	"jacob/internal/pathconfig"
 	"jacob/internal/platform"
 	"jacob/internal/spatial"
 	"jacob/internal/tabstate"
@@ -43,15 +47,17 @@ import (
 )
 
 type Config struct {
-	Bind          string
-	DataDir       string
-	JournalDir    string
-	BindingsDir   string
-	ReplayJournal bool
-	EnableInput   bool
-	LANEnabled    bool
-	PairToken     string
-	AutoBind      bool
+	Bind              string
+	DataDir           string
+	JournalDir        string
+	BindingsDir       string
+	ReplayJournal     bool
+	EnableInput       bool
+	LANEnabled        bool
+	PairToken         string
+	AutoBind          bool
+	ManualPaths       pathconfig.Config
+	ControlSchemeDirs []string
 }
 
 type Server struct {
@@ -75,13 +81,26 @@ type Server struct {
 	catalog       *catalog.Client
 	clientsMu     sync.RWMutex
 	recorderMu    sync.Mutex
+	pairMu        sync.Mutex
 	clients       map[*wsClient]struct{}
+	clientDevices map[*wsClient]string
+	pairFailures  map[string]pairFailure
+	devices       *deviceauth.Store
+	macros        *macros.Store
+	macroMu       sync.Mutex
+	macroRunning  bool
 	recorderOwner *wsClient
 	started       time.Time
 	mediaToken    string
 	autoBind      bindings.AutoBindReport
 	shutdown      chan struct{}
 	shutdownOnce  sync.Once
+}
+
+type pairFailure struct {
+	WindowStart  time.Time
+	Failures     int
+	BlockedUntil time.Time
 }
 
 type envelope struct {
@@ -101,8 +120,11 @@ type apiError struct {
 }
 
 func New(cfg Config) *Server {
+	if strings.TrimSpace(cfg.DataDir) != "" {
+		_ = os.Remove(filepath.Join(cfg.DataDir, "pairing-token.txt"))
+	}
 	if cfg.LANEnabled && cfg.PairToken == "" {
-		token, err := persistentPairToken(cfg.DataDir)
+		token, err := sessionPairToken(cfg.DataDir)
 		if err != nil {
 			log.Printf("JACoB LAN access disabled because a secure pairing token could not be generated: %v", err)
 			cfg.LANEnabled = false
@@ -113,7 +135,26 @@ func New(cfg Config) *Server {
 		log.Printf("JACoB LAN access disabled: configured pairing token must be at least 16 characters")
 		cfg.LANEnabled = false
 	}
-	s := &Server{cfg: cfg, input: platform.NewInputDriver(), recorder: platform.NewInputRecorder(), capture: platform.NewCaptureDriver(), overlay: platform.NewOverlayDriver(), updater: updater.New(), webfetch: webfetch.New(), clients: map[*wsClient]struct{}{}, started: time.Now(), shutdown: make(chan struct{})}
+	s := &Server{cfg: cfg, input: platform.NewInputDriver(), recorder: platform.NewInputRecorder(), capture: platform.NewCaptureDriver(), overlay: platform.NewOverlayDriver(), updater: updater.New(), webfetch: webfetch.New(), clients: map[*wsClient]struct{}{}, clientDevices: map[*wsClient]string{}, pairFailures: map[string]pairFailure{}, started: time.Now(), shutdown: make(chan struct{})}
+	log.Printf("core/init: bind=%q lan=%t inputEnabled=%t replayJournal=%t autoBind=%t journalDir=%q bindingsDir=%q controlSchemeDirs=%d", cfg.Bind, cfg.LANEnabled, cfg.EnableInput, cfg.ReplayJournal, cfg.AutoBind, cfg.JournalDir, cfg.BindingsDir, len(cfg.ControlSchemeDirs))
+	log.Printf("core/platform: input=%s available=%t recorder=%s available=%t capture=%s available=%t overlay=%s available=%t", s.input.Name(), s.input.Available(), s.recorder.Name(), s.recorder.Available(), s.capture.Name(), s.capture.Available(), s.overlay.Name(), s.overlay.Available())
+	deviceStore, deviceErr := deviceauth.New(cfg.DataDir)
+	if deviceErr != nil {
+		log.Printf("JACoB remembered-device store unavailable; LAN pairing is disabled until the store is repaired: %v", deviceErr)
+		s.cfg.LANEnabled = false
+	} else {
+		s.devices = deviceStore
+		log.Printf("security/devices: store ready path=%q remembered=%d", deviceauth.FilePath(cfg.DataDir), len(deviceStore.List()))
+	}
+	macroStore, macroErr := macros.New(cfg.DataDir)
+	if macroErr != nil {
+		log.Printf("JACoB macro store unavailable; built-in macros will be available for this session only: %v", macroErr)
+		macroStore, _ = macros.New("")
+	}
+	s.macros = macroStore
+	if macroStore != nil {
+		log.Printf("macros/store: ready path=%q definitions=%d", macroStore.Path(), len(macroStore.List()))
+	}
 	s.catalog = catalog.New(s.webfetch)
 	mediaToken, mediaErr := secureRandomToken()
 	if mediaErr != nil {
@@ -151,7 +192,7 @@ func New(cfg Config) *Server {
 		s.tabState = stateStore
 		log.Printf("Tab state store: %s", stateStore.Path())
 	}
-	s.bindings = bindings.New(cfg.BindingsDir)
+	s.bindings = bindings.NewWithControlDirs(cfg.BindingsDir, cfg.ControlSchemeDirs)
 	if cfg.AutoBind {
 		if platform.GameRunning() {
 			log.Printf("JACoB autobind refused: Elite Dangerous is running; close the game before modifying bindings")
@@ -195,6 +236,9 @@ func New(cfg Config) *Server {
 func (s *Server) Run(ctx context.Context) error {
 	go func() { _ = s.watcher.Run(ctx) }()
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/pair", s.handlePair)
+	mux.HandleFunc("/api/device/refresh", s.handleDeviceRefresh)
+	mux.HandleFunc("/api/device/logout", s.handleDeviceLogout)
 	mux.HandleFunc("/ws", s.handleWS)
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/video/frame.jpg", s.handleVideoFrame)
@@ -216,18 +260,338 @@ func (s *Server) Run(ctx context.Context) error {
 		defer cancel()
 		_ = httpServer.Shutdown(c)
 	}()
-	log.Printf("JACoB %s listening on http://%s", buildinfo.Display, s.cfg.Bind)
+	log.Printf("http/start: %s configured on http://%s lan=%t", buildinfo.Display, s.cfg.Bind, s.cfg.LANEnabled)
 	if s.cfg.LANEnabled {
-		log.Printf("LAN pairing token: %s", s.cfg.PairToken)
+		log.Printf("security/pairing: LAN pairing enabled; enrollment key is available only in host Settings")
 	}
-	return httpServer.ListenAndServe()
+	go func() {
+		time.Sleep(750 * time.Millisecond)
+		s.logNetworkSnapshot("startup")
+	}()
+	err := httpServer.ListenAndServe()
+	log.Printf("http/stop: bind=%q err=%v", s.cfg.Bind, err)
+	return err
+}
+
+const deviceCookieName = "jacob_device"
+
+func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := validateWebSocketOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if isLoopbackRequest(r) {
+		http.Error(w, "the host browser is already trusted", http.StatusBadRequest)
+		return
+	}
+	if !s.cfg.LANEnabled || s.devices == nil {
+		http.Error(w, "LAN pairing is unavailable", http.StatusForbidden)
+		return
+	}
+	key := remoteAddressKey(r)
+	if ok, wait := s.pairAttemptAllowed(key); !ok {
+		log.Printf("security/pairing: rate-limited remote=%q retryAfter=%s", key, wait.Round(time.Second))
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		http.Error(w, "too many failed pairing attempts", http.StatusTooManyRequests)
+		return
+	}
+	var body struct {
+		PairKey string `json:"pairKey"`
+		Name    string `json:"name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&body); err != nil {
+		http.Error(w, "invalid pairing request", http.StatusBadRequest)
+		return
+	}
+	want := strings.TrimSpace(s.cfg.PairToken)
+	got := strings.TrimSpace(body.PairKey)
+	if want == "" || got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+		s.recordPairFailure(key)
+		log.Printf("security/pairing: rejected enrollment remote=%q", key)
+		time.Sleep(200 * time.Millisecond)
+		http.Error(w, "pair key was not accepted", http.StatusUnauthorized)
+		return
+	}
+	s.clearPairFailures(key)
+	device, credential, err := s.devices.Enroll(body.Name)
+	if err != nil {
+		http.Error(w, "could not enroll device", http.StatusInternalServerError)
+		return
+	}
+	setDeviceCookie(w, r, credential, false)
+	log.Printf("security/pairing: enrolled device id=%q name=%q remote=%q", device.ID, device.Name, key)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"paired": true, "device": device})
+	s.broadcastDevicesChanged()
+}
+
+func (s *Server) handleDeviceRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := validateWebSocketOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	cookie, err := r.Cookie(deviceCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		http.Error(w, "paired device credential required", http.StatusUnauthorized)
+		return
+	}
+	device, ok := s.devices.Authenticate(cookie.Value)
+	if !ok {
+		clearDeviceCookie(w, r)
+		http.Error(w, "paired device credential is no longer valid", http.StatusUnauthorized)
+		return
+	}
+	setDeviceCookie(w, r, cookie.Value, device.Remember)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "device": device})
+}
+
+func (s *Server) handleDeviceLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := validateWebSocketOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	clearDeviceCookie(w, r)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func setDeviceCookie(w http.ResponseWriter, r *http.Request, credential string, remember bool) {
+	cookie := &http.Cookie{Name: deviceCookieName, Value: credential, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil}
+	if remember {
+		cookie.MaxAge = int((180 * 24 * time.Hour) / time.Second)
+		cookie.Expires = time.Now().Add(180 * 24 * time.Hour)
+	}
+	http.SetCookie(w, cookie)
+}
+
+func clearDeviceCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{Name: deviceCookieName, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil, MaxAge: -1, Expires: time.Unix(1, 0)})
+}
+
+func (s *Server) authenticateRemoteRequest(r *http.Request) (deviceauth.Device, bool) {
+	if !s.cfg.LANEnabled || s.devices == nil {
+		return deviceauth.Device{}, false
+	}
+	cookie, err := r.Cookie(deviceCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return deviceauth.Device{}, false
+	}
+	return s.devices.Authenticate(cookie.Value)
+}
+
+func remoteAddressKey(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil && host != "" {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func (s *Server) pairAttemptAllowed(key string) (bool, time.Duration) {
+	now := time.Now()
+	s.pairMu.Lock()
+	defer s.pairMu.Unlock()
+	if s.pairFailures == nil {
+		s.pairFailures = map[string]pairFailure{}
+	}
+	f := s.pairFailures[key]
+	if now.Before(f.BlockedUntil) {
+		return false, time.Until(f.BlockedUntil)
+	}
+	if f.WindowStart.IsZero() || now.Sub(f.WindowStart) > time.Minute {
+		f = pairFailure{WindowStart: now}
+		s.pairFailures[key] = f
+	}
+	return true, 0
+}
+
+func (s *Server) recordPairFailure(key string) {
+	now := time.Now()
+	s.pairMu.Lock()
+	defer s.pairMu.Unlock()
+	if s.pairFailures == nil {
+		s.pairFailures = map[string]pairFailure{}
+	}
+	f := s.pairFailures[key]
+	if f.WindowStart.IsZero() || now.Sub(f.WindowStart) > time.Minute {
+		f = pairFailure{WindowStart: now}
+	}
+	f.Failures++
+	if f.Failures >= 5 {
+		f.BlockedUntil = now.Add(5 * time.Minute)
+	}
+	s.pairFailures[key] = f
+}
+
+func (s *Server) clearPairFailures(key string) {
+	s.pairMu.Lock()
+	delete(s.pairFailures, key)
+	s.pairMu.Unlock()
+}
+
+func (s *Server) registerClient(c *wsClient, deviceID string) {
+	s.clientsMu.Lock()
+	s.clients[c] = struct{}{}
+	if deviceID != "" {
+		s.clientDevices[c] = deviceID
+	}
+	s.clientsMu.Unlock()
+	if deviceID != "" {
+		s.broadcastDevicesChanged()
+	}
+}
+
+func (s *Server) unregisterClient(c *wsClient) {
+	s.clientsMu.Lock()
+	deviceID := s.clientDevices[c]
+	delete(s.clientDevices, c)
+	delete(s.clients, c)
+	s.clientsMu.Unlock()
+	if deviceID == "" {
+		return
+	}
+	s.broadcastDevicesChanged()
+	go func(id string) {
+		time.Sleep(60 * time.Second)
+		if s.deviceConnectionCount(id) != 0 || s.devices == nil {
+			return
+		}
+		device, ok := s.devices.Get(id)
+		if ok && !device.Remember {
+			_ = s.devices.Revoke(id)
+			s.broadcastDevicesChanged()
+		}
+	}(deviceID)
+}
+
+func (s *Server) clientDevice(c *wsClient) (deviceauth.Device, bool) {
+	if c == nil || s.devices == nil {
+		return deviceauth.Device{}, false
+	}
+	s.clientsMu.RLock()
+	id := s.clientDevices[c]
+	s.clientsMu.RUnlock()
+	if id == "" {
+		return deviceauth.Device{}, false
+	}
+	return s.devices.Get(id)
+}
+
+func (s *Server) clientPrivileged(c *wsClient) bool {
+	if c != nil && c.local {
+		return true
+	}
+	device, ok := s.clientDevice(c)
+	return ok && device.Admin
+}
+
+func (s *Server) deviceConnectionCount(id string) int {
+	if id == "" {
+		return 0
+	}
+	s.clientsMu.RLock()
+	defer s.clientsMu.RUnlock()
+	n := 0
+	for _, deviceID := range s.clientDevices {
+		if deviceID == id {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *Server) deviceList() []map[string]any {
+	if s.devices == nil {
+		return nil
+	}
+	devices := s.devices.List()
+	out := make([]map[string]any, 0, len(devices))
+	for _, device := range devices {
+		connections := s.deviceConnectionCount(device.ID)
+		out = append(out, map[string]any{
+			"id": device.ID, "name": device.Name, "remember": device.Remember, "admin": device.Admin,
+			"createdAt": device.CreatedAt, "lastSeenAt": device.LastSeenAt,
+			"connected": connections > 0, "connections": connections,
+		})
+	}
+	return out
+}
+
+func (s *Server) notifyDevicePermissions(id string) {
+	if s.devices == nil {
+		return
+	}
+	device, ok := s.devices.Get(id)
+	if !ok {
+		return
+	}
+	s.clientsMu.RLock()
+	clients := make([]*wsClient, 0)
+	for client, deviceID := range s.clientDevices {
+		if deviceID == id {
+			clients = append(clients, client)
+		}
+	}
+	s.clientsMu.RUnlock()
+	for _, client := range clients {
+		_ = s.send(client, envelope{Type: "event", Event: "device.permissions", Data: map[string]any{"device": device, "admin": device.Admin, "remember": device.Remember, "privileged": device.Admin}})
+	}
+}
+
+func (s *Server) broadcastDevicesChanged() {
+	s.broadcast(envelope{Type: "event", Event: "devices.changed", Data: map[string]any{"changed": true}})
+}
+
+func (s *Server) revokeDevice(id string) error {
+	if s.devices == nil {
+		return fmt.Errorf("device store unavailable")
+	}
+	if err := s.devices.Revoke(id); err != nil {
+		return err
+	}
+	s.clientsMu.RLock()
+	clients := make([]*wsClient, 0)
+	for client, deviceID := range s.clientDevices {
+		if deviceID == id {
+			clients = append(clients, client)
+		}
+	}
+	s.clientsMu.RUnlock()
+	for _, client := range clients {
+		_ = s.send(client, envelope{Type: "event", Event: "device.revoked", Data: map[string]any{"id": id}})
+	}
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		for _, client := range clients {
+			_ = client.Close()
+		}
+	}()
+	s.broadcastDevicesChanged()
+	return nil
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	local := isLoopbackRequest(r)
-	if !local && !s.authorizeRemoteToken(r) {
-		http.Error(w, "pairing token required", http.StatusUnauthorized)
-		return
+	if !local {
+		if _, ok := s.authenticateRemoteRequest(r); !ok {
+			http.Error(w, "paired device credential required", http.StatusUnauthorized)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -240,16 +604,18 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	local := isLoopbackRequest(r)
+	deviceID := ""
 	if !local {
 		if !s.cfg.LANEnabled {
 			http.Error(w, "LAN access disabled", http.StatusForbidden)
 			return
 		}
-		got := r.URL.Query().Get("token")
-		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.PairToken)) != 1 {
-			http.Error(w, "invalid pairing token", http.StatusUnauthorized)
+		device, ok := s.authenticateRemoteRequest(r)
+		if !ok {
+			http.Error(w, "paired device credential required", http.StatusUnauthorized)
 			return
 		}
+		deviceID = device.ID
 	}
 	client, err := upgradeWebSocket(w, r)
 	if err != nil {
@@ -257,17 +623,28 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client.local = local
-	s.clientsMu.Lock()
-	s.clients[client] = struct{}{}
-	s.clientsMu.Unlock()
+	s.registerClient(client, deviceID)
+	log.Printf("ws/connect: local=%t remote=%q device=%q", local, remoteAddressKey(r), deviceID)
 	defer func() {
+		log.Printf("ws/disconnect: local=%t remote=%q device=%q", local, remoteAddressKey(r), deviceID)
 		s.stopRecorderOwnedBy(client)
-		s.clientsMu.Lock()
-		delete(s.clients, client)
-		s.clientsMu.Unlock()
+		s.unregisterClient(client)
 		_ = client.Close()
 	}()
-	_ = s.send(client, envelope{Type: "event", Event: "core.hello", Data: s.systemInfo(local)})
+	hello := s.systemInfo(local)
+	hello["adminClient"] = false
+	hello["privilegedClient"] = local
+	if !local {
+		if device, ok := s.clientDevice(client); ok {
+			hello["device"] = device
+			hello["adminClient"] = device.Admin
+			hello["privilegedClient"] = device.Admin
+			if device.Admin {
+				hello["health"] = s.healthForClient(true)
+			}
+		}
+	}
+	_ = s.send(client, envelope{Type: "event", Event: "core.hello", Data: hello})
 	_ = s.send(client, envelope{Type: "event", Event: "state", Data: s.watcher.Snapshot()})
 	for {
 		op, payload, err := client.ReadMessage()
@@ -303,10 +680,18 @@ func (s *Server) requireInput(c *wsClient, id string) bool {
 }
 
 func (s *Server) requireLocal(c *wsClient, id, action string) bool {
+	if s.clientPrivileged(c) {
+		return true
+	}
+	_ = s.sendError(c, id, "LOCAL_ONLY", action+" requires the host browser or a host-approved admin device")
+	return false
+}
+
+func (s *Server) requirePhysicalHost(c *wsClient, id, action string) bool {
 	if c != nil && c.local {
 		return true
 	}
-	_ = s.sendError(c, id, "LOCAL_ONLY", action+" is only available from a browser running on the host computer")
+	_ = s.sendError(c, id, "HOST_ONLY", action+" can only be changed from the browser running on the JACoB host")
 	return false
 }
 
@@ -319,8 +704,8 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 	case "core.ping":
 		s.sendResult(c, req.ID, map[string]any{"pong": true, "time": time.Now().UTC().Format(time.RFC3339Nano)})
 	case "core.shutdown":
-		if !c.local {
-			_ = s.sendError(c, req.ID, "LOCAL_ONLY", "JACoB can only be closed from a browser running on the host computer")
+		if !s.clientPrivileged(c) {
+			_ = s.sendError(c, req.ID, "LOCAL_ONLY", "JACoB can only be closed from the host browser or a host-approved admin device")
 			return
 		}
 		if s.recorder.Status().Recording {
@@ -361,7 +746,7 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		}
 		s.sendResult(c, req.ID, map[string]any{"events": events, "info": info})
 	case "system.health":
-		s.sendResult(c, req.ID, s.healthForClient(c.local))
+		s.sendResult(c, req.ID, s.healthForClient(s.clientPrivileged(c)))
 	case "network.diagnostics":
 		if !s.requireLocal(c, req.ID, "network diagnostics") {
 			return
@@ -378,6 +763,233 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			return
 		}
 		s.sendResult(c, req.ID, s.networkDiagnostics())
+	case "macros.policy":
+		if s.macros == nil {
+			_ = s.sendError(c, req.ID, "MACROS_UNAVAILABLE", "macro store is unavailable")
+			return
+		}
+		s.sendResult(c, req.ID, s.macros.Policy())
+	case "macros.policy.accept":
+		if !s.requirePhysicalHost(c, req.ID, "macro use agreement") {
+			return
+		}
+		if s.macros == nil {
+			_ = s.sendError(c, req.ID, "MACROS_UNAVAILABLE", "macro store is unavailable")
+			return
+		}
+		state, err := s.macros.AcceptPolicy()
+		if err != nil {
+			_ = s.sendError(c, req.ID, "MACRO_POLICY_SAVE_FAILED", err.Error())
+			return
+		}
+		log.Printf("macro policy agreement accepted version=%d", state.Version)
+		s.broadcast(envelope{Type: "event", Event: "macros.changed", Data: map[string]any{"action": "policy"}})
+		s.sendResult(c, req.ID, state)
+	case "macros.list":
+		if s.macros == nil {
+			_ = s.sendError(c, req.ID, "MACROS_UNAVAILABLE", "macro store is unavailable")
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"macros": s.macros.List()})
+	case "macros.get":
+		if s.macros == nil {
+			_ = s.sendError(c, req.ID, "MACROS_UNAVAILABLE", "macro store is unavailable")
+			return
+		}
+		name, _ := req.Params["name"].(string)
+		def, ok := s.macros.Resolve(name)
+		if !ok {
+			_ = s.sendError(c, req.ID, "MACRO_NOT_FOUND", "macro was not found")
+			return
+		}
+		s.sendResult(c, req.ID, def)
+	case "macros.run":
+		if !s.requireInput(c, req.ID) {
+			return
+		}
+		if s.macros == nil {
+			_ = s.sendError(c, req.ID, "MACROS_UNAVAILABLE", "macro store is unavailable")
+			return
+		}
+		name, _ := req.Params["name"].(string)
+		def, ok := s.macros.Resolve(name)
+		if !ok {
+			_ = s.sendError(c, req.ID, "MACRO_NOT_FOUND", fmt.Sprintf("macro %q was not found", name))
+			return
+		}
+		if !def.BuiltIn && !s.macros.PolicyAccepted() {
+			_ = s.sendError(c, req.ID, "MACRO_POLICY_REQUIRED", "accept the macro use agreement on the JACoB host before running custom macros")
+			return
+		}
+		result, err := s.runMacro(def, macroArgs(req.Params["args"]))
+		if err != nil {
+			_ = s.sendError(c, req.ID, "MACRO_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "macros.save":
+		if !s.requireLocal(c, req.ID, "macro editing") {
+			return
+		}
+		if s.macros != nil && !s.macros.PolicyAccepted() {
+			_ = s.sendError(c, req.ID, "MACRO_POLICY_REQUIRED", "accept the macro use agreement on the JACoB host before creating or modifying macros")
+			return
+		}
+		if s.macros == nil {
+			_ = s.sendError(c, req.ID, "MACROS_UNAVAILABLE", "macro store is unavailable")
+			return
+		}
+		raw, ok := req.Params["macro"]
+		if !ok {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "macro is required")
+			return
+		}
+		blob, err := json.Marshal(raw)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		var def macros.Definition
+		if err := json.Unmarshal(blob, &def); err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", err.Error())
+			return
+		}
+		saved, err := s.macros.Save(def)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "MACRO_SAVE_FAILED", err.Error())
+			return
+		}
+		s.broadcast(envelope{Type: "event", Event: "macros.changed", Data: map[string]any{"id": saved.ID, "action": "saved"}})
+		s.sendResult(c, req.ID, saved)
+	case "macros.delete":
+		if !s.requireLocal(c, req.ID, "macro editing") {
+			return
+		}
+		if s.macros != nil && !s.macros.PolicyAccepted() {
+			_ = s.sendError(c, req.ID, "MACRO_POLICY_REQUIRED", "accept the macro use agreement on the JACoB host before creating or modifying macros")
+			return
+		}
+		id, _ := req.Params["id"].(string)
+		if s.macros == nil {
+			_ = s.sendError(c, req.ID, "MACROS_UNAVAILABLE", "macro store is unavailable")
+			return
+		}
+		if err := s.macros.Delete(id); err != nil {
+			_ = s.sendError(c, req.ID, "MACRO_DELETE_FAILED", err.Error())
+			return
+		}
+		s.broadcast(envelope{Type: "event", Event: "macros.changed", Data: map[string]any{"id": id, "action": "deleted"}})
+		s.sendResult(c, req.ID, map[string]any{"deleted": true, "id": id})
+	case "macros.reset":
+		if !s.requireLocal(c, req.ID, "macro editing") {
+			return
+		}
+		if s.macros != nil && !s.macros.PolicyAccepted() {
+			_ = s.sendError(c, req.ID, "MACRO_POLICY_REQUIRED", "accept the macro use agreement on the JACoB host before creating or modifying macros")
+			return
+		}
+		id, _ := req.Params["id"].(string)
+		if s.macros == nil {
+			_ = s.sendError(c, req.ID, "MACROS_UNAVAILABLE", "macro store is unavailable")
+			return
+		}
+		def, err := s.macros.Reset(id)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "MACRO_RESET_FAILED", err.Error())
+			return
+		}
+		s.broadcast(envelope{Type: "event", Event: "macros.changed", Data: map[string]any{"id": id, "action": "reset"}})
+		s.sendResult(c, req.ID, def)
+	case "devices.list":
+		if !s.requireLocal(c, req.ID, "connected-device list") {
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"devices": s.deviceList()})
+	case "devices.setRemember":
+		if !s.requirePhysicalHost(c, req.ID, "Remember me") {
+			return
+		}
+		id, _ := req.Params["id"].(string)
+		value, _ := req.Params["value"].(bool)
+		device, err := s.devices.SetRemember(id, value)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "DEVICE_UPDATE_FAILED", err.Error())
+			return
+		}
+		log.Printf("security/device: remember changed id=%q value=%t", id, value)
+		if !value && s.deviceConnectionCount(id) == 0 {
+			_ = s.devices.Revoke(id)
+		} else {
+			s.notifyDevicePermissions(id)
+		}
+		s.broadcastDevicesChanged()
+		s.sendResult(c, req.ID, device)
+	case "devices.setAdmin":
+		if !s.requirePhysicalHost(c, req.ID, "device administrator permission") {
+			return
+		}
+		id, _ := req.Params["id"].(string)
+		value, _ := req.Params["value"].(bool)
+		device, err := s.devices.SetAdmin(id, value)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "DEVICE_UPDATE_FAILED", err.Error())
+			return
+		}
+		log.Printf("security/device: admin changed id=%q value=%t", id, value)
+		s.notifyDevicePermissions(id)
+		s.broadcastDevicesChanged()
+		s.sendResult(c, req.ID, device)
+	case "devices.revoke":
+		if !s.requirePhysicalHost(c, req.ID, "device revocation") {
+			return
+		}
+		id, _ := req.Params["id"].(string)
+		if strings.TrimSpace(id) == "" {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "device id is required")
+			return
+		}
+		log.Printf("security/device: revoke requested id=%q", id)
+		if err := s.revokeDevice(id); err != nil {
+			_ = s.sendError(c, req.ID, "DEVICE_REVOKE_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"revoked": true, "id": id})
+	case "paths.get":
+		if !s.requireLocal(c, req.ID, "Elite data path settings") {
+			return
+		}
+		saved, err := pathconfig.Load(s.cfg.DataDir)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "PATH_SETTINGS_READ_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, s.pathSettingsInfo(saved))
+	case "paths.save":
+		if !s.requireLocal(c, req.ID, "Elite data path settings") {
+			return
+		}
+		journalDir, _ := req.Params["journalDir"].(string)
+		bindingsDir, _ := req.Params["bindingsDir"].(string)
+		next := pathconfig.Normalize(pathconfig.Config{
+			JournalDir:        journalDir,
+			BindingsDir:       bindingsDir,
+			ControlSchemeDirs: stringSliceParam(req.Params, "controlSchemeDirs"),
+		})
+		if err := pathconfig.Save(s.cfg.DataDir, next); err != nil {
+			_ = s.sendError(c, req.ID, "PATH_SETTINGS_SAVE_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, s.pathSettingsInfo(next))
+	case "paths.reset":
+		if !s.requireLocal(c, req.ID, "Elite data path settings") {
+			return
+		}
+		next := pathconfig.Config{}
+		if err := pathconfig.Save(s.cfg.DataDir, next); err != nil {
+			_ = s.sendError(c, req.ID, "PATH_SETTINGS_SAVE_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, s.pathSettingsInfo(next))
 	case "locale.get":
 		if s.locale == nil {
 			s.sendResult(c, req.ID, map[string]any{"language": localization.DefaultLanguage, "supported": localization.Supported()})
@@ -614,8 +1226,8 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		}
 		s.sendResult(c, req.ID, info)
 	case "update.install":
-		if !c.local {
-			_ = s.sendError(c, req.ID, "LOCAL_ONLY", "software updates can only be installed from a browser running on the host computer")
+		if !s.clientPrivileged(c) {
+			_ = s.sendError(c, req.ID, "LOCAL_ONLY", "software updates can only be installed from the host browser or a host-approved admin device")
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -937,6 +1549,7 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 	case "recorder.status":
 		s.sendResult(c, req.ID, s.recorder.Status())
 	case "recorder.start":
+		log.Printf("recorder/start: requested driver=%s available=%t", s.recorder.Name(), s.recorder.Available())
 		if !s.recorder.Available() {
 			_ = s.sendError(c, req.ID, "RECORDER_UNAVAILABLE", "input recorder is unavailable on this platform build")
 			return
@@ -950,6 +1563,7 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		s.recorderMu.Lock()
 		s.recorderOwner = c
 		s.recorderMu.Unlock()
+		log.Printf("recorder/start: active driver=%s", s.recorder.Name())
 		s.sendResult(c, req.ID, s.recorder.Status())
 	case "recorder.stop":
 		events, err := s.recorder.Stop()
@@ -964,6 +1578,7 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		for _, ev := range events {
 			enriched = append(enriched, s.enrichRecordedInput(ev))
 		}
+		log.Printf("recorder/stop: driver=%s capturedEvents=%d", s.recorder.Name(), len(events))
 		s.sendResult(c, req.ID, map[string]any{"status": s.recorder.Status(), "events": enriched})
 	case "overlay.info":
 		if s.overlay == nil {
@@ -1367,6 +1982,202 @@ func stringMapParam(params map[string]any, key string) map[string]string {
 	return out
 }
 
+func macroArgs(raw any) map[string]string {
+	out := map[string]string{}
+	values, ok := raw.(map[string]any)
+	if !ok {
+		return out
+	}
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		if key == "" || value == nil {
+			continue
+		}
+		switch v := value.(type) {
+		case string:
+			out[key] = v
+		case float64, bool, json.Number:
+			out[key] = fmt.Sprint(v)
+		}
+	}
+	return out
+}
+
+func (s *Server) runMacro(def macros.Definition, args map[string]string) (map[string]any, error) {
+	for _, name := range def.Parameters {
+		if strings.TrimSpace(args[name]) == "" {
+			return nil, fmt.Errorf("macro parameter %q is required", name)
+		}
+	}
+	if s.recorder != nil && s.recorder.Status().Recording {
+		return nil, fmt.Errorf("stop the Action Recorder before running a macro")
+	}
+	s.macroMu.Lock()
+	if s.macroRunning {
+		s.macroMu.Unlock()
+		return nil, fmt.Errorf("another macro is already running")
+	}
+	s.macroRunning = true
+	s.macroMu.Unlock()
+	defer func() {
+		s.macroMu.Lock()
+		s.macroRunning = false
+		s.macroMu.Unlock()
+	}()
+
+	started := time.Now()
+	log.Printf("macro/run-start: id=%q name=%q steps=%d parameters=%d", def.ID, def.Name, len(def.Steps), len(def.Parameters))
+	steps := make([]map[string]any, 0, len(def.Steps))
+	for index, step := range def.Steps {
+		if step.DelayMs > 0 {
+			time.Sleep(time.Duration(step.DelayMs) * time.Millisecond)
+		}
+		stepStarted := time.Now()
+		switch step.Type {
+		case "binding":
+			var err error
+			if step.HoldMs > 0 {
+				_, err = s.controls.HoldBinding(step.Action, step.HoldMs)
+			} else {
+				_, err = s.controls.PressBinding(step.Action)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("step %d (%s): %w", index+1, step.Action, err)
+			}
+		case "raw":
+			if err := platform.ValidateSafeChord(step.Key, step.Modifiers); err != nil {
+				return nil, fmt.Errorf("step %d: %w", index+1, err)
+			}
+			if err := s.input.FocusGame(); err != nil {
+				return nil, fmt.Errorf("step %d could not target Elite Dangerous: %w", index+1, err)
+			}
+			var err error
+			if step.HoldMs > 0 {
+				err = s.input.HoldChord(step.Key, step.Modifiers, step.HoldMs)
+			} else {
+				err = s.input.TapChord(step.Key, step.Modifiers)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("step %d (%s): %w", index+1, step.Key, err)
+			}
+		case "text":
+			text, err := macros.ExpandText(step.Text, args)
+			if err != nil {
+				return nil, fmt.Errorf("step %d: %w", index+1, err)
+			}
+			if _, err := s.controls.TypeText(text, step.IntervalMs); err != nil {
+				return nil, fmt.Errorf("step %d text input: %w", index+1, err)
+			}
+		default:
+			return nil, fmt.Errorf("step %d has unsupported type %q", index+1, step.Type)
+		}
+		steps = append(steps, map[string]any{
+			"index":      index + 1,
+			"type":       step.Type,
+			"durationMs": time.Since(stepStarted).Milliseconds(),
+		})
+		if time.Since(started) > 90*time.Second {
+			return nil, fmt.Errorf("macro exceeded the 90-second execution limit")
+		}
+	}
+	log.Printf("macro/run-complete: id=%q steps=%d duration=%s", def.ID, len(def.Steps), time.Since(started).Round(time.Millisecond))
+	result := map[string]any{
+		"id":         def.ID,
+		"name":       def.Name,
+		"steps":      steps,
+		"durationMs": time.Since(started).Milliseconds(),
+	}
+	return result, nil
+}
+
+func firstPathEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func sameConfiguredPath(effective, candidate string) bool {
+	effective = strings.TrimSpace(effective)
+	candidate = strings.TrimSpace(candidate)
+	if effective == "" || candidate == "" {
+		return false
+	}
+	effective = filepath.Clean(effective)
+	candidate = filepath.Clean(candidate)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(effective, candidate)
+	}
+	return effective == candidate
+}
+
+func pathSettingSource(effective, envValue, manualValue string) string {
+	if sameConfiguredPath(effective, envValue) {
+		return "environment"
+	}
+	if sameConfiguredPath(effective, manualValue) {
+		return "manual"
+	}
+	return "auto"
+}
+
+func anyConfiguredPath(effective []string, candidates []string) bool {
+	for _, e := range effective {
+		for _, c := range candidates {
+			if sameConfiguredPath(e, c) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Server) pathSettingsInfo(saved pathconfig.Config) map[string]any {
+	saved = pathconfig.Normalize(saved)
+	journalEnv := firstPathEnv("JACOB_JOURNAL_DIR", "EDBRIDGE_JOURNAL_DIR")
+	bindingsEnv := firstPathEnv("JACOB_BINDINGS_DIR", "EDBRIDGE_BINDINGS_DIR")
+	controlsEnv := firstPathEnv("JACOB_CONTROL_SCHEMES_DIR", "EDBRIDGE_CONTROL_SCHEMES_DIR")
+	controlSource := "auto"
+	if anyConfiguredPath(s.cfg.ControlSchemeDirs, []string{controlsEnv}) {
+		controlSource = "environment"
+	} else if anyConfiguredPath(s.cfg.ControlSchemeDirs, saved.ControlSchemeDirs) {
+		controlSource = "manual"
+	}
+	return map[string]any{
+		"saved": saved,
+		"effective": map[string]any{
+			"journalDir":        s.cfg.JournalDir,
+			"bindingsDir":       s.bindings.Directory(),
+			"controlSchemeDirs": append([]string(nil), s.cfg.ControlSchemeDirs...),
+		},
+		"source": map[string]any{
+			"journalDir":        pathSettingSource(s.cfg.JournalDir, journalEnv, saved.JournalDir),
+			"bindingsDir":       pathSettingSource(s.bindings.Directory(), bindingsEnv, saved.BindingsDir),
+			"controlSchemeDirs": controlSource,
+		},
+		"environment": map[string]any{
+			"journalDir":        journalEnv,
+			"bindingsDir":       bindingsEnv,
+			"controlSchemeDirs": controlsEnv,
+		},
+		"configFile":      pathconfig.FilePath(s.cfg.DataDir),
+		"restartRequired": !pathconfig.Equal(saved, s.cfg.ManualPaths),
+	}
+}
+
+func (s *Server) logNetworkSnapshot(reason string) {
+	d := s.networkDiagnostics()
+	host, _ := d["host"].(networkdiag.Report)
+	profiles := make([]string, 0, len(host.Profiles))
+	for _, p := range host.Profiles {
+		profiles = append(profiles, p.InterfaceAlias+":"+p.NetworkCategory+":"+p.IPv4Connectivity)
+	}
+	log.Printf("network/%s: lan=%t bind=%q bindOK=%v addresses=%v preferred=%q firewallPresent=%t firewallOK=%t firewallEnabled=%t firewallProfiles=%q firewallPort=%q firewallRemote=%v profiles=%v inspectError=%q warnings=%v",
+		reason, s.cfg.LANEnabled, s.cfg.Bind, d["bindOK"], d["addresses"], d["preferredAddress"], host.FirewallRulePresent, host.FirewallOK, host.FirewallEnabled, host.FirewallProfiles, host.FirewallPort, host.FirewallRemote, profiles, host.Error, d["warnings"])
+}
+
 func (s *Server) networkDiagnostics() map[string]any {
 	addresses := localIPv4s()
 	preferred := preferredLocalIPv4(addresses)
@@ -1442,7 +2253,7 @@ func (s *Server) systemInfo(includeSecret bool) map[string]any {
 	// token. A tab with Video permission must never receive a WebSocket credential.
 	mediaToken := s.mediaToken
 	return map[string]any{
-		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 11, "pid": os.Getpid(), "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken,
+		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 12, "pid": os.Getpid(), "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken,
 		"journalDir": journalDir, "bindingsDir": bindingsDir, "bindingsFile": bindingsFile, "bindingsFiles": bindingsFiles, "bindingsSource": s.bindings.ActiveSource(), "bindingsCount": len(s.bindings.ListActions()), "autoBind": s.autoBind,
 		"input": map[string]any{"enabled": s.cfg.EnableInput, "available": s.input.Available(), "driver": s.input.Name()}, "recorder": s.recorder.Status(), "capture": map[string]any{"available": s.capture.Available(), "driver": s.capture.Name(), "eliteOnly": true, "foregroundOnly": true}, "vision": func() map[string]any {
 			if s.vision != nil {
@@ -1554,11 +2365,8 @@ func (s *Server) healthReport() map[string]any {
 }
 
 func (s *Server) authorizeRemoteToken(r *http.Request) bool {
-	if !s.cfg.LANEnabled {
-		return false
-	}
-	got := r.URL.Query().Get("token")
-	return got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.PairToken)) == 1
+	_, ok := s.authenticateRemoteRequest(r)
+	return ok
 }
 
 func (s *Server) authorizeMedia(r *http.Request) bool {
@@ -1656,6 +2464,13 @@ func (s *Server) handleVideoMJPEG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	width, quality, fps, matte := videoParams(r)
+	streamStarted := time.Now()
+	framesSent := 0
+	remote := remoteAddressKey(r)
+	log.Printf("video/stream-start: remote=%q local=%t driver=%s width=%d quality=%d fps=%d matte=%t", remote, isLoopbackRequest(r), s.capture.Name(), width, quality, fps, matte)
+	defer func() {
+		log.Printf("video/stream-stop: remote=%q frames=%d duration=%s", remote, framesSent, time.Since(streamStarted).Round(time.Millisecond))
+	}()
 	boundary := "jacobframe"
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary="+boundary)
 	w.Header().Set("Cache-Control", "no-store")
@@ -1673,6 +2488,7 @@ func (s *Server) handleVideoMJPEG(w http.ResponseWriter, r *http.Request) {
 	for {
 		b, info, err := captureVideoJPEG(s.capture, width, quality, matte)
 		if err != nil {
+			log.Printf("video/stream-error: remote=%q capture=%v", remote, err)
 			return
 		}
 		h := make(textproto.MIMEHeader)
@@ -1687,8 +2503,12 @@ func (s *Server) handleVideoMJPEG(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if _, err = part.Write(b); err != nil {
+			if r.Context().Err() == nil {
+				log.Printf("video/stream-error: remote=%q write=%v", remote, err)
+			}
 			return
 		}
+		framesSent++
 		flusher.Flush()
 		select {
 		case <-r.Context().Done():
@@ -1729,8 +2549,17 @@ func (s *Server) sendResult(c *wsClient, id string, result any) {
 	_ = s.send(c, envelope{Type: "response", ID: id, OK: &ok, Result: result})
 }
 func (s *Server) sendError(c *wsClient, id, code, msg string) error {
+	log.Printf("api/error: code=%s message=%q", code, truncateLogText(msg, 500))
 	ok := false
 	return s.send(c, envelope{Type: "response", ID: id, OK: &ok, Error: &apiError{Code: code, Message: msg}})
+}
+
+func truncateLogText(v string, max int) string {
+	v = strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(v), "\r", " "), "\n", " ")
+	if max > 0 && len(v) > max {
+		return v[:max] + "…"
+	}
+	return v
 }
 func hostGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1984,32 +2813,9 @@ func localIPv4s() []string {
 	return out
 }
 
-func persistentPairToken(dataDir string) (string, error) {
-	path := filepath.Join(dataDir, "pairing-token.txt")
-	if b, err := os.ReadFile(path); err == nil {
-		token := strings.TrimSpace(string(b))
-		if len(token) >= 16 {
-			return token, nil
-		}
+func sessionPairToken(dataDir string) (string, error) {
+	if strings.TrimSpace(dataDir) != "" {
+		_ = os.Remove(filepath.Join(dataDir, "pairing-token.txt"))
 	}
-	token, err := secureRandomToken()
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(dataDir) == "" {
-		return token, nil
-	}
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return "", err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(token+"\n"), 0o600); err != nil {
-		return "", err
-	}
-	_ = os.Remove(path)
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return "", err
-	}
-	return token, nil
+	return secureRandomToken()
 }

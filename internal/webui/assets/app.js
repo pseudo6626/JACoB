@@ -168,10 +168,12 @@
 (() => {
   const $ = s => document.querySelector(s);
   const state = {
-    socket:null,pending:new Map(),core:null,snapshot:null,seq:0,reconnectTimer:null,
-    bindings:[],savedTabs:[],tabHTMLCache:new Map(),tabLoadPromises:new Map(),navLayout:{order:[],hiddenDefaults:[]},editingTabId:'',activeTab:'dashboard',themeHTML:'',locale:{language:'en',supported:[]},quitting:false,updating:false,updateInfo:null,actionRegistry:new Map(),actionInvocations:new Map(),actionSeq:0,actionDiscoveryDone:false,actionDiscoveryPromise:null
+    socket:null,pending:new Map(),core:null,snapshot:null,seq:0,reconnectTimer:null,deviceRevoked:false,macros:[],macroDraft:null,macroSelected:'',macroRecording:false,macroPolicy:null,
+    bindings:[],savedTabs:[],tabHTMLCache:new Map(),tabLoadPromises:new Map(),navLayout:{order:[],hiddenDefaults:[]},editingTabId:'',activeTab:'dashboard',themeHTML:'',locale:{language:'en',supported:[]},quitting:false,updating:false,updateInfo:null,actionRegistry:new Map(),actionInvocations:new Map(),actionSeq:0,actionDiscoveryDone:false,actionDiscoveryPromise:null,paths:null
   };
   const isLocal = ['127.0.0.1','localhost','::1'].includes(location.hostname);
+  try{localStorage.removeItem('jacob-pair-token')}catch{}
+  function privilegedClient(){return !!(isLocal||state.core?.privilegedClient||state.core?.adminClient)}
   const UPDATE_CHECK_INTERVAL_MS=30*60*1000,UPDATE_BADGE_KEY='jacob-update-badge-dismissed';
   let updateCheckTimer=null,updateCheckKickoff=null;
   function dismissedUpdateVersion(){try{return localStorage.getItem(UPDATE_BADGE_KEY)||''}catch{return''}}
@@ -247,10 +249,11 @@ function sdkNetShape(url,options={}){const out={url:String(url||''),method:optio
 function cloneSDKValue(value){if(value===undefined)return undefined;if(typeof structuredClone==='function')return structuredClone(value);return JSON.parse(JSON.stringify(value))}
 function closeVideoElement(el){if(!el||typeof el.removeAttribute!=='function')return false;try{if(typeof el.pause==='function')el.pause()}catch{};try{el.removeAttribute('src');el.removeAttribute('srcset');if(el.dataset)delete el.dataset.jacobVideoActive;if(typeof el.load==='function')el.load();return true}catch{return false}}
 window.Elite=Object.freeze({
- api:Object.freeze({version:11}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
+ api:Object.freeze({version:12}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
  bindings:Object.freeze({list:()=>request('bindings.list'),diagnostics:()=>request('bindings.diagnostics'),get:name=>request('bindings.get',{name}),reload:()=>request('bindings.reload'),press:action=>request('binding.press',{action}),down:action=>request('binding.down',{action}),up:action=>request('binding.up',{action}),hold:(action,durationMs=1000)=>request('binding.hold',{action,durationMs})}),
  input:Object.freeze({tap:(key,options={})=>request('input.tap',{key,delayMs:options.delayMs||0,modifiers:options.modifiers||[]}),hold:(key,durationMs=250,options={})=>request('input.hold',{key,durationMs,modifiers:options.modifiers||[]}),text:(text,options={})=>request('input.text',{text,intervalMs:options.intervalMs??15})}),
  recorder:Object.freeze({status:()=>request('recorder.status'),start:()=>request('recorder.start'),stop:()=>request('recorder.stop'),subscribe:cb=>onEvent('recorder.input',cb)}),
+ macros:Object.freeze({list:()=>request('macros.list'),get:name=>request('macros.get',{name}),run:(name,args={})=>request('macros.run',{name,args}),exitMenus:()=>request('macros.run',{name:'exit_menus'}),openGalaxyMap:()=>request('macros.run',{name:'open_galaxy_map'}),openSystemMap:()=>request('macros.run',{name:'open_system_map'}),openNavigationPanel:()=>request('macros.run',{name:'open_navigation_panel'}),openCommsPanel:()=>request('macros.run',{name:'open_comms_panel'}),openRolePanel:()=>request('macros.run',{name:'open_role_panel'}),openInternalPanel:()=>request('macros.run',{name:'open_internal_panel'}),openQuickComms:()=>request('macros.run',{name:'open_quick_comms'}),openCodexDiscovery:()=>request('macros.run',{name:'open_codex_discovery'}),plotRoute:system=>request('macros.run',{name:'plot_route',args:{system}})}),
  overlay:Object.freeze({info:()=>request('overlay.info'),set:scene=>request('overlay.set',{scene}),clear:()=>request('overlay.clear')}),
  video:Object.freeze({info:()=>request('video.info'),url:(options={})=>request('video.url',options),attach:async(el,options={})=>{if(!el)throw Object.assign(new Error('video element is required'),{code:'BAD_PARAMS'});closeVideoElement(el);const u=await request('video.url',options);el.src=u;if(el.dataset)el.dataset.jacobVideoActive='1';return u},close:el=>closeVideoElement(el)}),
  vision:Object.freeze({
@@ -394,7 +397,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     catch(e){$('#theme-result').textContent=pretty(e)}
   }
 
-  function token(){return localStorage.getItem('jacob-pair-token')||''}
+  function token(){return ''}
   async function copyText(value,button){
     value=String(value||'');if(!value)return false;let ok=false;
     try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(value);ok=true}}catch{}
@@ -417,6 +420,118 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     if(tokenQR){tokenQR.innerHTML='';if(tokenValue){if(globalThis.PairQR?.render)globalThis.PairQR.render(tokenQR,tokenValue);else tokenQR.textContent='QR unavailable'}}
     if(urlQR){urlQR.innerHTML='';if(urlValue){if(globalThis.PairQR?.render)globalThis.PairQR.render(urlQR,urlValue);else urlQR.textContent='QR unavailable'}}
   }
+  function deviceTime(value){if(!value)return'—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString()}
+  function renderConnectedDevices(result={}){
+    const list=$('#device-list'),count=$('#device-count');if(!list)return;const devices=result.devices||[];if(count)count.textContent=String(devices.length);const canManage=isLocal;
+    if(!devices.length){list.innerHTML='<div class="muted empty-state">No paired remote devices. A device appears here after it uses the current pair key.</div>';return}
+    list.innerHTML='';
+    for(const d of devices){
+      const row=document.createElement('div');row.className='saved-tab-row';const meta=document.createElement('div');meta.className='saved-tab-meta';const short=String(d.id||'').slice(0,8);
+      meta.innerHTML=`<strong>${escapeHTML(d.name||'Browser device')}</strong><span class="muted">${d.connected?'Connected':'Offline'} · ${escapeHTML(short)} · Last seen ${escapeHTML(deviceTime(d.lastSeenAt))}</span>`;
+      const actions=document.createElement('div');actions.className='row';
+      const rememberLabel=document.createElement('label');rememberLabel.className='compact';const remember=document.createElement('input');remember.type='checkbox';remember.checked=!!d.remember;remember.disabled=!canManage;remember.onchange=()=>setDeviceFlag(d,'remember',remember.checked,remember);rememberLabel.append(remember,document.createTextNode(' Remember me'));
+      const adminLabel=document.createElement('label');adminLabel.className='compact';const admin=document.createElement('input');admin.type='checkbox';admin.checked=!!d.admin;admin.disabled=!canManage;admin.onchange=()=>setDeviceFlag(d,'admin',admin.checked,admin);adminLabel.append(admin,document.createTextNode(' Admin'));
+      const revoke=document.createElement('button');revoke.className='danger secondary';revoke.textContent='Revoke';revoke.hidden=!canManage;revoke.onclick=()=>revokeDevice(d);
+      actions.append(rememberLabel,adminLabel,revoke);row.append(meta,actions);list.appendChild(row)
+    }
+    if(!canManage){const out=$('#device-manager-result');if(out)out.textContent='Device trust is read-only here. Remember me, Admin, and Revoke can only be changed from the physical JACoB host browser.'}
+  }
+  async function loadConnectedDevices(){
+    if(!privilegedClient()){renderConnectedDevices({devices:[]});return null}
+    try{const r=await request('devices.list');state.devices=r.devices||[];renderConnectedDevices(r);return r}catch(e){const out=$('#device-manager-result');if(out)out.textContent=e?.message||pretty(e);return null}
+  }
+  async function setDeviceFlag(device,field,value,input){
+    if(!isLocal){input.checked=!value;return}
+    if(field==='admin'&&value){const ok=confirm(`Give ${device.name||'this device'} Admin access?\n\nAdmin devices can perform host-reserved JACoB actions, including installing/editing tabs, changing paths, running host diagnostics, installing updates, and closing JACoB. They cannot manage device trust or grant Admin to another device.`);if(!ok){input.checked=false;return}}
+    input.disabled=true;const out=$('#device-manager-result');
+    try{await request(field==='admin'?'devices.setAdmin':'devices.setRemember',{id:device.id,value});if(out)out.textContent=`${device.name||'Device'} updated.`;await loadConnectedDevices()}catch(e){input.checked=!value;if(out)out.textContent=e?.message||pretty(e)}finally{input.disabled=false}
+  }
+  async function revokeDevice(device){
+    if(!isLocal)return;if(!confirm(`Revoke ${device.name||'this device'}?\n\nIts current JACoB connection will be closed and its saved credential will stop working.`))return;
+    const out=$('#device-manager-result');try{await request('devices.revoke',{id:device.id});if(out)out.textContent=`${device.name||'Device'} revoked.`;await loadConnectedDevices()}catch(e){if(out)out.textContent=e?.message||pretty(e)}
+  }
+  async function refreshDeviceCookie(){
+    if(isLocal)return;try{await fetch('/api/device/refresh',{method:'POST',credentials:'same-origin'})}catch{}
+  }
+  function macroStatus(text){const out=$('#macro-result');if(out)out.textContent=String(text??'')}
+  function cloneMacro(value){return JSON.parse(JSON.stringify(value||{}))}
+  function macroPolicyAccepted(){return !!state.macroPolicy?.accepted}
+  function macroCanEdit(){return privilegedClient()&&macroPolicyAccepted()}
+  function renderMacroPolicy(){
+    const card=$('#macro-policy-card'),check=$('#macro-policy-check'),button=$('#macro-policy-accept'),label=$('#macro-policy-state');if(!card)return;
+    const accepted=macroPolicyAccepted(),physicalHost=!!state.core?.localClient;card.classList.toggle('good',accepted);card.classList.toggle('warn',!accepted);
+    if(check){check.disabled=accepted||!physicalHost;if(accepted)check.checked=true}
+    if(button){button.disabled=accepted||!physicalHost||!check?.checked;button.textContent=accepted?'Agreement accepted':'I agree — unlock macro editor'}
+    if(label)label.textContent=accepted?`Accepted ${state.macroPolicy?.acceptedAt?new Date(state.macroPolicy.acceptedAt).toLocaleString():''}`:physicalHost?'Required before creating, recording, deleting, resetting, or editing macros.':'Agreement must be accepted from the JACoB host computer.';
+  }
+  async function acceptMacroPolicy(){
+    if(!state.core?.localClient||!$('#macro-policy-check')?.checked)return;try{state.macroPolicy=await request('macros.policy.accept');renderMacroPolicy();renderMacroEditor();macroStatus('Macro use agreement accepted. The editor is unlocked on privileged devices.')}catch(e){macroStatus(`${e?.code||'MACRO_POLICY'}: ${e?.message||e}`)}
+  }
+  function macroParamsFromField(){return ($('#macro-parameters')?.value||'').split(/[\s,]+/).map(x=>x.trim()).filter(Boolean)}
+  function macroApplyMeta(){
+    if(!state.macroDraft)return null;
+    state.macroDraft.name=$('#macro-name')?.value||'';state.macroDraft.description=$('#macro-description')?.value||'';state.macroDraft.parameters=macroParamsFromField();
+    if(!state.macroDraft.builtIn)state.macroDraft.id=$('#macro-id')?.value.trim()||'';
+    return state.macroDraft
+  }
+  function macroValue(step){if(step.type==='binding')return step.action||'';if(step.type==='raw')return step.key||'';return step.text||''}
+  function macroSetValue(step,value){if(step.type==='binding')step.action=value;else if(step.type==='raw')step.key=value;else step.text=value}
+  function macroStepRow(step,index){
+    const canEdit=macroCanEdit(),row=document.createElement('div');row.className='saved-tab-row';row.style.cssText='display:grid;grid-template-columns:30px 105px minmax(150px,1fr) 130px 86px 86px 86px auto;gap:6px;align-items:center;margin-bottom:6px';
+    const num=document.createElement('span');num.className='muted mono';num.textContent=String(index+1);
+    const type=document.createElement('select');for(const [value,label] of [['binding','Binding'],['raw','Raw key'],['text','Text']]){const o=document.createElement('option');o.value=value;o.textContent=label;o.selected=step.type===value;type.appendChild(o)}type.disabled=!canEdit;
+    const value=document.createElement('input');value.className='mono';value.value=macroValue(step);value.placeholder=step.type==='binding'?'UI_Select':step.type==='raw'?'SC:1C':'text or {{parameter}}';value.disabled=!canEdit;
+    const mods=document.createElement('input');mods.className='mono';mods.value=(step.modifiers||[]).join('+');mods.placeholder='CTRL+SHIFT';mods.title='Raw-key modifiers';mods.disabled=!canEdit||step.type!=='raw';
+    const delay=document.createElement('input');delay.type='number';delay.min='0';delay.max='15000';delay.step='10';delay.value=step.delayMs||0;delay.title='Wait before step (ms)';delay.disabled=!canEdit;
+    const hold=document.createElement('input');hold.type='number';hold.min='0';hold.max='10000';hold.step='10';hold.value=step.holdMs||0;hold.title='Hold duration (0 = tap)';hold.disabled=!canEdit||step.type==='text';
+    const interval=document.createElement('input');interval.type='number';interval.min='0';interval.max='250';interval.step='1';interval.value=step.intervalMs||0;interval.title='Text interval (ms)';interval.disabled=!canEdit||step.type!=='text';
+    const controls=document.createElement('div');controls.className='row';controls.style.gap='3px';
+    const up=document.createElement('button');up.type='button';up.className='secondary';up.textContent='↑';up.disabled=!canEdit||index===0;
+    const down=document.createElement('button');down.type='button';down.className='secondary';down.textContent='↓';down.disabled=!canEdit||index===state.macroDraft.steps.length-1;
+    const remove=document.createElement('button');remove.type='button';remove.className='danger secondary';remove.textContent='×';remove.disabled=!canEdit||state.macroDraft.steps.length<=1;
+    controls.append(up,down,remove);row.append(num,type,value,mods,delay,hold,interval,controls);
+    type.onchange=()=>{step.type=type.value;if(step.type==='binding'&&!step.action)step.action='UI_Select';if(step.type==='raw'&&!step.key)step.key='SC:1C';if(step.type==='text'&&!step.text)step.text='text';renderMacroSteps()};
+    value.oninput=()=>macroSetValue(step,value.value);mods.oninput=()=>{step.modifiers=mods.value.split(/[+,\s]+/).map(x=>x.trim()).filter(Boolean)};delay.oninput=()=>step.delayMs=Math.max(0,Number(delay.value)||0);hold.oninput=()=>step.holdMs=Math.max(0,Number(hold.value)||0);interval.oninput=()=>step.intervalMs=Math.max(0,Number(interval.value)||0);
+    up.onclick=()=>{macroApplyMeta();const a=state.macroDraft.steps;a.splice(index-1,0,a.splice(index,1)[0]);renderMacroSteps()};down.onclick=()=>{macroApplyMeta();const a=state.macroDraft.steps;a.splice(index+1,0,a.splice(index,1)[0]);renderMacroSteps()};remove.onclick=()=>{macroApplyMeta();state.macroDraft.steps.splice(index,1);renderMacroSteps()};
+    return row
+  }
+  function renderMacroSteps(){const box=$('#macro-step-list');if(!box)return;box.innerHTML='';const steps=state.macroDraft?.steps||[];if(!steps.length){box.innerHTML='<div class="muted empty-state">No steps.</div>';return}for(let i=0;i<steps.length;i++)box.appendChild(macroStepRow(steps[i],i))}
+  function renderMacroEditor(){
+    const d=state.macroDraft,canEdit=macroCanEdit();if(!d)return;
+    $('#macro-name').value=d.name||'';$('#macro-id').value=d.id||'';$('#macro-description').value=d.description||'';$('#macro-parameters').value=(d.parameters||[]).join(', ');$('#macro-id').disabled=!canEdit||!!d.builtIn;
+    for(const id of ['macro-name','macro-description','macro-parameters','macro-add-binding','macro-add-raw','macro-add-text','macro-save','macro-duplicate','macro-new','macro-record']){const el=$('#'+id);if(el)el.disabled=!canEdit}
+    const rd=$('#macro-reset-delete');if(rd){rd.disabled=!canEdit;rd.textContent=d.builtIn?'Reset default':'Delete macro'}
+    renderMacroSteps();renderMacroPolicy();macroStatus(`${d.builtIn?'Built-in':'Custom'} macro · ${d.steps?.length||0} step${d.steps?.length===1?'':'s'}${canEdit?'':macroPolicyAccepted()?' · Read-only on this device':' · Editor locked until macro use agreement is accepted'}`)
+  }
+  function chooseMacro(id){const d=(state.macros||[]).find(x=>x.id===id);if(!d)return;state.macroSelected=d.id;state.macroDraft=cloneMacro(d);const sel=$('#macro-select');if(sel)sel.value=d.id;renderMacroEditor()}
+  async function loadMacros(preferred=''){
+    try{const [r,policy]=await Promise.all([request('macros.list'),request('macros.policy')]);state.macroPolicy=policy||null;state.macros=r?.macros||[];renderMacroPolicy();const sel=$('#macro-select');if(sel){sel.innerHTML='';for(const d of state.macros){const o=document.createElement('option');o.value=d.id;o.textContent=`${d.builtIn?'DEFAULT · ':''}${d.name}`;sel.appendChild(o)}const wanted=preferred||state.macroSelected||state.macros[0]?.id||'';if(wanted)chooseMacro(state.macros.some(x=>x.id===wanted)?wanted:state.macros[0]?.id)}const count=$('#macro-count');if(count)count.textContent=String(state.macros.length);return r}catch(e){macroStatus(`${e?.code||'MACRO'}: ${e?.message||e}`);return null}
+  }
+  function newMacro(steps=[{type:'binding',action:'UI_Select',delayMs:0,holdMs:0}]){if(!macroCanEdit())return;state.macroSelected='';state.macroDraft={id:'',name:'New macro',description:'',builtIn:false,parameters:[],steps:cloneMacro(steps)};const sel=$('#macro-select');if(sel)sel.value='';renderMacroEditor();$('#macro-name')?.select()}
+  function duplicateMacro(){if(!macroCanEdit()||!state.macroDraft)return;macroApplyMeta();const d=cloneMacro(state.macroDraft);const originalCount=d.steps?.length||0;d.id='';d.builtIn=false;d.name=`${d.name||'Macro'} copy`;if(d.steps?.length>12)d.steps=d.steps.slice(0,12);state.macroDraft=d;state.macroSelected='';renderMacroEditor();if(originalCount>12)macroStatus(`Custom macros are limited to 12 steps. The duplicate was trimmed from ${originalCount} to 12 steps; review it before saving.`)}
+  function addMacroStep(type){if(!macroCanEdit()||!state.macroDraft)return;macroApplyMeta();if(!state.macroDraft.builtIn&&state.macroDraft.steps.length>=12){macroStatus('Custom macros are limited to 12 steps.');return}const step=type==='binding'?{type:'binding',action:'UI_Select',delayMs:0,holdMs:0}:type==='raw'?{type:'raw',key:'SC:1C',modifiers:[],delayMs:0,holdMs:70}:{type:'text',text:'text',delayMs:0,intervalMs:18};state.macroDraft.steps.push(step);renderMacroSteps()}
+  async function saveMacro(showMessage=true){
+    if(!macroCanEdit()||!state.macroDraft)return null;const def=macroApplyMeta();if(showMessage)macroStatus('Saving macro…');
+    try{const saved=await request('macros.save',{macro:def});state.macroSelected=saved.id;state.macroDraft=cloneMacro(saved);await loadMacros(saved.id);if(showMessage)macroStatus(`Saved ${saved.name}.`);return saved}catch(e){macroStatus(`${e?.code||'MACRO_SAVE'}: ${e?.message||e}`);return null}
+  }
+  async function resetOrDeleteMacro(){
+    if(!macroCanEdit()||!state.macroDraft)return;const d=state.macroDraft;if(d.builtIn){if(!confirm(`Reset ${d.name} to the JACoB default sequence?`))return;try{await request('macros.reset',{id:d.id});await loadMacros(d.id);macroStatus(`${d.name} reset to default.`)}catch(e){macroStatus(e?.message||String(e))};return}
+    if(!d.id){newMacro();return}if(!confirm(`Delete ${d.name}?`))return;try{await request('macros.delete',{id:d.id});state.macroSelected='';await loadMacros();macroStatus(`${d.name} deleted.`)}catch(e){macroStatus(e?.message||String(e))}
+  }
+  function recordedMacroSteps(events=[]){
+    const downs=new Map(),actions=[];for(const ev of events){if(!ev||ev.isModifier)continue;if(ev.type==='down'){downs.set(ev.pressId,ev);continue}if(ev.type!=='up')continue;const down=downs.get(ev.pressId);if(!down)continue;downs.delete(ev.pressId);const names=[],seen=new Set();for(const m of (down.matches||ev.matches||[])){const name=typeof m==='string'?m:m?.action;if(name&&!seen.has(name)){seen.add(name);names.push(name)}}const start=Number(down.atMs)||0,end=Number(ev.atMs)||start,hold=Math.max(20,Number(ev.durationMs)||end-start||70);actions.push({pressId:ev.pressId,startMs:start,endMs:end,holdMs:hold,key:down.key,modifiers:down.modifiers||[],binding:names.length===1?names[0]:''})}
+    actions.sort((a,b)=>a.startMs-b.startMs||Number(a.pressId)-Number(b.pressId));let previousEnd=0;return actions.map(a=>{const delayMs=Math.max(0,Math.round(a.startMs-previousEnd));previousEnd=Math.max(previousEnd,a.endMs);return a.binding?{type:'binding',action:a.binding,delayMs,holdMs:a.holdMs}:{type:'raw',key:a.key,modifiers:a.modifiers||[],delayMs,holdMs:a.holdMs}})
+  }
+  async function toggleMacroRecording(){
+    if(!macroCanEdit())return;const button=$('#macro-record');
+    if(!state.macroRecording){try{const status=await request('recorder.status');if(!status?.available)throw new Error('Action Recorder is unavailable on this platform build.');const r=await request('recorder.start');state.macroRecording=true;if(button)button.textContent='Stop & use recording';macroStatus(`RECORDING // ${r?.driver||status.driver||'recorder'}\nSwitch to Elite and perform the macro. Return here and press Stop & use recording.`)}catch(e){macroStatus(`${e?.code||'RECORDER'}: ${e?.message||e}`)};return}
+    try{const result=await request('recorder.stop');state.macroRecording=false;if(button)button.textContent='Record macro';let steps=recordedMacroSteps(result?.events||[]);if(!steps.length){macroStatus('Recording stopped, but no complete Elite key presses were captured.');return}const originalCount=steps.length;if(steps.length>12)steps=steps.slice(0,12);state.macroSelected='';state.macroDraft={id:'',name:'Recorded macro',description:'Recorded with JACoB Action Recorder.',builtIn:false,parameters:[],steps};renderMacroEditor();macroStatus(originalCount>12?`Captured ${originalCount} steps. Custom macros are limited to 12, so only the first 12 were imported. Review before saving.`:`Captured ${steps.length} macro step${steps.length===1?'':'s'}. Review the mappings/timing, name it, then Save macro.`)}catch(e){state.macroRecording=false;if(button)button.textContent='Record macro';macroStatus(`${e?.code||'RECORDER'}: ${e?.message||e}`)}
+  }
+  async function runSelectedMacro(){
+    let def=state.macroDraft;if(!def)return;if(macroCanEdit()){const saved=await saveMacro(false);if(!saved)return;def=saved}else{def=(state.macros||[]).find(x=>x.id===state.macroSelected)||def}
+    const args={};for(const name of def.parameters||[]){const value=prompt(`Value for ${name}:`,'');if(value===null)return;args[name]=value}
+    macroStatus(`Running ${def.name}…`);try{const r=await request('macros.run',{name:def.id,args});macroStatus(pretty(r))}catch(e){macroStatus(`${e?.code||'MACRO'}: ${e?.message||e}`)}
+  }
   function formatNetworkDoctor(r={}){
     const lines=[];
     lines.push(`Listener: ${r.bindOK?'READY':'CHECK'} · ${r.bind||'unknown'}`);
@@ -435,12 +550,16 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     return lines.join('\n')
   }
   async function runNetworkDoctor(repair=false){
-    const out=$('#network-result');if(!isLocal){if(out)out.textContent=tr('Network Doctor is available on the host computer.');return null}
-    if(out)out.textContent=repair?'Requesting Windows network repair…':'Checking listener, network profile, addresses and firewall…';
+    const out=$('#network-result');if(!privilegedClient()){if(out)out.textContent=tr('Network Doctor requires the host browser or a host-approved admin device.');return null}
+    if(repair){
+      const ok=confirm('JACoB is about to ask Windows for administrator approval for one specific task:\n\nCreate or repair the “JACoB Local Network” inbound firewall rule for TCP 6626, limited to LocalSubnet on Private/Domain networks.\n\nNormal JACoB updates do not require administrator access. Continue?');
+      if(!ok){if(out)out.textContent='Firewall repair cancelled. No administrator request was made.';return null}
+    }
+    if(out)out.textContent=repair?'Waiting for Windows administrator approval to repair the JACoB firewall rule…':'Checking listener, network profile, addresses and firewall…';
     try{const r=await request(repair?'network.repair':'network.diagnostics');if(out)out.textContent=formatNetworkDoctor(r);const b=$('#repair-network');if(b)b.hidden=!(r?.host?.supported&&!r?.host?.firewallOK);return r}
     catch(e){if(out)out.textContent=`${e?.code||'NETWORK'}: ${e?.message||e}`;throw e}
   }
-  function socketURL(){const proto=location.protocol==='https:'?'wss':'ws';const q=!isLocal&&token()?`?token=${encodeURIComponent(token())}`:'';return `${proto}://${location.host}/ws${q}`}
+  function socketURL(){const proto=location.protocol==='https:'?'wss':'ws';return `${proto}://${location.host}/ws`}
   function mediaURL(path,options={}){const q=new URLSearchParams();for(const [k,v] of Object.entries(options))if(v!==undefined&&v!==null)q.set(k,String(v));const auth=state.core?.mediaToken||'';if(auth)q.set('token',auth);q.set('_',Date.now());return `${path}?${q.toString()}`}
   function videoURL(options={}){const p={width:options.width||960,fps:options.fps||5,quality:options.quality||60};if(options.matte===true||options.matte===1||options.matte==='1')p.matte=1;return mediaURL('/api/video.mjpeg',p)}
   function pretty(v){return JSON.stringify(v,null,2)}
@@ -473,7 +592,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     if(method==='recorder.start'||method==='recorder.stop')return'recorder';
     if(method==='overlay.set'||method==='overlay.clear')return'overlay';
     if(method==='actions.invoke')return'intertab';
-    if(method.startsWith('input.')||method.startsWith('binding.'))return'control';
+    if(method==='macros.run'||method.startsWith('input.')||method.startsWith('binding.'))return'control';
     return'';
   }
   function requireTabCapability(frame,capability){
@@ -517,8 +636,8 @@ Allow this capability on this browser?`);
     if(state.socket)try{state.socket.close()}catch{}
     const ws=new WebSocket(socketURL());state.socket=ws;
     ws.onopen=()=>{setConnection(true);if(!isLocal&&$('#network-result'))$('#network-result').textContent=tr('Paired. Mobile connection is online.');bootstrap()};
-    ws.onclose=()=>{setConnection(false);if(state.quitting){showClosed();return}if(state.updating){$('#connection').textContent=tr('UPDATING');state.reconnectTimer=setTimeout(connect,3000);return}if(!isLocal&&$('#network-result'))$('#network-result').textContent=token()?tr('The JACoB page loaded, but pairing failed. Check the pair key shown on the host computer.'):tr('Enter the pair token shown on the computer running JACoB.');state.reconnectTimer=setTimeout(connect,1800)};
-    ws.onerror=()=>{if(!isLocal&&$('#network-result')&&!token())$('#network-result').textContent=tr('JACoB is reachable. Enter the pair token to finish connecting.')};
+    ws.onclose=()=>{setConnection(false);if(state.quitting){showClosed();return}if(state.updating){$('#connection').textContent=tr('UPDATING');state.reconnectTimer=setTimeout(connect,3000);return}if(state.deviceRevoked){if($('#network-result'))$('#network-result').textContent='This device was revoked. Enter the current pair key to pair again.';return}if(!isLocal&&$('#network-result'))$('#network-result').textContent=tr('Enter the current pair key shown on the computer running JACoB. Remembered devices reconnect automatically.');state.reconnectTimer=setTimeout(connect,1800)};
+    ws.onerror=()=>{if(!isLocal&&$('#network-result'))$('#network-result').textContent=tr('JACoB is reachable. Enter the current pair key if this device is not remembered.')};
     ws.onmessage=ev=>{let m;try{m=JSON.parse(ev.data)}catch{return}if(m.type==='response'){const p=state.pending.get(m.id);if(p){state.pending.delete(m.id);m.ok?p.resolve(m.result):p.reject(m.error)}return}if(m.type==='event')handleEvent(m.event,m.data)};
   }
   function request(method,params={}){
@@ -527,20 +646,29 @@ Allow this capability on this browser?`);
     const timeoutMs=(method==='tabs.save'||method==='tabs.get')?90000:30000;
     return new Promise((resolve,reject)=>{state.pending.set(id,{resolve,reject});setTimeout(()=>{if(state.pending.has(id)){state.pending.delete(id);reject({code:'TIMEOUT',message:'request timed out'})}},timeoutMs)});
   }
-  async function bootstrap(){try{await loadLocale()}catch{}try{await Promise.all([refreshHealth(),loadBindings(),loadSavedTabs(),loadAppearance()])}catch{}}
+  async function bootstrap(){try{await loadLocale()}catch{}const jobs=[refreshHealth(),loadBindings(),loadSavedTabs(),loadAppearance(),loadMacros()];if(privilegedClient()){jobs.push(loadPathSettings());jobs.push(loadConnectedDevices())}try{await Promise.all(jobs)}catch{}refreshTutorial().catch(()=>{})}
 
   function handleEvent(kind,data){
     addStream(kind,data);
     if(kind==='core.hello'){
-      state.core=data;state.updating=false;if(data.locale)applyLocaleInfo(data.locale);if($('#quit-jacob'))$('#quit-jacob').hidden=!data.localClient;if($('#install-update'))$('#install-update').hidden=!data.localClient;$('#core-os').textContent=`${data.os}/${data.arch}`;$('#core-api').textContent=`v${data.apiVersion} (${data.product||'JACoB'} ${data.prototype})`;if($('#update-current'))$('#update-current').textContent=data.version||data.prototype||'—';queueUpdateCheckSoon();
+      state.core=data;state.updating=false;if(data.locale)applyLocaleInfo(data.locale);state.deviceRevoked=false;if(!isLocal)refreshDeviceCookie();if(privilegedClient()){loadConnectedDevices().catch(()=>{});loadPathSettings().catch(()=>{})}if($('#quit-jacob'))$('#quit-jacob').hidden=!(data.localClient||data.privilegedClient);if($('#install-update'))$('#install-update').hidden=!(data.localClient||data.privilegedClient);$('#core-os').textContent=`${data.os}/${data.arch}`;$('#core-api').textContent=`v${data.apiVersion} (${data.product||'JACoB'} ${data.prototype})`;if($('#update-current'))$('#update-current').textContent=data.version||data.prototype||'—';queueUpdateCheckSoon();
       $('#binding-autofill').textContent=data.autoBind?`${data.autoBind.assigned||0} added / ${data.autoBind.scannedActions||0} scanned`:'—';
       $('#input-driver').textContent=`${data.input?.driver||'—'} / ${data.input?.enabled?'enabled':'disabled'}`;$('#capture-driver').textContent=`${data.capture?.driver||'—'} / ${data.capture?.available?'available':'unavailable'}`;const gameViewBlock=$('#game-view-img')?.closest('details.settings-block');if(gameViewBlock)gameViewBlock.hidden=!data.capture?.available;if($('#overlay-driver'))$('#overlay-driver').textContent=`${data.overlay?.driver||'—'} / ${data.overlay?.available?'available':'unavailable'}`;
-      $('#journal-dir').textContent=data.journalDir||tr('not detected');$('#bindings-file').textContent=data.bindingsFile||tr('not detected');if($('#home-journal-state'))$('#home-journal-state').textContent=data.journalDir?'Connected':tr('not detected');renderLAN(data.lan);if(data.health)renderHealth(data.health);
+      $('#journal-dir').textContent=data.journalDir||tr('not detected');$('#bindings-file').textContent=data.bindingsFile||tr('not detected');if($('#home-journal-state'))$('#home-journal-state').textContent=data.journalDir?'Connected':tr('not detected');renderLAN(data.lan);if(data.health)renderHealth(data.health);refreshTutorial().catch(()=>{});
     }
-    if(kind==='state'){state.snapshot=data;renderSnapshot(data)}
+    if(kind==='state'){state.snapshot=data;renderSnapshot(data);refreshTutorial().catch(()=>{})}
     if(kind==='status'){ $('#status-json').textContent=pretty(data);if(state.snapshot)state.snapshot.status=data }
     if(kind==='journal'){ $('#event-name').textContent=data.event||'journal';if($('#home-event-name'))$('#home-event-name').textContent=data.event||'journal';$('#journal-json').textContent=pretty(data);if(state.snapshot)state.snapshot.lastJournalEvent=data }
     if(kind==='tabs.changed')loadSavedTabs().catch(()=>{});if(kind==='core.update'){state.updating=true;if($('#update-result'))$('#update-result').textContent=`Installing ${data?.version||'update'}…`;}
+    if(kind==='devices.changed'&&privilegedClient())loadConnectedDevices().catch(()=>{});
+    if(kind==='device.permissions'&&!isLocal){
+      const d=data?.device||{};if(state.core){state.core.device=d;state.core.adminClient=!!data?.admin;state.core.privilegedClient=!!data?.privileged}
+      refreshDeviceCookie();if($('#quit-jacob'))$('#quit-jacob').hidden=!privilegedClient();if($('#install-update'))$('#install-update').hidden=!privilegedClient();if(privilegedClient()){loadPathSettings().catch(()=>{});loadConnectedDevices().catch(()=>{})}refreshTutorial().catch(()=>{})
+    }
+    if(kind==='device.revoked'&&!isLocal){
+      state.deviceRevoked=true;fetch('/api/device/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{});state.core=null;$('#network-result').textContent='This device was revoked by the JACoB host. Enter the current pair key to pair again.';try{state.socket?.close()}catch{}
+    }
+    if(kind==='macros.changed')loadMacros(data?.id||'').catch(()=>{});
     if(kind==='appearance.changed')loadAppearance().catch(()=>{});
     if(kind==='locale.changed')applyLocaleInfo(data||{});
     if(kind==='core.shutdown'){state.quitting=true;showClosed()}
@@ -558,6 +686,70 @@ Allow this capability on this browser?`);
     }
   }
   async function refreshHealth(){try{const h=await request('system.health');renderHealth(h);return h}catch(e){renderHealth({status:'blocked',blockers:[e.message||e.code||'health request failed']});throw e}}
+  function pathSummary(r={}){
+    const saved=r.saved||{},eff=r.effective||{},src=r.source||{},env=r.environment||{},lines=[];
+    lines.push(`Journal: ${eff.journalDir||'not detected'} [${src.journalDir||'auto'}]`);
+    lines.push(`Bindings: ${eff.bindingsDir||'not detected'} [${src.bindingsDir||'auto'}]`);
+    const controls=eff.controlSchemeDirs||[];lines.push(`ControlSchemes: ${controls.length?controls.join('\n  '):'none detected'} [${src.controlSchemeDirs||'auto'}]`);
+    if(env.journalDir||env.bindingsDir||env.controlSchemeDirs)lines.push('Environment override active; it takes priority over saved manual paths.');
+    if(r.restartRequired)lines.push('Saved paths differ from the running core. Quit and reopen JACoB to apply them.');
+    lines.push(`Saved config: ${r.configFile||'—'}`);return lines.join('\n')
+  }
+  async function loadPathSettings(){
+    if(!privilegedClient())return null;
+    const r=await request('paths.get');state.paths=r;
+    if($('#path-journal'))$('#path-journal').value=r.saved?.journalDir||'';
+    if($('#path-bindings'))$('#path-bindings').value=r.saved?.bindingsDir||'';
+    if($('#path-control-schemes'))$('#path-control-schemes').value=(r.saved?.controlSchemeDirs||[]).join('\n');
+    if($('#path-result'))$('#path-result').textContent=pathSummary(r);return r
+  }
+  async function savePathSettings(reset=false){
+    if(!privilegedClient())return;
+    const out=$('#path-result');if(out)out.textContent=reset?'Restoring automatic detection…':'Validating and saving paths…';
+    try{
+      const method=reset?'paths.reset':'paths.save';
+      const params=reset?{}:{journalDir:$('#path-journal').value,bindingsDir:$('#path-bindings').value,controlSchemeDirs:$('#path-control-schemes').value.split(/\r?\n|;/).map(x=>x.trim()).filter(Boolean)};
+      const r=await request(method,params);state.paths=r;
+      if(reset){$('#path-journal').value='';$('#path-bindings').value='';$('#path-control-schemes').value=''}
+      out.textContent=pathSummary(r);refreshTutorial().catch(()=>{})
+    }catch(e){out.textContent=`${e?.code||'PATH'}: ${e?.message||e}`}
+  }
+  function tutorialMark(prefix,status,detail){
+    const mark=$(`#tutorial-${prefix}-state`),out=$(`#tutorial-${prefix}-detail`);if(!mark||!out)return;
+    const kind=status==='ready'?'online':status==='check'?'warning':'offline';mark.className=`status-mark ${kind}`;mark.textContent=status==='ready'?tr('READY'):status==='check'?tr('CHECK'):tr('BLOCKED');out.textContent=detail
+  }
+  async function refreshTutorial(){
+    const core=state.core,snap=state.snapshot;
+    if(!core){tutorialMark('core','blocked','Core connection is offline.');return}
+    tutorialMark('core',Number(core.apiVersion)===12?'ready':'check',`${core.product||'JACoB'} ${core.version||core.prototype||''}\nSDK ${core.apiVersion||'?'} · ${core.os||'?'} / ${core.arch||'?'}`);
+    let paths=state.paths;if(privilegedClient()&&!paths){try{paths=await loadPathSettings()}catch{}}
+    const journalDir=core.journalDir||paths?.effective?.journalDir||'',bindingsDir=core.bindingsDir||paths?.effective?.bindingsDir||'';
+    tutorialMark('path',journalDir&&bindingsDir?'ready':'check',privilegedClient()&&paths?pathSummary(paths):`Journal: ${journalDir||'not detected'}\nBindings: ${bindingsDir||'not detected'}`);
+    const jf=snap?.journalFile||'',files=Object.keys(snap?.eliteFiles||{});
+    tutorialMark('journal',jf?'ready':journalDir?'check':'blocked',`Journal file: ${jf||'none selected'}\nLatest event: ${snap?.lastJournalEvent?.event||'none'}\nJSON snapshots: ${files.length?files.join(', '):'none seen yet'}`);
+    let b=null;try{b=await request('bindings.list')}catch{}
+    const inputOK=!!core.input?.available,active=b?.activeFile||core.bindingsFile||'',count=b?.actions?.length??core.bindingsCount??0;
+    tutorialMark('input',active&&inputOK?'ready':active||inputOK?'check':'blocked',`Active preset: ${active||'not resolved'}\nParsed commands: ${count}\nInput: ${core.input?.driver||'—'} · ${core.input?.available?'available':'unavailable'}`);
+    let spatial=null;try{spatial=await request('spatial.info')}catch{}
+    const visualOK=!!core.capture?.available&&!!core.overlay?.available&&!!core.vision?.available;
+    tutorialMark('visual',visualOK?'ready':'check',`Capture: ${core.capture?.driver||'—'} · ${core.capture?.available?'available':'unavailable'}\nOverlay: ${core.overlay?.driver||'—'} · ${core.overlay?.available?'available':'unavailable'}\nVision: ${core.vision?.available?'available':'unavailable'}\nSpatial: ${spatial?.available===false?'unavailable':'available'}`);
+    const lan=core.lan||{};let netdiag=null;
+    if(privilegedClient()&&lan.enabled){try{netdiag=await request('network.diagnostics')}catch(e){netdiag={error:e?.message||String(e)}}}
+    if(!lan.enabled){tutorialMark('lan','check','LAN disabled. Local use is fully supported; enable LAN only if you want phone/tablet access.')}else{
+      const host=netdiag?.host||{},lanReady=!!netdiag?.bindOK&&(!host.supported||!!host.firewallOK),lines=[`Enabled on port ${lan.port||6626}`,`Preferred address: ${lan.preferredAddress||netdiag?.preferredAddress||'not resolved'}`];
+      if(netdiag){lines.push(`Listener: ${netdiag.bindOK?'ready':'check'}`);if(host.supported)lines.push(`Windows firewall: ${host.firewallOK?'ready':host.firewallRulePresent?'rule needs repair':'rule missing'}`);for(const warning of netdiag.warnings||[])lines.push(`Warning: ${warning}`);if(netdiag.error)lines.push(`Network Doctor: ${netdiag.error}`)}
+      tutorialMark('lan',lanReady?'ready':'check',lines.join('\n'))
+    }
+    const diag=(state.savedTabs||[]).find(t=>t.name==='JACoB Diagnostics');tutorialMark('diagnostics',diag?'ready':'check',diag?`Installed as ${diag.id}. Use Install / refresh to replace it with this build's diagnostic tab.`:'Not installed yet.')
+  }
+  async function installDiagnosticsTab(){
+    const out=$('#tutorial-diagnostics-detail');if(!privilegedClient()){if(out)out.textContent='Install Diagnostics from the host browser or a host-approved admin device.';return}
+    try{
+      out.textContent='Loading bundled diagnostics tab…';const resp=await fetch('/diagnostics-tab.html',{cache:'no-store'});if(!resp.ok)throw new Error(`diagnostics tab HTTP ${resp.status}`);const html=await resp.text();
+      await loadSavedTabs();const existing=state.savedTabs.find(t=>t.name==='JACoB Diagnostics');const tab=await request('tabs.save',{id:existing?.id||'',name:'JACoB Diagnostics',html});
+      await loadSavedTabs();out.textContent='Diagnostics tab installed. Opening it now.';switchTab(`custom-${tab.id}`);refreshTutorial().catch(()=>{})
+    }catch(e){out.textContent=e?.message||pretty(e)}
+  }
   function renderSnapshot(s){
     $('#journal-json').textContent=pretty(s.lastJournalEvent||{});$('#status-json').textContent=pretty(s.status||{});$('#event-name').textContent=s.lastJournalEvent?.event||tr('Waiting…');
     if($('#home-event-name'))$('#home-event-name').textContent=s.lastJournalEvent?.event||tr('Waiting…');
@@ -567,7 +759,7 @@ Allow this capability on this browser?`);
     $('#lan-enabled').textContent=lan.enabled?tr('enabled'):tr('disabled');
     const addresses=lan.addresses||[],preferred=lan.preferredAddress||addresses[0]||'',port=lan.port||6626,url=preferred?`http://${preferred}:${port}/`:'';state.lanURL=url;
     const other=addresses.filter(a=>a!==preferred).map(a=>`http://${a}:${port}/`);$('#lan-url').textContent=url||'—';$('#lan-addresses').textContent=other.join('\n')||'—';
-    const p=lan.pairToken||'';$('#pair-token').textContent=p||(!isLocal?tr('hidden on remote clients'):'—');$('#remote-token').value=token();renderPairQR(p,url)
+    const p=lan.pairToken||'';$('#pair-token').textContent=p||(!isLocal?tr('hidden on remote clients'):'—');if(state.core?.device)$('#remote-token').value='';renderPairQR(p,url)
   }
   function setConnection(on){const el=$('#connection');el.textContent=on?tr('ONLINE'):tr('OFFLINE');el.className=`status-mark ${on?'online':'offline'}`}
   function addStream(kind,data){const row=document.createElement('div');row.className='stream-line';const summary=kind==='journal'?(data?.event||''):kind==='recorder.input'?`${data?.type||''} ${data?.key||''}`:'';row.innerHTML=`<span class="time">${new Date().toLocaleTimeString()}</span><span class="kind">${escapeHTML(kind)}</span>${escapeHTML(summary)}`;const box=$('#stream');box.prepend(row);while(box.children.length>60)box.lastChild.remove()}
@@ -581,7 +773,7 @@ Allow this capability on this browser?`);
   function sanitizedCoreForTab(core){
     if(!core||typeof core!=='object')return core;
     const copy=typeof structuredClone==='function'?structuredClone(core):JSON.parse(JSON.stringify(core));
-    delete copy.mediaToken;delete copy.journalDir;delete copy.bindingsDir;delete copy.bindingsFile;delete copy.bindingsFiles;delete copy.host;copy.localClient=false;
+    delete copy.mediaToken;delete copy.adminClient;delete copy.privilegedClient;delete copy.device;delete copy.journalDir;delete copy.bindingsDir;delete copy.bindingsFile;delete copy.bindingsFiles;delete copy.host;copy.localClient=false;
     if(copy.lan&&typeof copy.lan==='object'){copy.lan={...copy.lan};delete copy.lan.pairToken}
     if(copy.health&&typeof copy.health==='object'){copy.health={status:copy.health.status,blockers:Array.isArray(copy.health.blockers)?copy.health.blockers:[],warnings:Array.isArray(copy.health.warnings)?copy.health.warnings:[],gameRunning:!!copy.health.gameRunning}}
     return copy;
@@ -739,7 +931,7 @@ Allow this capability on this browser?`);
     $('#connection').textContent=tr('CLOSED');
   }
   async function quitJACoB(){
-    if(!state.core?.localClient)return;
+    if(!privilegedClient())return;
     if(!confirm(tr('Close JACoB?\n\nSaved tabs and settings will be kept.')))return;
     const quit=$('#quit-jacob');
     quit.disabled=true;quit.textContent=tr('Closing…');state.quitting=true;
@@ -756,13 +948,28 @@ Allow this capability on this browser?`);
   $('#reload-bindings').onclick=async()=>{try{await request('bindings.reload');await loadBindings()}catch(e){$('#binding-detail').textContent=pretty(e)}};
   $('#binding-filter').oninput=renderBindingOptions;$('#binding-action').onchange=renderBindingDetail;
   $('#press-binding').onclick=async()=>{try{$('#binding-detail').textContent=pretty(await request('binding.press',{action:$('#binding-action').value}))}catch(e){$('#binding-detail').textContent=pretty(e)}};
-  $('#save-token').onclick=()=>{const t=$('#remote-token').value.trim();if(t)localStorage.setItem('jacob-pair-token',t);else localStorage.removeItem('jacob-pair-token');$('#network-result').textContent=tr('Pair token saved. Reconnecting…');stopVideo();connect()};
+  function browserDeviceName(){
+    const ua=navigator.userAgent||'',platform=navigator.userAgentData?.platform||navigator.platform||'Device';let browser='Browser';
+    if(/Edg\//.test(ua))browser='Edge';else if(/Chrome\//.test(ua))browser='Chrome';else if(/Firefox\//.test(ua))browser='Firefox';else if(/Safari\//.test(ua))browser='Safari';
+    return `${browser} · ${platform}`.slice(0,80)
+  }
+  async function pairRemoteDevice(){
+    const out=$('#network-result');if(isLocal){if(out)out.textContent='The host browser is already trusted.';return}
+    const pairKey=$('#remote-token').value.trim();if(!pairKey){if(out)out.textContent='Enter the current pair key shown on the JACoB host.';return}
+    if(out)out.textContent='Pairing this browser…';
+    try{
+      const resp=await fetch('/api/pair',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({pairKey,name:browserDeviceName()})});
+      if(!resp.ok)throw new Error((await resp.text()).trim()||`Pairing failed (${resp.status})`);
+      state.deviceRevoked=false;$('#remote-token').value='';if(out)out.textContent='Paired. Connecting…';stopVideo();connect()
+    }catch(e){if(out)out.textContent=e?.message||String(e)}
+  }
+  $('#save-token').onclick=pairRemoteDevice;
   if($('#run-network-doctor'))$('#run-network-doctor').onclick=()=>runNetworkDoctor(false);
   if($('#repair-network'))$('#repair-network').onclick=()=>runNetworkDoctor(true);
 
   async function checkForUpdates({quiet=false}={}){
-    const out=$('#update-result'),btn=$('#check-update'),install=$('#install-update');if(!state.socket||state.socket.readyState!==WebSocket.OPEN)return;if(quiet&&!state.core?.localClient)return;if(!quiet){btn.disabled=true;install.disabled=true;out.textContent=tr('Querying the release channel…')}
-    try{const info=await request('update.check');state.updateInfo=info;$('#update-latest').textContent=info.latestVersion||'—';install.disabled=!(info.available&&info.installable&&state.core?.localClient);if(info.available&&state.activeTab==='settings'&&info.latestVersion){try{localStorage.setItem(UPDATE_BADGE_KEY,String(info.latestVersion))}catch{}}renderNavigation();if(info.available){out.textContent=`${info.releaseName||('JACoB '+info.latestVersion)} is available.${info.installable?' Ready for installation.':' '+(info.installNote||'Manual installation required.')}`}else{out.textContent=tr('Current release confirmed. No newer published build was found.')}}
+    const out=$('#update-result'),btn=$('#check-update'),install=$('#install-update');if(!state.socket||state.socket.readyState!==WebSocket.OPEN)return;if(quiet&&!privilegedClient())return;if(!quiet){btn.disabled=true;install.disabled=true;out.textContent=tr('Querying the release channel…')}
+    try{const info=await request('update.check');state.updateInfo=info;$('#update-latest').textContent=info.latestVersion||'—';install.disabled=!(info.available&&info.installable&&privilegedClient());if(info.available&&state.activeTab==='settings'&&info.latestVersion){try{localStorage.setItem(UPDATE_BADGE_KEY,String(info.latestVersion))}catch{}}renderNavigation();if(info.available){out.textContent=`${info.releaseName||('JACoB '+info.latestVersion)} is available.${info.installable?' Ready for installation.':' '+(info.installNote||'Manual installation required.')}`}else{out.textContent=tr('Current release confirmed. No newer published build was found.')}}
     catch(e){if(!quiet)out.textContent=e?.message||pretty(e)}finally{if(!quiet)btn.disabled=false}
   }
   async function installUpdate(){
@@ -785,6 +992,25 @@ Allow this capability on this browser?`);
   if($('#home-add-tab'))$('#home-add-tab').onclick=()=>switchTab('tabmanager');
   if($('#home-tutorial'))$('#home-tutorial').onclick=()=>switchTab('tutorial');
   if($('#tutorial-tab-manager'))$('#tutorial-tab-manager').onclick=()=>switchTab('tabmanager');
+  if($('#tutorial-refresh'))$('#tutorial-refresh').onclick=()=>refreshTutorial();
+  if($('#tutorial-open-paths'))$('#tutorial-open-paths').onclick=()=>{switchTab('settings');const d=$('#elite-paths-block');if(d)d.open=true};
+  if($('#tutorial-open-bindings'))$('#tutorial-open-bindings').onclick=()=>{switchTab('settings');const d=$('#elite-bindings-block');if(d)d.open=true};
+  if($('#tutorial-open-lan'))$('#tutorial-open-lan').onclick=()=>{switchTab('settings');$('#lan-access-block')?.scrollIntoView({behavior:'smooth',block:'center'})};
+  if($('#tutorial-install-diagnostics'))$('#tutorial-install-diagnostics').onclick=installDiagnosticsTab;
+  if($('#save-paths'))$('#save-paths').onclick=()=>savePathSettings(false);
+  if($('#reset-paths'))$('#reset-paths').onclick=()=>savePathSettings(true);
+  if($('#macro-select'))$('#macro-select').onchange=e=>chooseMacro(e.target.value);
+  if($('#macro-new'))$('#macro-new').onclick=()=>newMacro();
+  if($('#macro-duplicate'))$('#macro-duplicate').onclick=duplicateMacro;
+  if($('#macro-record'))$('#macro-record').onclick=toggleMacroRecording;
+  if($('#macro-add-binding'))$('#macro-add-binding').onclick=()=>addMacroStep('binding');
+  if($('#macro-add-raw'))$('#macro-add-raw').onclick=()=>addMacroStep('raw');
+  if($('#macro-add-text'))$('#macro-add-text').onclick=()=>addMacroStep('text');
+  if($('#macro-save'))$('#macro-save').onclick=()=>saveMacro(true);
+  if($('#macro-test'))$('#macro-test').onclick=runSelectedMacro;
+  if($('#macro-reset-delete'))$('#macro-reset-delete').onclick=resetOrDeleteMacro;
+  if($('#macro-policy-check'))$('#macro-policy-check').onchange=renderMacroPolicy;
+  if($('#macro-policy-accept'))$('#macro-policy-accept').onclick=acceptMacroPolicy;
 
 
   const visionCalibrationState={active:null};
@@ -922,7 +1148,7 @@ Allow this capability on this browser?`);
         if(!requireTabCapability(frame,'video')){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:'video permission was not granted'}});return}
         sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result:videoURL(m.params||{})});return
       }
-      const allowed=new Set(['core.ping','system.health','state.get','bindings.list','bindings.diagnostics','bindings.get','bindings.reload','input.tap','input.hold','input.text','binding.press','binding.down','binding.up','binding.hold','recorder.status','recorder.start','recorder.stop','video.info','vision.info','vision.sample','vision.inspect','spatial.info','spatial.begin','spatial.update','spatial.observe','spatial.pose','spatial.landmarks','spatial.project','spatial.export','spatial.import','spatial.end','overlay.info','overlay.set','overlay.clear','galaxy.parseSystemName','galaxy.decodeAddress','galaxy.encodeAddress','galaxy.addressForSequence','galaxy.boxel','galaxy.boxelHierarchy','catalog.system.get','net.fetch','net.fetchQueued','net.fetchBatch','elitefiles.list','elitefiles.get','journal.files','journal.read','tabstate.get','tabstate.set','tabstate.cas','tabstate.batch','tabstate.delete','tabstate.clear','locale.get']);
+      const allowed=new Set(['core.ping','system.health','state.get','bindings.list','bindings.diagnostics','bindings.get','bindings.reload','input.tap','input.hold','input.text','binding.press','binding.down','binding.up','binding.hold','recorder.status','recorder.start','recorder.stop','macros.list','macros.get','macros.run','video.info','vision.info','vision.sample','vision.inspect','spatial.info','spatial.begin','spatial.update','spatial.observe','spatial.pose','spatial.landmarks','spatial.project','spatial.export','spatial.import','spatial.end','overlay.info','overlay.set','overlay.clear','galaxy.parseSystemName','galaxy.decodeAddress','galaxy.encodeAddress','galaxy.addressForSequence','galaxy.boxel','galaxy.boxelHierarchy','catalog.system.get','net.fetch','net.fetchQueued','net.fetchBatch','elitefiles.list','elitefiles.get','journal.files','journal.read','tabstate.get','tabstate.set','tabstate.cas','tabstate.batch','tabstate.delete','tabstate.clear','locale.get']);
       if(!allowed.has(m.method)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'SDK_DENIED',message:'method not exposed by JACoB SDK'}});return}
       const capability=capabilityForMethod(m.method);if(capability&&!requireTabCapability(frame,capability)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:`${capability} permission was not granted`}});return}
       try{let params=m.params||{};if(m.method==='overlay.set'||m.method==='overlay.clear')params={...params,layer:overlayLayerForFrame(frame)};if(m.method.startsWith('tabstate.')){const tabId=frame?.dataset?.savedTabId||'';if(!tabId)throw{code:'TAB_STATE_PREVIEW',message:'persistent state is available after the tab is saved'};params={...params,tabId}}const result=await request(m.method,params);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}

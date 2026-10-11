@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JACoB Diagnostics</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#090c0e;color:#e8edf0;font:14px system-ui,sans-serif}header{padding:16px 18px;border-bottom:1px solid #47321f;background:#0d1114;position:sticky;top:0;z-index:5}h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:0}.muted{color:#9ba7ad}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px;padding:12px}.card{border:1px solid #2c373c;background:#0d1215;padding:12px}.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}button,input{background:#11171a;color:#eef2f4;border:1px solid #7a4a22;padding:7px 9px;border-radius:0}button{cursor:pointer}button.secondary{border-color:#3a484f}pre{background:#07090b;border:1px solid #20292d;padding:8px;white-space:pre-wrap;word-break:break-word;min-height:48px;max-height:260px;overflow:auto}.ok{color:#75df8c}.warn{color:#ffbf66}.bad{color:#ff7777}img{width:100%;min-height:150px;background:#000;border:1px solid #20292d;margin-top:8px}.wide{width:min(100%,360px)}
+</style></head><body>
+<header><h1>JACoB Diagnostics</h1><div class="muted">SDK 12 sandbox-side checks. Nothing interactive runs until you press its button.</div><div class="row" style="margin-top:8px"><button id="safe">Run safe checks</button><button id="export" class="secondary">Export report</button></div></header>
+<main class="grid">
+<section class="card"><h2>Core / health</h2><pre id="core">Not run.</pre></section>
+<section class="card"><h2>State / journal</h2><div class="row"><button id="journal">Read journal index</button></div><pre id="state">Not run.</pre></section>
+<section class="card"><h2>Bindings</h2><div class="row"><button id="bindings">Inspect active preset</button></div><pre id="bindout">Not run.</pre></section>
+<section class="card"><h2>Elite JSON files</h2><div class="row"><button id="data">List snapshots</button></div><pre id="dataout">Not run.</pre></section>
+<section class="card"><h2>Persistent tab storage</h2><div class="row"><button id="store">Write/read test value</button></div><pre id="storeout">Not run.</pre></section>
+<section class="card"><h2>Galaxy helpers</h2><div class="row"><input id="system" class="wide" value="Synuefe EN-H d11-96"><button id="galaxy">Parse</button></div><pre id="galaxyout">Not run.</pre></section>
+<section class="card"><h2>Input / Cyrillic</h2><p class="muted">Open an Elite text field first. This sends the exact sample below to Elite.</p><div class="row"><input id="text" class="wide" value="Привет, командир"><button id="type">Type sample</button></div><pre id="inputout">Not run.</pre></section>
+<section class="card"><h2>Recorder</h2><p class="muted">Windows recorder only. Steam Deck/Linux may correctly report unavailable.</p><div class="row"><button id="recstatus">Status</button><button id="recstart">Start</button><button id="recstop">Stop</button></div><pre id="recout">Not run.</pre></section>
+<section class="card"><h2>Macros</h2><p class="muted">List is safe. Run is interactive and sends the selected stored macro to Elite.</p><div class="row"><input id="macroname" class="wide" value="exit_menus"><button id="macrolist">List</button><button id="macrorun">Run selected</button></div><pre id="macroout">Not run.</pre></section>
+<section class="card"><h2>Game view</h2><div class="row"><button id="view">Start</button><button id="viewstop">Stop</button></div><img id="game" alt="Elite game view"><pre id="videoout">Not run.</pre></section>
+<section class="card"><h2>Overlay</h2><div class="row"><button id="overlay">Show demo</button><button id="overlayclear">Clear</button></div><pre id="overout">Not run.</pre></section>
+<section class="card"><h2>Vision</h2><div class="row"><button id="visioninfo">Info</button><button id="visionsample">Sample</button></div><pre id="visionout">Not run.</pre></section>
+<section class="card"><h2>Spatial mapper</h2><div class="row"><button id="spatial">Info</button></div><pre id="spatialout">Not run.</pre></section>
+<section class="card"><h2>Optional public network</h2><p class="muted">Makes one GET request through JACoB's network broker after permission is granted.</p><div class="row"><button id="network">Query EDSM for Sol</button></div><pre id="netout">Not run.</pre></section>
+</main>
+<script>
+const $=s=>document.querySelector(s),report={};
+function show(id,value){report[id]=value;$(id).textContent=JSON.stringify(value,null,2)}
+async function capture(id,fn){try{const v=await fn();show(id,v);return v}catch(e){const v={ok:false,code:e?.code||'ERROR',message:e?.message||String(e)};show(id,v);return v}}
+$('#safe').onclick=async()=>{
+  await capture('#core',async()=>({ping:await Elite.core.ping(),health:await Elite.system.health(),api:Elite.api.version,tabs:await Elite.tabs.list()}));
+  await capture('#state',async()=>({state:await Elite.state.get(),journalFiles:await Elite.journal.files()}));
+  await capture('#bindout',()=>Elite.bindings.list());
+  await capture('#dataout',()=>Elite.data.list());
+  await capture('#recout',()=>Elite.recorder.status());
+  await capture('#macroout',()=>Elite.macros.list());
+  await capture('#videoout',()=>Elite.video.info());
+  await capture('#overout',()=>Elite.overlay.info());
+  await capture('#visionout',()=>Elite.vision.info());
+  await capture('#spatialout',()=>Elite.spatial.info());
+};
+$('#journal').onclick=()=>capture('#state',async()=>({state:await Elite.state.get(),journalFiles:await Elite.journal.files()}));
+$('#bindings').onclick=()=>capture('#bindout',()=>Elite.bindings.list());
+$('#data').onclick=()=>capture('#dataout',()=>Elite.data.list());
+$('#store').onclick=()=>capture('#storeout',async()=>{const value={at:new Date().toISOString(),cyrillic:'Журнал'};await Elite.store.set('diagnostic-test',value);return{written:value,readBack:await Elite.store.get('diagnostic-test')}}); 
+$('#galaxy').onclick=()=>capture('#galaxyout',()=>Elite.galaxy.parseSystemName($('#system').value));
+$('#type').onclick=()=>capture('#inputout',()=>Elite.input.text($('#text').value,{intervalMs:25}));
+$('#recstatus').onclick=()=>capture('#recout',()=>Elite.recorder.status());
+$('#recstart').onclick=()=>capture('#recout',()=>Elite.recorder.start());
+$('#recstop').onclick=()=>capture('#recout',()=>Elite.recorder.stop());
+$('#macrolist').onclick=()=>capture('#macroout',()=>Elite.macros.list());
+$('#macrorun').onclick=()=>capture('#macroout',()=>Elite.macros.run($('#macroname').value.trim()));
+$('#view').onclick=()=>capture('#videoout',async()=>{await Elite.video.attach($('#game'),{width:640,fps:5,quality:55});return{attached:true,width:640,fps:5,quality:55}});
+$('#viewstop').onclick=()=>{const closed=Elite.video.close($('#game'));show('#videoout',{closed,note:'Windows WGC session should release after about two seconds without capture requests.'})};
+$('#overlay').onclick=()=>capture('#overout',()=>Elite.overlay.set({space:'normalized',items:[{type:'rect',x:.35,y:.08,w:.3,h:.08,stroke:'#ff962f',fill:'#00000088',lineWidth:2},{type:'text',x:.39,y:.125,text:'JACoB DIAGNOSTIC',color:'#ffffff',fontSize:20}]}));
+$('#overlayclear').onclick=()=>capture('#overout',()=>Elite.overlay.clear());
+$('#visioninfo').onclick=()=>capture('#visionout',()=>Elite.vision.info());
+$('#visionsample').onclick=()=>capture('#visionout',()=>Elite.vision.sample({width:320}));
+$('#spatial').onclick=()=>capture('#spatialout',()=>Elite.spatial.info());
+$('#network').onclick=()=>capture('#netout',()=>Elite.net.fetchQueued('https://www.edsm.net/api-v1/system?systemName=Sol&showCoordinates=1',{group:'diagnostics',minIntervalMs:500,retry:1,cacheTtlMs:60000}));
+$('#export').onclick=()=>Elite.files.download('jacob-diagnostics.json',JSON.stringify({generatedAt:new Date().toISOString(),report},null,2),{type:'application/json'});
+Elite.journal.subscribe('*',e=>{report.lastJournalEvent=e});
+</script></body></html>

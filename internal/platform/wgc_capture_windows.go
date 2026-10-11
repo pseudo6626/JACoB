@@ -4,6 +4,7 @@ package platform
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"runtime"
 	"strings"
@@ -75,48 +76,77 @@ func (w *wgcCaptureWorker) run() {
 	}
 
 	var source *wgcWindowSource
-	defer func() {
+	closeSource := func(reason string) {
 		if source != nil {
+			log.Printf("capture/wgc: close session reason=%s hwnd=0x%x client=%dx%d", reason, source.hwnd, source.clientWidth, source.clientHeight)
 			source.Close()
+			source = nil
 		}
-	}()
+	}
+	defer closeSource("worker-stop")
 
-	for req := range w.requests {
-		if initErr != nil {
-			req.reply <- wgcCaptureResult{err: fmt.Errorf("RoInitialize: %w", initErr)}
-			continue
-		}
-
-		cw, ch, geomErr := wgcClientSize(req.hwnd)
-		if geomErr != nil {
-			req.reply <- wgcCaptureResult{err: geomErr}
-			continue
-		}
-
-		if source == nil || source.hwnd != req.hwnd || source.clientWidth != cw || source.clientHeight != ch {
-			if source != nil {
-				source.Close()
-				source = nil
+	// Windows draws a privacy border while a GraphicsCaptureSession is alive.
+	// Keep the session warm during active video/vision use, then release it once
+	// frame requests stop so borderless Elite does not retain the yellow outline.
+	idle := time.NewTimer(time.Hour)
+	if !idle.Stop() {
+		<-idle.C
+	}
+	resetIdle := func() {
+		if !idle.Stop() {
+			select {
+			case <-idle.C:
+			default:
 			}
-			source, geomErr = newWGCWindowSource(req.hwnd, cw, ch)
+		}
+		idle.Reset(2 * time.Second)
+	}
+	defer idle.Stop()
+
+	for {
+		select {
+		case req, ok := <-w.requests:
+			if !ok {
+				return
+			}
+			if initErr != nil {
+				log.Printf("capture/wgc: WinRT initialization unavailable: %v", initErr)
+				req.reply <- wgcCaptureResult{err: fmt.Errorf("RoInitialize: %w", initErr)}
+				continue
+			}
+
+			cw, ch, geomErr := wgcClientSize(req.hwnd)
 			if geomErr != nil {
 				req.reply <- wgcCaptureResult{err: geomErr}
 				continue
 			}
-		}
 
-		frame, err := source.CaptureCanonicalClient(req.maxWidth, req.timeout)
-		if err != nil && !strings.Contains(strings.ToLower(err.Error()), "timed out") {
-			// A stale WinRT session can occur after display/device changes. Rebuild
-			// the HWND source once. There is still no desktop capture fallback.
-			source.Close()
-			source = nil
-			source, geomErr = newWGCWindowSource(req.hwnd, cw, ch)
-			if geomErr == nil {
-				frame, err = source.CaptureCanonicalClient(req.maxWidth, req.timeout)
+			if source == nil || source.hwnd != req.hwnd || source.clientWidth != cw || source.clientHeight != ch {
+				closeSource("target-change")
+				source, geomErr = newWGCWindowSource(req.hwnd, cw, ch)
+				if geomErr != nil {
+					log.Printf("capture/wgc: create session failed hwnd=0x%x client=%dx%d: %v", req.hwnd, cw, ch, geomErr)
+					req.reply <- wgcCaptureResult{err: geomErr}
+					continue
+				}
+				log.Printf("capture/wgc: session ready hwnd=0x%x client=%dx%d", req.hwnd, cw, ch)
 			}
+
+			frame, err := source.CaptureCanonicalClient(req.maxWidth, req.timeout)
+			if err != nil && !strings.Contains(strings.ToLower(err.Error()), "timed out") {
+				log.Printf("capture/wgc: capture error; rebuilding session: %v", err)
+				closeSource("capture-error")
+				source, geomErr = newWGCWindowSource(req.hwnd, cw, ch)
+				if geomErr == nil {
+					frame, err = source.CaptureCanonicalClient(req.maxWidth, req.timeout)
+				}
+			}
+			req.reply <- wgcCaptureResult{frame: frame, err: err}
+			resetIdle()
+
+		case <-idle.C:
+			closeSource("idle-timeout")
 		}
-		req.reply <- wgcCaptureResult{frame: frame, err: err}
 	}
 }
 

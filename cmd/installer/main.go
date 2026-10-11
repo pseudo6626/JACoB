@@ -71,7 +71,7 @@ func main() {
 			opts.healthPort = 6626
 		}
 
-		updateLog(dataDir, "automatic update started: installed=%q target=%q waitPID=%d port=%d", previousVersion, buildinfo.Version, opts.waitPID, opts.healthPort)
+		updateLog(dataDir, "automatic update started: installerVersion=%q installed=%q waitPID=%d port=%d sourceExe=%q targetExe=%q", buildinfo.Version, previousVersion, opts.waitPID, opts.healthPort, opts.sourceExe, filepath.Join(installDir(), "JACoB.exe"))
 
 		if strings.TrimSpace(previousVersion) == "" {
 			updateLog(dataDir, "automatic update refused: no managed JACoB installation is registered")
@@ -85,6 +85,27 @@ func main() {
 			msg("JACoB Update", "Automatic update is only available to the installed JACoB copy. This appears to be a portable build; update it manually from GitHub.", mbOK|mbIconWarning)
 			return
 		}
+
+		if preHealth, err := readHealthSnapshot(opts.healthPort); err != nil {
+			updateLog(dataDir, "pre-update health snapshot warning: %v", err)
+		} else {
+			updateLog(dataDir, "pre-update core: version=%q pid=%d api=%d uptime=%ds health=%q capture=%s/%t input=%s/%t recorder=%s/%t", preHealth.Version, preHealth.PID, preHealth.APIVersion, preHealth.UptimeSeconds, preHealth.Health.Status, preHealth.Capture.Driver, preHealth.Capture.Available, preHealth.Input.Driver, preHealth.Input.Available, preHealth.Recorder.Driver, preHealth.Recorder.Available)
+			updateLog(dataDir, "pre-update LAN: enabled=%t effectiveBind=%q preferredAddress=%q addresses=%v", preHealth.LAN.Enabled, preHealth.LAN.EffectiveBind, preHealth.LAN.PreferredAddress, preHealth.LAN.Addresses)
+		}
+		if opts.waitPID > 0 {
+			preListeners, preLANListener, preListenErr := inspectTCPListeners(opts.healthPort, opts.waitPID)
+			if preListenErr != nil {
+				updateLog(dataDir, "pre-update listener inspection warning: %v", preListenErr)
+			} else {
+				updateLog(dataDir, "pre-update listeners: pid=%d port=%d endpoints=%v nonLoopback=%t", opts.waitPID, opts.healthPort, preListeners, preLANListener)
+			}
+		}
+		preNet := networkdiag.Inspect(installedExe, opts.healthPort)
+		preProfiles := make([]string, 0, len(preNet.Profiles))
+		for _, p := range preNet.Profiles {
+			preProfiles = append(preProfiles, p.InterfaceAlias+":"+p.NetworkCategory+":"+p.IPv4Connectivity)
+		}
+		updateLog(dataDir, "pre-update Windows network: firewallPresent=%t firewallOK=%t firewallEnabled=%t firewallProfiles=%q firewallPort=%q firewallRemote=%v profiles=%v inspectError=%q", preNet.FirewallRulePresent, preNet.FirewallOK, preNet.FirewallEnabled, preNet.FirewallProfiles, preNet.FirewallPort, preNet.FirewallRemote, preProfiles, preNet.Error)
 
 		if opts.waitPID > 0 {
 			updateLog(dataDir, "waiting for old core PID %d to exit", opts.waitPID)
@@ -140,9 +161,7 @@ func main() {
 			return
 		}
 
-		if err := networkdiag.EnsureInteractive(target, opts.healthPort); err != nil {
-			updateLog(dataDir, "LAN firewall reconciliation warning: %v", err)
-		}
+		updateLog(dataDir, "automatic update leaves Windows firewall configuration unchanged; Network Doctor remains available after restart")
 
 		newPID, err := startJACoB(target, dataDir)
 		if err != nil {
@@ -151,7 +170,7 @@ func main() {
 			msg("JACoB Update", rollbackMessage("Updated JACoB could not be started: "+err.Error(), rollbackErr), mbOK|mbIconWarning)
 			return
 		}
-		updateLog(dataDir, "new core launched as PID %d; verifying health", newPID)
+		updateLog(dataDir, "new core launched as PID %d; verifying localhost health/version", newPID)
 
 		if err := verifyRunningVersion(buildinfo.Version, newPID, opts.healthPort, 15*time.Second); err != nil {
 			updateLog(dataDir, "new core verification failed: %v", err)
@@ -172,6 +191,43 @@ func main() {
 			msg("JACoB Update", rollbackMessage("Updated JACoB failed its startup/version check: "+err.Error(), rollbackErr), mbOK|mbIconWarning)
 			return
 		}
+
+		health, healthErr := readHealthSnapshot(opts.healthPort)
+		if healthErr != nil {
+			updateLog(dataDir, "post-update health snapshot warning: %v", healthErr)
+		} else {
+			updateLog(dataDir, "post-update core: version=%q pid=%d api=%d uptime=%ds health=%q blockers=%d warnings=%d", health.Version, health.PID, health.APIVersion, health.UptimeSeconds, health.Health.Status, len(health.Health.Blockers), len(health.Health.Warnings))
+			updateLog(dataDir, "post-update services: input=%s/%t recorder=%s/%t capture=%s/%t", health.Input.Driver, health.Input.Available, health.Recorder.Driver, health.Recorder.Available, health.Capture.Driver, health.Capture.Available)
+			updateLog(dataDir, "post-update LAN: enabled=%t effectiveBind=%q preferredAddress=%q addresses=%v", health.LAN.Enabled, health.LAN.EffectiveBind, health.LAN.PreferredAddress, health.LAN.Addresses)
+		}
+
+		listeners, lanListener, listenerErr := inspectTCPListeners(opts.healthPort, newPID)
+		if listenerErr != nil {
+			updateLog(dataDir, "post-update listener inspection warning: %v", listenerErr)
+		} else {
+			updateLog(dataDir, "post-update listeners: pid=%d port=%d endpoints=%v nonLoopback=%t", newPID, opts.healthPort, listeners, lanListener)
+		}
+		if healthErr == nil && health.LAN.Enabled && listenerErr == nil && !lanListener {
+			reason := fmt.Sprintf("LAN is enabled but new PID %d has no non-loopback TCP listener on port %d (listeners=%v)", newPID, opts.healthPort, listeners)
+			updateLog(dataDir, "post-update verification failed: %s", reason)
+			_ = hidden("taskkill", "/PID", strconv.Itoa(newPID), "/T", "/F").Run()
+			_ = waitForPID(newPID, 5*time.Second)
+			_ = waitForPortFree(opts.healthPort, 5*time.Second)
+			rollbackPID, rollbackErr := rollbackExecutable(dir, previousVersion, dataDir)
+			if rollbackErr == nil {
+				updateLog(dataDir, "rollback launched previous version as PID %d after LAN listener verification failure", rollbackPID)
+			}
+			msg("JACoB Update", rollbackMessage("Updated JACoB failed its LAN listener check: "+reason, rollbackErr), mbOK|mbIconWarning)
+			return
+		}
+
+		netReport := networkdiag.Inspect(target, opts.healthPort)
+		profileSummary := make([]string, 0, len(netReport.Profiles))
+		for _, p := range netReport.Profiles {
+			profileSummary = append(profileSummary, p.InterfaceAlias+":"+p.NetworkCategory+":"+p.IPv4Connectivity)
+		}
+		updateLog(dataDir, "post-update Windows network: firewallPresent=%t firewallOK=%t firewallEnabled=%t firewallProfiles=%q firewallPort=%q firewallRemote=%v profiles=%v inspectError=%q", netReport.FirewallRulePresent, netReport.FirewallOK, netReport.FirewallEnabled, netReport.FirewallProfiles, netReport.FirewallPort, netReport.FirewallRemote, profileSummary, netReport.Error)
+		updateLog(dataDir, "post-update policy: firewall was inspected only; automatic update did not modify firewall configuration")
 
 		updateLog(dataDir, "update complete: %s is online as PID %d", buildinfo.Version, newPID)
 		return
@@ -207,10 +263,6 @@ func main() {
 	if err := install(includeRecorder); err != nil {
 		msg("JACoB Setup", "Installation failed:\n\n"+err.Error(), mbOK|mbIconWarning)
 		return
-	}
-
-	if err := networkdiag.EnsureInteractive(filepath.Join(installDir(), "JACoB.exe"), 6626); err != nil {
-		msg("JACoB Network Setup", "JACoB was installed, but Windows network access could not be fully configured.\n\n"+err.Error()+"\n\nYou can repair this later from Settings → LAN access → Network Doctor.", mbOK|mbIconWarning)
 	}
 
 	verb := "installed"
@@ -507,14 +559,32 @@ func updateLog(dataDir, format string, args ...any) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return
 	}
-	f, err := os.OpenFile(filepath.Join(dataDir, "update.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	path := filepath.Join(dataDir, "update.log")
+	rotateUpdateLog(path, 4<<20, 3)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	prefix := time.Now().Format("2006-01-02 15:04:05")
-	values := append([]any{prefix}, args...)
-	_, _ = fmt.Fprintf(f, "%s "+format+"\r\n", values...)
+	prefix := time.Now().Format("2006-01-02 15:04:05.000")
+	values := append([]any{prefix, os.Getpid()}, args...)
+	_, _ = fmt.Fprintf(f, "%s pid=%d "+format+"\r\n", values...)
+}
+
+func rotateUpdateLog(path string, maxBytes int64, backups int) {
+	st, err := os.Stat(path)
+	if err != nil || st.Size() < maxBytes || backups < 1 {
+		return
+	}
+	_ = os.Remove(path + "." + strconv.Itoa(backups))
+	for i := backups - 1; i >= 1; i-- {
+		oldPath := path + "." + strconv.Itoa(i)
+		newPath := path + "." + strconv.Itoa(i+1)
+		if _, err := os.Stat(oldPath); err == nil {
+			_ = os.Rename(oldPath, newPath)
+		}
+	}
+	_ = os.Rename(path, path+".1")
 }
 
 func installDir() string {
@@ -574,9 +644,11 @@ func registerUninstall(dir string, recorder bool) error {
 	return hidden("reg", "add", uninstallKey, "/v", "CaptureEnabled", "/t", "REG_DWORD", "/d", recorderDWORD, "/f").Run()
 }
 
+const createNoWindow = 0x08000000
+
 func hidden(name string, args ...string) *exec.Cmd {
 	c := exec.Command(name, args...)
-	c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 	return c
 }
 
@@ -587,6 +659,92 @@ func msg(title, text string, flags uintptr) int {
 	x, _ := syscall.UTF16PtrFromString(text)
 	r, _, _ := messageBoxW.Call(0, uintptr(unsafe.Pointer(x)), uintptr(unsafe.Pointer(t)), flags)
 	return int(r)
+}
+
+type healthSnapshot struct {
+	Product       string `json:"product"`
+	Version       string `json:"version"`
+	APIVersion    int    `json:"apiVersion"`
+	PID           int    `json:"pid"`
+	UptimeSeconds int    `json:"uptimeSeconds"`
+	LAN           struct {
+		Enabled          bool     `json:"enabled"`
+		EffectiveBind    string   `json:"effectiveBind"`
+		PreferredAddress string   `json:"preferredAddress"`
+		Addresses        []string `json:"addresses"`
+	} `json:"lan"`
+	Capture struct {
+		Available bool   `json:"available"`
+		Driver    string `json:"driver"`
+	} `json:"capture"`
+	Input struct {
+		Available bool   `json:"available"`
+		Driver    string `json:"driver"`
+	} `json:"input"`
+	Recorder struct {
+		Available bool   `json:"available"`
+		Driver    string `json:"driver"`
+	} `json:"recorder"`
+	Health struct {
+		Status   string   `json:"status"`
+		Blockers []string `json:"blockers"`
+		Warnings []string `json:"warnings"`
+	} `json:"health"`
+}
+
+func readHealthSnapshot(port int) (healthSnapshot, error) {
+	var out healthSnapshot
+	client := http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/health", port))
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return out, fmt.Errorf("health endpoint returned %s", resp.Status)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return out, err
+	}
+	if !strings.EqualFold(out.Product, "JACoB") {
+		return out, fmt.Errorf("health endpoint reported product %q", out.Product)
+	}
+	return out, nil
+}
+
+func inspectTCPListeners(port, pid int) ([]string, bool, error) {
+	out, err := hidden("netstat", "-ano", "-p", "tcp").CombinedOutput()
+	if err != nil {
+		return nil, false, fmt.Errorf("netstat: %w", err)
+	}
+	wantPort := strconv.Itoa(port)
+	listeners := []string{}
+	lan := false
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || !strings.EqualFold(fields[0], "TCP") {
+			continue
+		}
+		linePID, err := strconv.Atoi(fields[len(fields)-1])
+		if err != nil || linePID != pid {
+			continue
+		}
+		host, p, err := net.SplitHostPort(fields[1])
+		if err != nil || p != wantPort {
+			continue
+		}
+		remote := fields[2]
+		if remote != "0.0.0.0:0" && remote != "[::]:0" && remote != "[0:0:0:0:0:0:0:0]:0" {
+			continue
+		}
+		listeners = append(listeners, fields[1])
+		trimmed := strings.Trim(host, "[]")
+		ip := net.ParseIP(trimmed)
+		if trimmed == "0.0.0.0" || trimmed == "::" || (ip != nil && !ip.IsLoopback()) {
+			lan = true
+		}
+	}
+	return listeners, lan, nil
 }
 
 func verifyRunningVersion(expected string, expectedPID, port int, timeout time.Duration) error {

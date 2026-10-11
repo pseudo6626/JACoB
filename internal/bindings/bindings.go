@@ -140,8 +140,15 @@ func firstEnv(keys ...string) string {
 }
 
 func DetectDirectory() (string, []string) {
+	return DetectDirectoryWithOverride("")
+}
+
+func DetectDirectoryWithOverride(manual string) (string, []string) {
 	var candidates []string
 	if v := firstEnv("JACOB_BINDINGS_DIR", "EDBRIDGE_BINDINGS_DIR"); v != "" {
+		candidates = append(candidates, v)
+	}
+	if v := strings.TrimSpace(manual); v != "" {
 		candidates = append(candidates, v)
 	}
 	home, _ := os.UserHomeDir()
@@ -171,7 +178,14 @@ func DetectDirectory() (string, []string) {
 }
 
 func New(dir string) *Store {
-	s := &Store{dir: dir, actions: map[string]Action{}, controlDirs: DetectControlSchemeDirectories()}
+	return NewWithControlDirs(dir, nil)
+}
+
+func NewWithControlDirs(dir string, controlDirs []string) *Store {
+	if controlDirs == nil {
+		controlDirs = DetectControlSchemeDirectories()
+	}
+	s := &Store{dir: dir, actions: map[string]Action{}, controlDirs: unique(controlDirs)}
 	_ = s.Reload()
 	return s
 }
@@ -250,9 +264,18 @@ func steamLibraryRoots() []string {
 }
 
 func DetectControlSchemeDirectories() []string {
+	return DetectControlSchemeDirectoriesWithOverrides(nil)
+}
+
+func DetectControlSchemeDirectoriesWithOverrides(manual []string) []string {
 	candidates := []string{}
 	if v := firstEnv("JACOB_CONTROL_SCHEMES_DIR", "EDBRIDGE_CONTROL_SCHEMES_DIR"); v != "" {
 		candidates = append(candidates, v)
+	}
+	for _, raw := range manual {
+		if v := strings.TrimSpace(raw); v != "" {
+			candidates = append(candidates, v)
+		}
 	}
 	for _, root := range steamLibraryRoots() {
 		candidates = append(candidates,

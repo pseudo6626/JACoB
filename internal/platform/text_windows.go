@@ -103,8 +103,12 @@ func windowsLayoutRune(r rune, layout uintptr) (string, []string, bool) {
 	return token, mods, true
 }
 
+func windowsUTF16Units(r rune) []uint16 {
+	return utf16.Encode([]rune{r})
+}
+
 func sendWindowsUnicodeRune(r rune) error {
-	units := utf16.Encode([]rune{r})
+	units := windowsUTF16Units(r)
 	if len(units) == 0 {
 		return nil
 	}

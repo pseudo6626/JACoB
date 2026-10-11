@@ -4,13 +4,21 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 func DetectDirectory() (string, []string) {
+	return DetectDirectoryWithOverride("")
+}
+
+func DetectDirectoryWithOverride(manual string) (string, []string) {
 	var candidates []string
-	if v := os.Getenv("JACOB_JOURNAL_DIR"); v != "" {
+	if v := strings.TrimSpace(os.Getenv("JACOB_JOURNAL_DIR")); v != "" {
 		candidates = append(candidates, v)
-	} else if v := os.Getenv("EDBRIDGE_JOURNAL_DIR"); v != "" {
+	} else if v := strings.TrimSpace(os.Getenv("EDBRIDGE_JOURNAL_DIR")); v != "" {
+		candidates = append(candidates, v)
+	}
+	if v := strings.TrimSpace(manual); v != "" {
 		candidates = append(candidates, v)
 	}
 	home, _ := os.UserHomeDir()

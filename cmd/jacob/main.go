@@ -12,14 +12,17 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"jacob/internal/bindings"
+	"jacob/internal/buildinfo"
 	"jacob/internal/core"
 	"jacob/internal/customtabs"
 	"jacob/internal/journal"
+	"jacob/internal/pathconfig"
 )
 
 const (
@@ -30,13 +33,30 @@ const (
 func main() {
 	dataDir := customtabs.DefaultDirectory()
 	setupLog(dataDir)
+	log.Printf("process/start: version=%s sdk=12 pid=%d os=%s arch=%s go=%s dataDir=%q", buildinfo.Version, os.Getpid(), runtime.GOOS, runtime.GOARCH, runtime.Version(), dataDir)
+	if exe, err := os.Executable(); err == nil {
+		log.Printf("process/executable: %q", exe)
+	} else {
+		log.Printf("process/executable lookup failed: %v", err)
+	}
+	log.Printf("process/environment: lan=%q bind=%q input=%q autobind=%q replay=%q browser=%q journalOverride=%t bindingsOverride=%t controlSchemesOverride=%t pairKeyOverride=%t",
+		firstEnv("JACOB_LAN", "EDBRIDGE_LAN"), firstEnv("JACOB_BIND", "EDBRIDGE_BIND"), firstEnv("JACOB_ENABLE_INPUT", "EDBRIDGE_ENABLE_INPUT"), firstEnv("JACOB_AUTOBIND", "EDBRIDGE_AUTOBIND"), firstEnv("JACOB_REPLAY_JOURNAL", "EDBRIDGE_REPLAY_JOURNAL"), os.Getenv("JACOB_OPEN_BROWSER"),
+		firstEnv("JACOB_JOURNAL_DIR", "EDBRIDGE_JOURNAL_DIR") != "", firstEnv("JACOB_BINDINGS_DIR", "EDBRIDGE_BINDINGS_DIR") != "", firstEnv("JACOB_CONTROL_SCHEMES_DIR", "EDBRIDGE_CONTROL_SCHEMES_DIR") != "", firstEnv("JACOB_PAIR_TOKEN", "EDBRIDGE_PAIR_TOKEN") != "")
+	defer log.Printf("process/exit: pid=%d", os.Getpid())
 
 	if runningURL := runningJACoB(); runningURL != "" {
+		log.Printf("process/existing-instance: healthy JACoB already answers at %s; opening browser and exiting this process", runningURL)
 		openBrowser(runningURL)
 		return
 	}
 
-	journalDir, jc := journal.DetectDirectory()
+	manualPaths, pathErr := pathconfig.Load(dataDir)
+	if pathErr != nil {
+		log.Printf("JACoB path settings could not be loaded; automatic detection will be used: %v", pathErr)
+		manualPaths = pathconfig.Config{}
+	}
+
+	journalDir, jc := journal.DetectDirectoryWithOverride(manualPaths.JournalDir)
 	if journalDir == "" {
 		log.Printf("Elite journal directory was not found automatically")
 		for _, c := range jc {
@@ -46,7 +66,8 @@ func main() {
 		log.Printf("Journal directory: %s", journalDir)
 	}
 
-	bindingsDir, bc := bindings.DetectDirectory()
+	bindingsDir, bc := bindings.DetectDirectoryWithOverride(manualPaths.BindingsDir)
+	controlSchemeDirs := bindings.DetectControlSchemeDirectoriesWithOverrides(manualPaths.ControlSchemeDirs)
 	if bindingsDir == "" {
 		log.Printf("Elite bindings directory was not found automatically")
 		for _, c := range bc {
@@ -56,6 +77,9 @@ func main() {
 		log.Printf("Bindings directory: %s", bindingsDir)
 	}
 
+	log.Printf("config/paths: journal=%q journalCandidates=%d manualJournal=%t envJournal=%t", journalDir, len(jc), strings.TrimSpace(manualPaths.JournalDir) != "", firstEnv("JACOB_JOURNAL_DIR", "EDBRIDGE_JOURNAL_DIR") != "")
+	log.Printf("config/paths: bindings=%q bindingsCandidates=%d manualBindings=%t envBindings=%t controlSchemeDirs=%d manualControlSchemeDirs=%d envControlSchemes=%t", bindingsDir, len(bc), strings.TrimSpace(manualPaths.BindingsDir) != "", firstEnv("JACOB_BINDINGS_DIR", "EDBRIDGE_BINDINGS_DIR") != "", len(controlSchemeDirs), len(manualPaths.ControlSchemeDirs), firstEnv("JACOB_CONTROL_SCHEMES_DIR", "EDBRIDGE_CONTROL_SCHEMES_DIR") != "")
+
 	lan := boolDefault(firstEnv("JACOB_LAN", "EDBRIDGE_LAN"), true)
 	bind := "127.0.0.1:6626"
 	if lan {
@@ -63,16 +87,20 @@ func main() {
 	}
 
 	cfg := core.Config{
-		Bind:          envCompat("JACOB_BIND", "EDBRIDGE_BIND", bind),
-		DataDir:       dataDir,
-		JournalDir:    journalDir,
-		BindingsDir:   bindingsDir,
-		ReplayJournal: truthy(firstEnv("JACOB_REPLAY_JOURNAL", "EDBRIDGE_REPLAY_JOURNAL")),
-		EnableInput:   boolDefault(firstEnv("JACOB_ENABLE_INPUT", "EDBRIDGE_ENABLE_INPUT"), true),
-		AutoBind:      boolDefault(firstEnv("JACOB_AUTOBIND", "EDBRIDGE_AUTOBIND"), false),
-		LANEnabled:    lan,
-		PairToken:     firstEnv("JACOB_PAIR_TOKEN", "EDBRIDGE_PAIR_TOKEN"),
+		Bind:              envCompat("JACOB_BIND", "EDBRIDGE_BIND", bind),
+		DataDir:           dataDir,
+		JournalDir:        journalDir,
+		BindingsDir:       bindingsDir,
+		ReplayJournal:     truthy(firstEnv("JACOB_REPLAY_JOURNAL", "EDBRIDGE_REPLAY_JOURNAL")),
+		EnableInput:       boolDefault(firstEnv("JACOB_ENABLE_INPUT", "EDBRIDGE_ENABLE_INPUT"), true),
+		AutoBind:          boolDefault(firstEnv("JACOB_AUTOBIND", "EDBRIDGE_AUTOBIND"), false),
+		LANEnabled:        lan,
+		PairToken:         firstEnv("JACOB_PAIR_TOKEN", "EDBRIDGE_PAIR_TOKEN"),
+		ManualPaths:       manualPaths,
+		ControlSchemeDirs: controlSchemeDirs,
 	}
+
+	log.Printf("config/effective: bind=%q lan=%t input=%t autoBind=%t replayJournal=%t journalDir=%q bindingsDir=%q controlSchemeDirs=%d pairKeyOverride=%t", cfg.Bind, cfg.LANEnabled, cfg.EnableInput, cfg.AutoBind, cfg.ReplayJournal, cfg.JournalDir, cfg.BindingsDir, len(cfg.ControlSchemeDirs), firstEnv("JACOB_PAIR_TOKEN", "EDBRIDGE_PAIR_TOKEN") != "")
 
 	ctx, stop := signalContext()
 	defer stop()
@@ -82,18 +110,55 @@ func main() {
 		go func() { time.Sleep(450 * time.Millisecond); openBrowser(localURL) }()
 	}
 
-	if err := s.Run(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Printf("server stopped: %v", err)
+	err := s.Run(ctx)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Printf("server/stop: unexpected error: %v", err)
+		return
 	}
+	log.Printf("server/stop: clean shutdown")
 }
 
 func setupLog(dir string) {
-	_ = os.MkdirAll(dir, 0o700)
-	f, err := os.OpenFile(filepath.Join(dir, "jacob.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err == nil {
-		log.SetOutput(io.MultiWriter(os.Stderr, f))
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.Printf("logging: cannot create data directory %q: %v", dir, err)
+		return
 	}
-	log.SetFlags(log.Ldate | log.Ltime)
+	path := filepath.Join(dir, "jacob.log")
+	if err := rotateLog(path, 8<<20, 3); err != nil {
+		log.Printf("logging: rotation warning for %q: %v", path, err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		log.Printf("logging: cannot open %q: %v", path, err)
+		return
+	}
+	log.SetOutput(io.MultiWriter(os.Stderr, f))
+	log.Printf("logging: persistent log=%q rotation=8MiB backups=3", path)
+}
+
+func rotateLog(path string, maxBytes int64, backups int) error {
+	st, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if st.Size() < maxBytes || backups < 1 {
+		return nil
+	}
+	_ = os.Remove(path + "." + strconv.Itoa(backups))
+	for i := backups - 1; i >= 1; i-- {
+		oldPath := path + "." + strconv.Itoa(i)
+		newPath := path + "." + strconv.Itoa(i+1)
+		if _, err := os.Stat(oldPath); err == nil {
+			if err := os.Rename(oldPath, newPath); err != nil {
+				return err
+			}
+		}
+	}
+	return os.Rename(path, path+".1")
 }
 
 func runningJACoB() string {

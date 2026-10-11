@@ -74,14 +74,18 @@
 <div id="custom-pages"></div>
 
 <section id="tutorial" class="panel-page">
-  <div class="page-head"><div><div class="section-kicker">QUICK GUIDE</div><h1>Tutorial</h1><p>The shortest path from install to a useful custom tab.</p></div><a class="button-link primary" href="/docs/index.html" target="_blank" rel="noopener">Open full documentation</a></div>
+  <div class="page-head">
+    <div><div class="section-kicker">SETUP WALK-THROUGH</div><h1>JACoB Tutorial</h1><p>Work down the list once. Each check shows what JACoB can see before you start installing automation tabs.</p></div>
+    <div class="row"><button id="tutorial-refresh" class="primary">Run setup checks</button><a class="button-link secondary" href="/docs/index.html" target="_blank" rel="noopener">Documentation</a></div>
+  </div>
   <div class="tutorial-list">
-    <article class="tutorial-step"><div class="step-no">01</div><div><h2>Run Elite, then JACoB</h2><p>Leave Elite running normally. JACoB watches the current journal and Status.json automatically. Home should show READY or a specific warning that needs attention.</p></div></article>
-    <article class="tutorial-step"><div class="step-no">02</div><div><h2>Check controls only if needed</h2><p>If a tab needs a command that is not bound, open Settings → Elite bindings and use Clone / fill unbound while Elite is closed. JACoB creates a separate custom preset instead of editing the source preset.</p></div></article>
-    <article class="tutorial-step"><div class="step-no">03</div><div><h2>Add a custom tab</h2><p>Open Tab Manager, paste or upload HTML, preview it, then save. Saved tabs become normal navigation tabs and persist across restarts.</p><button id="tutorial-tab-manager" class="secondary">Open Tab Manager</button></div></article>
-    <article class="tutorial-step"><div class="step-no">04</div><div><h2>Use HUD overlays</h2><p>Custom tabs can draw text and basic geometry over Elite with the overlay API. Each tab gets its own isolated layer, so several HUD tools can run together.</p></div></article>
-    <article class="tutorial-step"><div class="step-no">05</div><div><h2>Use another screen</h2><p>JACoB can be opened from a phone or tablet on the same network. Pair that browser from Settings → LAN access using the displayed token.</p></div></article>
-    <article class="tutorial-step"><div class="step-no">06</div><div><h2>Build or edit a tab</h2><p>The Custom Tab Developer Reference contains the complete SDK, message protocol, schemas, overlay scene format, lifecycle rules, and examples in one document.</p><div class="row"><a class="button-link primary" href="/docs/developer-reference.html" target="_blank" rel="noopener">Developer Reference</a><a class="button-link secondary" href="/docs/JACOB_CUSTOM_TAB_REFERENCE.md" target="_blank" rel="noopener">Plain-text reference</a></div></div></article>
+    <article class="tutorial-step"><div class="step-no">01</div><div><div class="card-head"><h2>Core connection</h2><span id="tutorial-core-state" class="status-mark offline">CHECK</span></div><p>Confirms this browser is talking to the current JACoB core and SDK 12 shell.</p><pre id="tutorial-core-detail" class="output small">Waiting for core…</pre></div></article>
+    <article class="tutorial-step"><div class="step-no">02</div><div><div class="card-head"><h2>Elite data folders</h2><span id="tutorial-path-state" class="status-mark offline">CHECK</span></div><p>Checks the journal folder, user bindings folder, and shipped ControlSchemes locations. Manual paths may contain non-English characters.</p><div class="row"><button id="tutorial-open-paths" class="secondary">Open path settings</button></div><pre id="tutorial-path-detail" class="output small">Not checked.</pre></div></article>
+    <article class="tutorial-step"><div class="step-no">03</div><div><div class="card-head"><h2>Journal and game state</h2><span id="tutorial-journal-state" class="status-mark offline">CHECK</span></div><p>Confirms JACoB has selected a live Journal file and can see the companion JSON snapshots written beside it.</p><pre id="tutorial-journal-detail" class="output small">Not checked.</pre></div></article>
+    <article class="tutorial-step"><div class="step-no">04</div><div><div class="card-head"><h2>Controls and input</h2><span id="tutorial-input-state" class="status-mark offline">CHECK</span></div><p>Checks the active Elite preset, parsed command count, and the host input driver. Physical scan-code bindings remain layout-independent.</p><div class="row"><button id="tutorial-open-bindings" class="secondary">Open bindings tools</button></div><pre id="tutorial-input-detail" class="output small">Not checked.</pre></div></article>
+    <article class="tutorial-step"><div class="step-no">05</div><div><div class="card-head"><h2>Game view, overlay, Vision and spatial tools</h2><span id="tutorial-visual-state" class="status-mark offline">CHECK</span></div><p>Checks the major visual services without starting capture. The Diagnostics tab below has explicit buttons to exercise each one.</p><pre id="tutorial-visual-detail" class="output small">Not checked.</pre></div></article>
+    <article class="tutorial-step"><div class="step-no">06</div><div><div class="card-head"><h2>LAN access</h2><span id="tutorial-lan-state" class="status-mark offline">CHECK</span></div><p>Checks the listener, preferred address, Windows network profile and managed firewall rule when LAN is enabled. Local-only use does not require this.</p><div class="row"><button id="tutorial-open-lan" class="secondary">Open LAN / Network Doctor</button></div><pre id="tutorial-lan-detail" class="output small">Not checked.</pre></div></article>
+    <article class="tutorial-step"><div class="step-no">07</div><div><div class="card-head"><h2>Install the Diagnostics tab</h2><span id="tutorial-diagnostics-state" class="status-mark offline">CHECK</span></div><p>This installs a normal sandboxed custom tab that demonstrates the SDK from the same side third-party tabs use: state, journals, bindings, input, recorder, video, overlay, Vision, spatial services, storage, galaxy helpers and optional network access.</p><div class="row"><button id="tutorial-install-diagnostics" class="primary">Install / refresh Diagnostics</button><button id="tutorial-tab-manager" class="secondary">Open Tab Manager</button></div><pre id="tutorial-diagnostics-detail" class="output small">Not installed.</pre></div></article>
   </div>
 </section>
 
@@ -106,7 +110,7 @@
 &lt;template data-jacob-slot="home-extra"&gt;...&lt;/template&gt;
 &lt;template data-jacob-slot="footer"&gt;...&lt;/template&gt;</pre></details>
     </article>
-    <article class="card">
+    <article id="lan-access-block" class="card">
       <h2>LAN access</h2>
       <p class="muted">Open JACoB from a phone or tablet on the same home network.</p>
       <dl class="facts network-facts">
@@ -119,9 +123,14 @@
         <div class="pair-qr-panel"><div id="url-qr" class="pair-qr-code" aria-live="polite"></div><div class="pair-qr-label">Open JACoB</div></div>
         <div class="pair-qr-panel"><div id="pair-qr" class="pair-qr-code" aria-live="polite"></div><div class="pair-qr-label">Pair key</div></div>
       </div>
-      <div class="row network-actions"><button id="run-network-doctor" class="secondary" type="button">Run Network Doctor</button><button id="repair-network" class="secondary" type="button" hidden>Repair Windows access</button></div>
-      <div class="row"><input id="remote-token" placeholder="Pair token"><button id="save-token">Pair / reconnect</button></div>
+      <div class="row network-actions"><button id="run-network-doctor" class="secondary" type="button">Run Network Doctor</button><button id="repair-network" class="secondary" type="button" hidden>Repair firewall (admin)</button></div>
+      <div class="row"><input id="remote-token" placeholder="Current pair key"><button id="save-token">Pair this device</button></div>
       <pre id="network-result" class="output small">Local browsers do not need a token.</pre>
+    </article>
+    <article id="connected-devices-block" class="card">
+      <div class="card-head"><div><h2>Connected devices</h2><p class="muted">First-time pairing uses the current pair key. Each remote browser then receives its own revocable credential. Pair keys rotate when JACoB restarts; remembered devices do not need the new key.</p></div><span id="device-count" class="counter">0</span></div>
+      <div id="device-list" class="saved-tab-list"><div class="muted empty-state">Open this page on the host computer to manage paired devices.</div></div>
+      <pre id="device-manager-result" class="output small">Only the host browser can change Remember me, Admin, or revoke a device.</pre>
     </article>
     <article class="card">
       <div class="card-head"><div><h2>Software updates</h2><p class="muted">Check the project release channel and stage a newer build on this computer.</p></div></div>
@@ -130,6 +139,50 @@
       <pre id="update-result" class="output small">Release channel has not been queried.</pre>
     </article>
   </div>
+
+  <details id="elite-paths-block" class="settings-block">
+    <summary>Elite data paths</summary>
+    <article class="card nested-card">
+      <div class="card-head"><div><h2>Journal and controls directories</h2><p class="muted">Leave a field blank for normal auto-detection. Saved manual paths are read at JACoB startup. Environment variables still take priority for command-line/admin overrides.</p></div></div>
+      <label>Journal folder<input id="path-journal" class="mono" style="width:100%" placeholder="C:\Users\...\Saved Games\Frontier Developments\Elite Dangerous"></label>
+      <label>User bindings folder<input id="path-bindings" class="mono" style="width:100%" placeholder="C:\Users\...\AppData\Local\Frontier Developments\Elite Dangerous\Options\Bindings"></label>
+      <label>Shipped ControlSchemes folders <span class="muted">(one per line)</span><textarea id="path-control-schemes" class="mono" spellcheck="false" style="width:100%;min-height:82px" placeholder="...\Elite Dangerous\Products\elite-dangerous-odyssey-64\ControlSchemes"></textarea></label>
+      <div class="row"><button id="save-paths" class="primary">Save manual paths</button><button id="reset-paths" class="secondary">Use automatic detection</button></div>
+      <pre id="path-result" class="output small">Path settings have not been loaded.</pre>
+    </article>
+  </details>
+
+  <details id="macros-block" class="settings-block">
+    <summary>Macros</summary>
+    <article class="card nested-card">
+      <div class="card-head"><div><h2>Elite macros</h2><p class="muted">Short, linear quality-of-life sequences for interface navigation and logistics. Shipped defaults are restricted to menu/navigation actions. Custom macros are deliberately limited to 12 steps and have no loops or conditionals.</p></div><span id="macro-count" class="counter">0</span></div>
+      <div id="macro-policy-card" class="notice warn" style="margin:10px 0">
+        <strong>Macro use agreement</strong>
+        <p style="margin:6px 0">Frontier's rules prohibit external automation used to generate a player advantage. JACoB macros are intended for accessibility, menu navigation, and repetitive logistical/quality-of-life tasks. Do not use them to automate combat, competitive interactions, unattended gameplay, or other behavior intended to cheat or gain an advantage over other players. You are responsible for compliance with the current Elite Dangerous EULA and Frontier Code of Conduct. The JACoB project does not condone uses that violate those rules or their spirit.</p>
+        <p style="margin:6px 0"><a href="https://www.frontier.co.uk/legal/eula" target="_blank" rel="noopener noreferrer">Frontier EULA</a> · <a href="https://www.frontier.co.uk/legal/frontier-code-of-conduct" target="_blank" rel="noopener noreferrer">Frontier Code of Conduct</a></p>
+        <label class="check-row"><input id="macro-policy-check" type="checkbox"> I understand and agree to use JACoB macros only for legitimate accessibility, interface-navigation, logistical, and quality-of-life purposes, and not to cheat or generate a prohibited player advantage.</label>
+        <div class="row" style="margin-top:8px"><button id="macro-policy-accept" class="primary" type="button">I agree — unlock macro editor</button><span id="macro-policy-state" class="muted"></span></div>
+      </div>
+      <div class="row">
+        <label style="min-width:260px;flex:1">Macro<select id="macro-select" style="width:100%"></select></label>
+        <button id="macro-new" class="secondary" type="button">New</button>
+        <button id="macro-duplicate" class="secondary" type="button">Duplicate</button>
+        <button id="macro-record" class="secondary" type="button">Record macro</button>
+      </div>
+      <div class="settings-grid" style="margin-top:10px">
+        <label>Name<input id="macro-name" maxlength="80"></label>
+        <label>ID<input id="macro-id" class="mono" maxlength="64" placeholder="generated-from-name"></label>
+        <label style="grid-column:1/-1">Description<input id="macro-description" maxlength="500"></label>
+        <label style="grid-column:1/-1">Parameters <span class="muted">(comma separated; use {{name}} in Text steps)</span><input id="macro-parameters" class="mono" placeholder="system"></label>
+      </div>
+      <div class="card-head" style="margin-top:14px"><div><h3>Steps</h3><p class="muted">Wait is applied before each step. Custom macros are limited to 12 steps. Binding steps resolve through the active Elite binds file. Raw steps preserve physical scan codes from recorded actions.</p></div></div>
+      <div id="macro-step-list"></div>
+      <div class="row" style="margin-top:8px"><button id="macro-add-binding" class="secondary" type="button">+ Binding step</button><button id="macro-add-raw" class="secondary" type="button">+ Raw key step</button><button id="macro-add-text" class="secondary" type="button">+ Text step</button></div>
+      <div class="row" style="margin-top:12px"><button id="macro-save" class="primary" type="button">Save macro</button><button id="macro-test" class="secondary" type="button">Test run</button><button id="macro-reset-delete" class="danger secondary" type="button">Reset default</button></div>
+      <pre id="macro-result" class="output small">Loading macros…</pre>
+      <p class="muted mono" style="margin-top:8px">SDK: Elite.macros.run('macro_id', {parameter:'value'}) · Elite.macros.plotRoute('Sol') · Elite.macros.list()</p>
+    </article>
+  </details>
 
   <details class="settings-block">
     <summary>Game view</summary>
@@ -147,7 +200,7 @@
     </article>
   </details>
 
-  <details class="settings-block">
+  <details id="elite-bindings-block" class="settings-block">
     <summary>Elite bindings</summary>
     <article class="card nested-card">
       <div class="card-head"><div><h2>Bindings</h2><p class="muted">Inspect controls or create a JACoB copy with fallback bindings for completely unbound commands.</p></div><div class="row"><button id="autofill-bindings">Clone / fill unbound</button><button id="reload-bindings" class="secondary">Reload</button></div></div>
@@ -176,7 +229,7 @@
 </section>
 </main>
 <div id="shutdown-screen" class="shutdown-screen" hidden><div><strong>JACoB closed</strong><span>You can close this browser tab.</span></div></div>
-<footer id="footer-slot"><span>JACoB Alpha 0.2.13 · SDK 10</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a></footer>
+<footer id="footer-slot"><span>JACoB Alpha 0.2.15 · SDK 12</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a></footer>
 <script src="/locales.js"></script>
 <script src="/app.js"></script>
 </body></html>
