@@ -82,6 +82,7 @@ var (
 	procGetMessageW         = user32.NewProc("GetMessageW")
 	procPostThreadMessageW  = user32.NewProc("PostThreadMessageW")
 	procGetKeyNameTextW     = user32.NewProc("GetKeyNameTextW")
+	procRtlMoveMemory       = kernel32.NewProc("RtlMoveMemory")
 )
 
 func newInputRecorder() InputRecorder {
@@ -204,7 +205,8 @@ func (r *windowsRecorder) Stop() ([]RecordedInputEvent, error) {
 
 func (r *windowsRecorder) hookProc(nCode int, wParam uintptr, lParam uintptr) uintptr {
 	if nCode >= 0 && lParam != 0 {
-		k := (*kbdLLHookStruct)(unsafe.Pointer(lParam))
+		var k kbdLLHookStruct
+		procRtlMoveMemory.Call(uintptr(unsafe.Pointer(&k)), lParam, unsafe.Sizeof(k))
 		if k.DwExtraInfo != jacobInputMarker {
 			fg, _, _ := procGetForegroundWindow.Call()
 			r.mu.Lock()

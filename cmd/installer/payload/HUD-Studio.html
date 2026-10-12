@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>HUD Studio</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#090d11;color:#e8edf0;font:14px/1.45 system-ui,Segoe UI,sans-serif}main{max-width:980px;margin:0 auto;padding:22px}h1{margin:0 0 4px;font-size:22px;font-weight:650}p{color:#aab4ba}.bar,.grid{display:flex;gap:10px;flex-wrap:wrap}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));margin-top:16px}.card{border:1px solid #29323a;background:#0d1318;padding:14px}label{display:block;color:#9daab2;font-size:12px;margin-bottom:5px}select,input,button{width:100%;background:#0a0f13;color:#edf1f4;border:1px solid #3a4650;border-radius:0;padding:9px}button{width:auto;cursor:pointer}button.primary{border-color:#a55216;color:#ffd7b5}button:hover{background:#111820}pre{white-space:pre-wrap;word-break:break-word;background:#070a0d;border:1px solid #222b32;padding:12px;min-height:72px}.small{font-size:12px;color:#7f8a91}.status{display:inline-block;margin-left:8px;color:#80d5a8}
+</style>
+</head>
+<body><main>
+<h1>JACoB HUD Studio</h1>
+<p>SDK13 visual test bench. It exercises themes, alpha, antialiased text, glow, outline, shadow, rounded panels, semantic metrics, progress, brackets, arcs and reticles.</p>
+<div class="bar">
+<button id="show" class="primary">Show HUD</button><button id="clear">Clear HUD</button><button id="info">Renderer info</button><span id="status" class="status"></span>
+</div>
+<div class="grid">
+<div class="card"><label>Theme</label><select id="theme"><option>cockpit</option><option>clean</option><option>highcontrast</option><option>legacy</option></select></div>
+<div class="card"><label>Glow</label><input id="glow" type="range" min="0" max="10" step="0.5" value="3"></div>
+<div class="card"><label>Overall opacity</label><input id="opacity" type="range" min="0.25" max="1" step="0.05" value="0.92"></div>
+<div class="card"><label>HUD scale</label><input id="scale" type="range" min="0.7" max="1.5" step="0.05" value="1"></div>
+</div>
+<h2>What to look for</h2>
+<p class="small">Text edges should be smooth with no magenta fringe. Panel translucency should preserve the game underneath. Thin geometry should stay clean at 1080p and above. Glow should read as illumination, not fuzz. Change the sliders while Elite is foreground and compare themes.</p>
+<pre id="out">Ready.</pre>
+<script>
+const $=s=>document.querySelector(s),out=$('#out'),status=$('#status');
+function scene(){
+ const theme=$('#theme').value,glow=Number($('#glow').value),opacity=Number($('#opacity').value),scale=Number($('#scale').value);
+ return {z:50,space:'normalized',theme,opacity,scale,items:[
+  {type:'panel',x:.035,y:.055,w:.245,h:.205,label:'FLIGHT DATA',cornerRadius:.009,opacity:.88},
+  {type:'metric',x:.055,y:.096,label:'SPEED',value:'487',unit:'m/s',size:30,role:'primary',glow:glow*.45,shadowX:1,shadowY:1,shadowColor:'#000000AA'},
+  {type:'metric',x:.055,y:.166,label:'DIST',value:'1.42',unit:'km',size:23,role:'accent',glow:glow*.55},
+  {type:'progress',x:.055,y:.232,w:.19,h:.008,label:'COURSE INTEGRITY',progress:.73,role:'success',cornerRadius:.004},
+
+  {type:'reticle',x:.5,y:.5,r:.018,role:'accent',lineWidth:1.4,glow},
+  {type:'arc',x:.5,y:.5,r:.068,startAngle:205,sweepAngle:130,role:'secondary',lineWidth:1.2,opacity:.7},
+  {type:'chevron',x:.5,y:.415,w:.024,h:.018,role:'warning',lineWidth:2,glow:glow*.7},
+
+  {type:'bracket',x:.73,y:.17,w:.19,h:.18,role:'accent',lineWidth:1.4,glow:glow*.35},
+  {type:'text',x:.825,y:.145,text:'TARGET LOCK',align:'center',role:'secondary',fontSize:13,fontWeight:600},
+  {type:'text',x:.825,y:.255,text:'HIGH VALUE ROCK',align:'center',role:'warning',fontSize:19,fontWeight:600,glow,outlineWidth:1,outlineColor:'#000000CC'},
+  {type:'text',x:.825,y:.285,text:'62.8% PLATINUM',align:'center',role:'primary',fontSize:14,shadowX:1,shadowY:1,shadowColor:'#000000BB'},
+
+  {type:'panel',x:.38,y:.82,w:.24,h:.085,cornerRadius:.008,opacity:.78},
+  {type:'text',x:.5,y:.838,text:'HUD2  /  SDK13',align:'center',role:'muted',fontSize:12,fontWeight:600},
+  {type:'text',x:.5,y:.866,text:'PER-PIXEL ALPHA  ·  ANTIALIASED',align:'center',role:'primary',fontSize:14,fontWeight:500}
+ ]};
+}
+async function show(){try{status.textContent='rendering';const r=await Elite.overlay.set(scene());status.textContent='active';out.textContent=JSON.stringify(r,null,2)}catch(e){status.textContent='error';out.textContent=(e.code?e.code+': ':'')+(e.message||e)}}
+$('#show').onclick=show;
+$('#clear').onclick=async()=>{try{await Elite.overlay.clear();status.textContent='cleared'}catch(e){out.textContent=e.message||e}};
+$('#info').onclick=async()=>{try{out.textContent=JSON.stringify(await Elite.overlay.info(),null,2)}catch(e){out.textContent=e.message||e}};
+for(const id of ['theme','glow','opacity','scale'])$(id.startsWith('#')?id:'#'+id).addEventListener('input',()=>{if(status.textContent==='active')show()});
+</script></main></body></html>

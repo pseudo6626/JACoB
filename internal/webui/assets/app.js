@@ -248,13 +248,26 @@ function sdkID64(value){if(typeof value==='number'){if(!Number.isSafeInteger(val
 function sdkNetShape(url,options={}){const out={url:String(url||''),method:options.method||'GET',headers:options.headers||{},body:typeof options.body==='string'?options.body:(options.body==null?'':JSON.stringify(options.body))};for(const k of ['group','minIntervalMs','retry','cacheTtlMs'])if(options[k]!=null)out[k]=options[k];return out}
 function cloneSDKValue(value){if(value===undefined)return undefined;if(typeof structuredClone==='function')return structuredClone(value);return JSON.parse(JSON.stringify(value))}
 function closeVideoElement(el){if(!el||typeof el.removeAttribute!=='function')return false;try{if(typeof el.pause==='function')el.pause()}catch{};try{el.removeAttribute('src');el.removeAttribute('srcset');if(el.dataset)delete el.dataset.jacobVideoActive;if(typeof el.load==='function')el.load();return true}catch{return false}}
+
+const hud=Object.freeze({
+ scene:(items=[],options={})=>Object.assign({theme:'cockpit',space:'normalized'},cloneSDKValue(options),{items:Array.isArray(items)?cloneSDKValue(items):[]}),
+ text:(text,x,y,options={})=>Object.assign({},cloneSDKValue(options),{type:'text',x:Number(x),y:Number(y),text:String(text??'')}),
+ metric:(x,y,value,options={})=>Object.assign({},cloneSDKValue(options),{type:'metric',x:Number(x),y:Number(y),value:String(value??'')}),
+ panel:(x,y,w,h,options={})=>Object.assign({},cloneSDKValue(options),{type:'panel',x:Number(x),y:Number(y),w:Number(w),h:Number(h)}),
+ progress:(x,y,w,h,progress,options={})=>Object.assign({},cloneSDKValue(options),{type:'progress',x:Number(x),y:Number(y),w:Number(w),h:Number(h),progress:Number(progress)}),
+ reticle:(x,y,options={})=>Object.assign({},cloneSDKValue(options),{type:'reticle',x:Number(x),y:Number(y)}),
+ bracket:(x,y,w,h,options={})=>Object.assign({},cloneSDKValue(options),{type:'bracket',x:Number(x),y:Number(y),w:Number(w),h:Number(h)}),
+ chevron:(x,y,options={})=>Object.assign({},cloneSDKValue(options),{type:'chevron',x:Number(x),y:Number(y)}),
+ arc:(x,y,r,startAngle,sweepAngle,options={})=>Object.assign({},cloneSDKValue(options),{type:'arc',x:Number(x),y:Number(y),r:Number(r),startAngle:Number(startAngle),sweepAngle:Number(sweepAngle)}),
+ ring:(x,y,r,options={})=>Object.assign({},cloneSDKValue(options),{type:'ring',x:Number(x),y:Number(y),r:Number(r)})
+});
 window.Elite=Object.freeze({
- api:Object.freeze({version:12}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
+ api:Object.freeze({version:13}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
  bindings:Object.freeze({list:()=>request('bindings.list'),diagnostics:()=>request('bindings.diagnostics'),get:name=>request('bindings.get',{name}),reload:()=>request('bindings.reload'),press:action=>request('binding.press',{action}),down:action=>request('binding.down',{action}),up:action=>request('binding.up',{action}),hold:(action,durationMs=1000)=>request('binding.hold',{action,durationMs})}),
  input:Object.freeze({tap:(key,options={})=>request('input.tap',{key,delayMs:options.delayMs||0,modifiers:options.modifiers||[]}),hold:(key,durationMs=250,options={})=>request('input.hold',{key,durationMs,modifiers:options.modifiers||[]}),text:(text,options={})=>request('input.text',{text,intervalMs:options.intervalMs??15})}),
  recorder:Object.freeze({status:()=>request('recorder.status'),start:()=>request('recorder.start'),stop:()=>request('recorder.stop'),subscribe:cb=>onEvent('recorder.input',cb)}),
  macros:Object.freeze({list:()=>request('macros.list'),get:name=>request('macros.get',{name}),run:(name,args={})=>request('macros.run',{name,args}),exitMenus:()=>request('macros.run',{name:'exit_menus'}),openGalaxyMap:()=>request('macros.run',{name:'open_galaxy_map'}),openSystemMap:()=>request('macros.run',{name:'open_system_map'}),openNavigationPanel:()=>request('macros.run',{name:'open_navigation_panel'}),openCommsPanel:()=>request('macros.run',{name:'open_comms_panel'}),openRolePanel:()=>request('macros.run',{name:'open_role_panel'}),openInternalPanel:()=>request('macros.run',{name:'open_internal_panel'}),openQuickComms:()=>request('macros.run',{name:'open_quick_comms'}),openCodexDiscovery:()=>request('macros.run',{name:'open_codex_discovery'}),plotRoute:system=>request('macros.run',{name:'plot_route',args:{system}})}),
- overlay:Object.freeze({info:()=>request('overlay.info'),set:scene=>request('overlay.set',{scene}),clear:()=>request('overlay.clear')}),
+ overlay:Object.freeze({info:()=>request('overlay.info'),set:scene=>request('overlay.set',{scene}),clear:()=>request('overlay.clear'),hud}),
  video:Object.freeze({info:()=>request('video.info'),url:(options={})=>request('video.url',options),attach:async(el,options={})=>{if(!el)throw Object.assign(new Error('video element is required'),{code:'BAD_PARAMS'});closeVideoElement(el);const u=await request('video.url',options);el.src=u;if(el.dataset)el.dataset.jacobVideoActive='1';return u},close:el=>closeVideoElement(el)}),
  vision:Object.freeze({
  info:()=>request('vision.info'),
