@@ -10,6 +10,8 @@ The core carries the common interfaces. User tabs carry route queues, race syste
 
 Windows commanders should use the installer attached to the current [GitHub release](https://github.com/pseudo6626/JACoB/releases). It installs for the current Windows account, creates Start Menu entries, and registers an uninstaller. The installer offers either the full capture-capable build or the No Capture privacy build on first installation.
 
+Steamdeck users should download both the linux version of the installation files as well as the install-JACob-SteamDeck.sh helper script which will install JACoB on the deck and update the elite launcher to start JACoB as a second window when Elite is started. (use the steam button and then scroll to the bottom of the menu to toggle windows while in game mode) 
+
 A newer setup detects the existing JACoB installation and offers an in-place update. Saved tabs, navigation settings, appearance files, and the existing capture/privacy choice is retained.
 
 Installed user data is kept under:
