@@ -1,0 +1,190 @@
+name: Build JACoB Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version from internal/buildinfo/version.go
+        required: true
+        default: 0.2.17-alpha
+      create_draft_release:
+        description: Create/update a draft GitHub release with the built assets
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Verify version
+        shell: powershell
+        run: |
+          $want = "${{ inputs.version }}"
+          $src = Get-Content internal/buildinfo/version.go -Raw
+          if ($src -notmatch ('Version\s*=\s*"' + [regex]::Escape($want) + '"')) {
+            throw "buildinfo.Version does not match requested version $want"
+          }
+
+      - name: Test Windows
+        run: go test ./...
+
+      - name: Validate browser SDK
+        shell: powershell
+        run: node --check internal/webui/assets/app.js
+
+      - name: Build Windows assets
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $v = "${{ inputs.version }}"
+          $env:CGO_ENABLED="0"
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+
+          go build -trimpath -ldflags="-H=windowsgui" -o "dist/JACoB-$v-win-x64-portable.exe" ./cmd/jacob
+          go build -trimpath -tags "norecorder,nocapture" -ldflags="-H=windowsgui" -o "dist/JACoB-$v-win-x64-no-capture.exe" ./cmd/jacob
+
+          Copy-Item "dist/JACoB-$v-win-x64-portable.exe" cmd/installer/payload/JACoB.exe
+          Copy-Item "dist/JACoB-$v-win-x64-no-capture.exe" cmd/installer/payload/JACoB-no-capture.exe
+          try {
+            go build -trimpath -ldflags="-H=windowsgui" -o "dist/JACoB-$v-win-x64.exe" ./cmd/installer
+          } finally {
+            Remove-Item cmd/installer/payload/JACoB.exe,cmd/installer/payload/JACoB-no-capture.exe -Force -ErrorAction SilentlyContinue
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jacob-windows
+          path: |
+            dist/JACoB-${{ inputs.version }}-win-x64.exe
+            dist/JACoB-${{ inputs.version }}-win-x64-portable.exe
+            dist/JACoB-${{ inputs.version }}-win-x64-no-capture.exe
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libx11-dev libxfixes-dev \
+            flatpak flatpak-builder
+
+      - name: Verify version
+        run: |
+          want='${{ inputs.version }}'
+          grep -Fq "Version    = \"$want\"" internal/buildinfo/version.go
+
+      - name: Test Linux
+        env:
+          CGO_ENABLED: '1'
+        run: go test ./...
+
+      - name: Build Linux assets with HUD support
+        env:
+          CGO_ENABLED: '1'
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          v='${{ inputs.version }}'
+          go build -trimpath -o "dist/JACoB-$v-linux-amd64" ./cmd/jacob
+          go build -trimpath -tags "norecorder,nocapture" -o "dist/JACoB-$v-linux-amd64-no-capture" ./cmd/jacob
+          ldd "dist/JACoB-$v-linux-amd64" | tee dist/linux-ldd.txt
+          ! grep -q 'not found' dist/linux-ldd.txt
+
+      - name: Build Steam Deck Flatpak installer
+        run: |
+          set -euo pipefail
+          v='${{ inputs.version }}'
+          cp "dist/JACoB-$v-linux-amd64" packaging/flatpak/JACoB
+          cp assets/jacob-icon-256.png packaging/flatpak/jacob-icon-256.png
+          printf '%s\n' "$v" > packaging/flatpak/VERSION
+
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak-builder --user --force-clean --install-deps-from=flathub \
+            --repo=flatpak-repo flatpak-build packaging/flatpak/com.pseudosci.JACoB.yml
+          flatpak build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo flatpak-repo "dist/JACoB-$v-SteamDeck.flatpak" com.pseudosci.JACoB stable
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jacob-linux
+          path: |
+            dist/JACoB-${{ inputs.version }}-linux-amd64
+            dist/JACoB-${{ inputs.version }}-linux-amd64-no-capture
+            dist/JACoB-${{ inputs.version }}-SteamDeck.flatpak
+            dist/linux-ldd.txt
+
+  release:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.windows.result == 'success' && needs.linux.result == 'success' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jacob-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum \
+            JACoB-${{ inputs.version }}-win-x64.exe \
+            JACoB-${{ inputs.version }}-win-x64-portable.exe \
+            JACoB-${{ inputs.version }}-win-x64-no-capture.exe \
+            JACoB-${{ inputs.version }}-linux-amd64 \
+            JACoB-${{ inputs.version }}-linux-amd64-no-capture \
+            JACoB-${{ inputs.version }}-SteamDeck.flatpak \
+            > SHA256SUMS.txt
+
+      - name: Create or update draft release
+        if: ${{ inputs.create_draft_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v='${{ inputs.version }}'
+          tag="v$v"
+          notes="RELEASE-NOTES-$v.md"
+          assets=(
+            "dist/JACoB-$v-win-x64.exe"
+            "dist/JACoB-$v-win-x64-portable.exe"
+            "dist/JACoB-$v-win-x64-no-capture.exe"
+            "dist/JACoB-$v-linux-amd64"
+            "dist/JACoB-$v-linux-amd64-no-capture"
+            "dist/JACoB-$v-SteamDeck.flatpak"
+            "dist/SHA256SUMS.txt"
+          )
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber
+            if [[ -f "$notes" ]]; then
+              gh release edit "$tag" --draft --prerelease --title "JACoB $v" --notes-file "$notes"
+            else
+              gh release edit "$tag" --draft --prerelease --title "JACoB $v"
+            fi
+          else
+            if [[ -f "$notes" ]]; then
+              gh release create "$tag" "${assets[@]}" --target "${{ github.sha }}" --draft --prerelease --title "JACoB $v" --notes-file "$notes"
+            else
+              gh release create "$tag" "${assets[@]}" --target "${{ github.sha }}" --draft --prerelease --title "JACoB $v" --notes "Automated JACoB build. Test before publishing."
+            fi
+          fi
