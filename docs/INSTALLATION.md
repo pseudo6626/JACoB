@@ -2,7 +2,7 @@
 
 ## Windows
 
-Run `JACoB-Alpha-0.2.4-Setup.exe`.
+Download the current `JACoB-<version>-win-x64.exe` installer from the release **Assets** section and run it.
 
 The installer uses the current Windows account and installs under:
 
@@ -30,10 +30,43 @@ Open **Settings → Software updates** and choose **Check for updates**. JACoB r
 
 When a newer Windows release contains a matching setup asset, **Install update** downloads that setup package, closes JACoB, performs the in-place update, and relaunches the application. Update installation is available only from a browser running on the host computer.
 
-## Steam Deck / Linux
+## Steam Deck
 
-The release package includes `JACoB-Alpha-0.2.4-SteamDeck-linux-amd64`.
+Use the release asset named:
 
-The browser UI, custom tabs, journal/status reader, bindings layer, public API bridge and core SDK are shared with Windows. Platform-specific input, capture, recorder, and overlay capability can vary; query the relevant SDK capability before depending on an optional feature.
+```text
+JACoB-<version>-SteamDeck.flatpak
+```
 
-The in-app updater can replace the current Linux executable when the directory containing it is writable by the current user. A `.previous` binary is left beside the updated executable for recovery. If the executable location is read-only, use the published release asset manually.
+Installation is designed for Steam Deck Desktop Mode:
+
+1. Download the `.flatpak` asset.
+2. Open it with Discover.
+3. Choose **Install**.
+4. Launch **JACoB Steam Deck Setup** once.
+
+The setup app copies the native JACoB core into:
+
+```text
+~/.local/share/JACoB
+```
+
+It then finds the Steam account containing Elite Dangerous, backs up `localconfig.vdf`, preserves existing launch options, adds JACoB immediately before `%command%`, and restarts Steam. No terminal command or executable permission change is required.
+
+After setup, launch Elite Dangerous normally from Gaming Mode. JACoB starts with Elite and its browser UI can be selected as the second window through the Steam window switcher.
+
+The Flatpak is only the installer/bootstrap. The actual JACoB core runs natively on the Steam Deck host so Gamescope overlays, Linux input, journal/status access and the in-app updater are not trapped inside a Flatpak sandbox.
+
+### Steam Deck capture and HUD
+
+The full Linux build is compiled natively on Linux with CGO enabled. The Steam Deck HUD uses JACoB's X11/XWayland Gamescope overlay backend.
+
+Game View and base Vision use a verified-window X11/XWayland capture backend. JACoB accepts a frame only when the focused Gamescope app is Elite Dangerous (Steam app `359320`) or the focused X11 process can be traced to Elite. It does not fall back to monitor or desktop capture.
+
+OCR remains platform-dependent and should be capability-checked separately.
+
+## Other Linux systems
+
+The release also contains the standalone `JACoB-<version>-linux-amd64` binary. It can be run directly from a writable location. X11/XWayland-dependent features report their capability at runtime.
+
+The in-app updater can replace the current Linux executable when the directory containing it is writable by the current user. A `.previous` binary is left beside the updated executable for recovery.
