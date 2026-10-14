@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=JACoB Steam Deck Setup
+Comment=Install JACoB and connect it to Elite Dangerous
+Exec=jacob-flatpak-launch
+Icon=com.pseudosci.JACoB
+Terminal=false
+Categories=Game;Utility;
+StartupNotify=true

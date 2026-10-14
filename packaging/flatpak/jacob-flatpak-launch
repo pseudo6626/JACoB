@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+HOST_HOME="$(flatpak-spawn --host sh -lc 'printf %s "$HOME"')"
+[[ -n "$HOST_HOME" ]] || { echo "Could not resolve the Steam Deck home directory." >&2; exit 1; }
+HOST_DIR="$HOST_HOME/.local/share/JACoB"
+HOST_BIN="$HOST_DIR/JACoB"
+STAMP="$HOST_DIR/.flatpak-payload-version"
+PACKAGED_VERSION="$(cat /app/share/jacob/VERSION 2>/dev/null || echo unknown)"
+
+mkdir -p "$HOST_DIR"
+
+if [[ ! -x "$HOST_BIN" || ! -f "$STAMP" || "$(cat "$STAMP" 2>/dev/null || true)" != "$PACKAGED_VERSION" ]]; then
+  install -m 0755 /app/libexec/JACoB "$HOST_BIN.new"
+  mv -f "$HOST_BIN.new" "$HOST_BIN"
+  printf '%s\n' "$PACKAGED_VERSION" > "$STAMP"
+fi
+
+if [[ "${1:-}" != "--service-only" ]]; then
+  JACOB_HOST_HOME="$HOST_HOME" /app/bin/jacob-steam-integrate || true
+fi
+
+exec flatpak-spawn --host sh -lc 'export JACOB_OPEN_BROWSER=1; exec "$HOME/.local/share/JACoB/JACoB"'

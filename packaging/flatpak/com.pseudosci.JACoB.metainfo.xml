@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.pseudosci.JACoB</id>
+  <name>JACoB Steam Deck Setup</name>
+  <summary>Install JACoB and integrate it with Elite Dangerous on Steam Deck</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Installs the native JACoB companion core into the Steam Deck user account, configures Elite Dangerous to start it automatically, and then opens JACoB.</p>
+  </description>
+  <launchable type="desktop-id">com.pseudosci.JACoB.desktop</launchable>
+  <url type="homepage">https://github.com/pseudo6626/JACoB</url>
+  <content_rating type="oars-1.1"/>
+</component>
