@@ -6,15 +6,29 @@ HOST_HOME="$(flatpak-spawn --host sh -lc 'printf %s "$HOME"')"
 HOST_DIR="$HOST_HOME/.local/share/JACoB"
 HOST_BIN="$HOST_DIR/JACoB"
 STAMP="$HOST_DIR/.flatpak-payload-version"
+HASH_STAMP="$HOST_DIR/.flatpak-payload-sha256"
 PACKAGED_VERSION="$(cat /app/share/jacob/VERSION 2>/dev/null || echo unknown)"
+PACKAGED_HASH="$(sha256sum /app/libexec/JACoB | awk '{print $1}')"
+LOG_DIR="$HOST_HOME/.config/JACoB"
+LOG_FILE="$LOG_DIR/deck-install.log"
 
-mkdir -p "$HOST_DIR"
+mkdir -p "$HOST_DIR" "$LOG_DIR"
 
-if [[ ! -x "$HOST_BIN" || ! -f "$STAMP" || "$(cat "$STAMP" 2>/dev/null || true)" != "$PACKAGED_VERSION" ]]; then
+HOST_HASH=""
+if [[ -f "$HOST_BIN" ]]; then
+  HOST_HASH="$(sha256sum "$HOST_BIN" 2>/dev/null | awk '{print $1}' || true)"
+fi
+
+if [[ ! -x "$HOST_BIN" || "$HOST_HASH" != "$PACKAGED_HASH" ]]; then
   install -m 0755 /app/libexec/JACoB "$HOST_BIN.new"
   mv -f "$HOST_BIN.new" "$HOST_BIN"
-  printf '%s\n' "$PACKAGED_VERSION" > "$STAMP"
+  HOST_HASH="$PACKAGED_HASH"
+  printf '[%s] Installed native JACoB payload version=%s sha256=%s\n' "$(date -Is)" "$PACKAGED_VERSION" "$PACKAGED_HASH" >> "$LOG_FILE"
+else
+  printf '[%s] Native JACoB payload already current version=%s sha256=%s\n' "$(date -Is)" "$PACKAGED_VERSION" "$PACKAGED_HASH" >> "$LOG_FILE"
 fi
+printf '%s\n' "$PACKAGED_VERSION" > "$STAMP"
+printf '%s\n' "$PACKAGED_HASH" > "$HASH_STAMP"
 
 if [[ "${1:-}" != "--service-only" ]]; then
   JACOB_HOST_HOME="$HOST_HOME" /app/bin/jacob-steam-integrate || true
