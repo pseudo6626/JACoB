@@ -1,0 +1,389 @@
+name: Hotfix JACoB 0.2.18 Deck PipeWire + HUD Loader v2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libxfixes-dev libxcomposite-dev \
+            libpipewire-0.3-dev libwayland-dev \
+            flatpak flatpak-builder
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+
+      - name: Apply hotfix
+        run: |
+          set -euo pipefail
+          base64 -d > /tmp/jacob-hotfix.py <<'JACOB_PATCH'
+          ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCBqc29uCgpkZWYgcmVwbGFjZV9vbmNlKHRl
+          eHQsIG9sZCwgbmV3LCBsYWJlbCk6CiAgICBpZiBvbGQgbm90IGluIHRleHQ6CiAgICAgICAgaWYg
+          bmV3IGluIHRleHQ6CiAgICAgICAgICAgIHJldHVybiB0ZXh0CiAgICAgICAgcmFpc2UgU3lzdGVt
+          RXhpdChmIntsYWJlbH06IGV4cGVjdGVkIHNvdXJjZSBhbmNob3Igbm90IGZvdW5kIikKICAgIHJl
+          dHVybiB0ZXh0LnJlcGxhY2Uob2xkLCBuZXcsIDEpCgojIFBpcGVXaXJlIGhlbHBlcjogbmVnb3Rp
+          YXRlIGxpa2UgVmFsdmUncyBvd24gZ2FtZXNjb3Blc3RyZWFtIGNvbnN1bWVyLgpwID0gUGF0aCgi
+          cGFja2FnaW5nL2ZsYXRwYWsvamFjb2ItZ2FtZXNjb3BlLXN0cmVhbS5jIikKcyA9IHAucmVhZF90
+          ZXh0KGVuY29kaW5nPSJ1dGYtOCIpCgpvbGQgPSByJycnc3RhdGljIGNvbnN0IHN0cnVjdCBzcGFf
+          cG9kICpidWlsZF9mb3JtYXQoc3RydWN0IGphY29iX2RhdGEgKmRhdGEsIHN0cnVjdCBzcGFfcG9k
+          X2J1aWxkZXIgKmIpIHsKICAgIHN0cnVjdCBzcGFfcmVjdGFuZ2xlIHNpemUgPSBTUEFfUkVDVEFO
+          R0xFKAogICAgICAgIGRhdGEtPnJlcXVlc3RlZF93aWR0aCwgZGF0YS0+cmVxdWVzdGVkX2hlaWdo
+          dCk7CiAgICBzdHJ1Y3Qgc3BhX2ZyYWN0aW9uIHJhdGUgPSBTUEFfRlJBQ1RJT04oCiAgICAgICAg
+          ZGF0YS0+ZnBzID8gZGF0YS0+ZnBzIDogSkFDT0JfREVGQVVMVF9GUFMsIDEpOwoKICAgIHJldHVy
+          biBzcGFfcG9kX2J1aWxkZXJfYWRkX29iamVjdCgKICAgICAgICBiLAogICAgICAgIFNQQV9UWVBF
+          X09CSkVDVF9Gb3JtYXQsIFNQQV9QQVJBTV9FbnVtRm9ybWF0LAogICAgICAgIFNQQV9GT1JNQVRf
+          bWVkaWFUeXBlLCBTUEFfUE9EX0lkKFNQQV9NRURJQV9UWVBFX3ZpZGVvKSwKICAgICAgICBTUEFf
+          Rk9STUFUX21lZGlhU3VidHlwZSwgU1BBX1BPRF9JZChTUEFfTUVESUFfU1VCVFlQRV9yYXcpLAog
+          ICAgICAgIFNQQV9GT1JNQVRfVklERU9fZm9ybWF0LCBTUEFfUE9EX0lkKFNQQV9WSURFT19GT1JN
+          QVRfQkdSeCksCiAgICAgICAgU1BBX0ZPUk1BVF9WSURFT19zaXplLCBTUEFfUE9EX1JlY3Rhbmds
+          ZSgmc2l6ZSksCiAgICAgICAgU1BBX0ZPUk1BVF9WSURFT19mcmFtZXJhdGUsIFNQQV9QT0RfRnJh
+          Y3Rpb24oJnJhdGUpLAogICAgICAgIFNQQV9GT1JNQVRfVklERU9fcmVxdWVzdGVkX3NpemUsIFNQ
+          QV9QT0RfUmVjdGFuZ2xlKCZzaXplKSwKICAgICAgICBTUEFfRk9STUFUX1ZJREVPX2dhbWVzY29w
+          ZV9mb2N1c19hcHBpZCwKICAgICAgICAgICAgU1BBX1BPRF9Mb25nKChpbnQ2NF90KWRhdGEtPmFw
+          cGlkKSk7Cn0KJycnCgpuZXcgPSByJycnc3RhdGljIGNvbnN0IHN0cnVjdCBzcGFfcG9kICpidWls
+          ZF9mb3JtYXQoc3RydWN0IGphY29iX2RhdGEgKmRhdGEsIHN0cnVjdCBzcGFfcG9kX2J1aWxkZXIg
+          KmIpIHsKICAgIHN0cnVjdCBzcGFfcmVjdGFuZ2xlIGRlZmF1bHRfc2l6ZSA9IFNQQV9SRUNUQU5H
+          TEUoCiAgICAgICAgZGF0YS0+cmVxdWVzdGVkX3dpZHRoLCBkYXRhLT5yZXF1ZXN0ZWRfaGVpZ2h0
+          KTsKICAgIHN0cnVjdCBzcGFfcmVjdGFuZ2xlIG1pbl9zaXplID0gU1BBX1JFQ1RBTkdMRSgxLCAx
+          KTsKICAgIHN0cnVjdCBzcGFfcmVjdGFuZ2xlIG1heF9zaXplID0gU1BBX1JFQ1RBTkdMRSg2NTUz
+          NSwgNjU1MzUpOwoKICAgIHN0cnVjdCBzcGFfZnJhY3Rpb24gZGVmYXVsdF9yYXRlID0gU1BBX0ZS
+          QUNUSU9OKAogICAgICAgIGRhdGEtPmZwcyA/IGRhdGEtPmZwcyA6IEpBQ09CX0RFRkFVTFRfRlBT
+          LCAxKTsKICAgIHN0cnVjdCBzcGFfZnJhY3Rpb24gbWluX3JhdGUgPSBTUEFfRlJBQ1RJT04oMCwg
+          MSk7CiAgICBzdHJ1Y3Qgc3BhX2ZyYWN0aW9uIG1heF9yYXRlID0gU1BBX0ZSQUNUSU9OKDMwLCAx
+          KTsKCiAgICByZXR1cm4gc3BhX3BvZF9idWlsZGVyX2FkZF9vYmplY3QoCiAgICAgICAgYiwKICAg
+          ICAgICBTUEFfVFlQRV9PQkpFQ1RfRm9ybWF0LCBTUEFfUEFSQU1fRW51bUZvcm1hdCwKICAgICAg
+          ICBTUEFfRk9STUFUX21lZGlhVHlwZSwgU1BBX1BPRF9JZChTUEFfTUVESUFfVFlQRV92aWRlbyks
+          CiAgICAgICAgU1BBX0ZPUk1BVF9tZWRpYVN1YnR5cGUsIFNQQV9QT0RfSWQoU1BBX01FRElBX1NV
+          QlRZUEVfcmF3KSwKICAgICAgICBTUEFfRk9STUFUX1ZJREVPX2Zvcm1hdCwgU1BBX1BPRF9JZChT
+          UEFfVklERU9fRk9STUFUX0JHUngpLAogICAgICAgIFNQQV9GT1JNQVRfVklERU9fc2l6ZSwKICAg
+          ICAgICAgICAgU1BBX1BPRF9DSE9JQ0VfUkFOR0VfUmVjdGFuZ2xlKAogICAgICAgICAgICAgICAg
+          JmRlZmF1bHRfc2l6ZSwgJm1pbl9zaXplLCAmbWF4X3NpemUpLAogICAgICAgIFNQQV9GT1JNQVRf
+          VklERU9fZnJhbWVyYXRlLAogICAgICAgICAgICBTUEFfUE9EX0NIT0lDRV9SQU5HRV9GcmFjdGlv
+          bigKICAgICAgICAgICAgICAgICZkZWZhdWx0X3JhdGUsICZtaW5fcmF0ZSwgJm1heF9yYXRlKSwK
+          ICAgICAgICBTUEFfRk9STUFUX1ZJREVPX2dhbWVzY29wZV9mb2N1c19hcHBpZCwKICAgICAgICAg
+          ICAgU1BBX1BPRF9Mb25nKChpbnQ2NF90KWRhdGEtPmFwcGlkKSk7Cn0KJycnCnMgPSByZXBsYWNl
+          X29uY2Uocywgb2xkLCBuZXcsICJQaXBlV2lyZSBmb3JtYXQgbmVnb3RpYXRpb24iKQoKb2xkX3N0
+          YXRlID0gcicnJyAgICBpZiAoc3RhdGUgPT0gUFdfU1RSRUFNX1NUQVRFX0VSUk9SKSB7CiAgICAg
+          ICAgZGF0YS0+c3RyZWFtX2Vycm9yID0gdHJ1ZTsKICAgICAgICBmcHJpbnRmKHN0ZGVyciwgImph
+          Y29iLWdhbWVzY29wZS1zdHJlYW06IFBpcGVXaXJlIHN0cmVhbSBlcnJvcjogJXNcbiIsCiAgICAg
+          ICAgICAgICAgICBlcnJvciA/IGVycm9yIDogInVua25vd24iKTsKICAgICAgICBwd19tYWluX2xv
+          b3BfcXVpdChkYXRhLT5sb29wKTsKICAgIH0gZWxzZSBpZiAoc3RhdGUgPT0gUFdfU1RSRUFNX1NU
+          QVRFX1VOQ09OTkVDVEVEICYmIG9sZF9zdGF0ZSAhPSBQV19TVFJFQU1fU1RBVEVfVU5DT05ORUNU
+          RUQpIHsKICAgICAgICBwd19tYWluX2xvb3BfcXVpdChkYXRhLT5sb29wKTsKICAgIH0KJycnCm5l
+          d19zdGF0ZSA9IHInJycgICAgZnByaW50ZihzdGRlcnIsICJqYWNvYi1nYW1lc2NvcGUtc3RyZWFt
+          OiBzdGF0ZSAlcyAtPiAlcyVzJXNcbiIsCiAgICAgICAgICAgIHB3X3N0cmVhbV9zdGF0ZV9hc19z
+          dHJpbmcob2xkX3N0YXRlKSwKICAgICAgICAgICAgcHdfc3RyZWFtX3N0YXRlX2FzX3N0cmluZyhz
+          dGF0ZSksCiAgICAgICAgICAgIGVycm9yID8gIjogIiA6ICIiLAogICAgICAgICAgICBlcnJvciA/
+          IGVycm9yIDogIiIpOwoKICAgIGlmIChzdGF0ZSA9PSBQV19TVFJFQU1fU1RBVEVfRVJST1IpIHsK
+          ICAgICAgICBkYXRhLT5zdHJlYW1fZXJyb3IgPSB0cnVlOwogICAgICAgIHB3X21haW5fbG9vcF9x
+          dWl0KGRhdGEtPmxvb3ApOwogICAgfSBlbHNlIGlmIChzdGF0ZSA9PSBQV19TVFJFQU1fU1RBVEVf
+          VU5DT05ORUNURUQgJiYgb2xkX3N0YXRlICE9IFBXX1NUUkVBTV9TVEFURV9VTkNPTk5FQ1RFRCkg
+          ewogICAgICAgIHB3X21haW5fbG9vcF9xdWl0KGRhdGEtPmxvb3ApOwogICAgfQonJycKcyA9IHJl
+          cGxhY2Vfb25jZShzLCBvbGRfc3RhdGUsIG5ld19zdGF0ZSwgIlBpcGVXaXJlIHN0YXRlIGRpYWdu
+          b3N0aWNzIikKcC53cml0ZV90ZXh0KHMsIGVuY29kaW5nPSJ1dGYtOCIpCgojIEdvIGNhcHR1cmUg
+          d3JhcHBlcjogcmV0YWluIGhlbHBlciBzdGRlcnIuCnAgPSBQYXRoKCJpbnRlcm5hbC9wbGF0Zm9y
+          bS9jYXB0dXJlX2xpbnV4X2dhbWVzY29wZS5nbyIpCnMgPSBwLnJlYWRfdGV4dChlbmNvZGluZz0i
+          dXRmLTgiKQoKcyA9IHJlcGxhY2Vfb25jZSgKICAgIHMsCiAgICAnJydpbXBvcnQgKAoJImVuY29k
+          aW5nL2JpbmFyeSIKJycnLAogICAgJycnaW1wb3J0ICgKCSJieXRlcyIKCSJlbmNvZGluZy9iaW5h
+          cnkiCicnJywKICAgICJjYXB0dXJlIGJ5dGVzIGltcG9ydCIsCikKCm9sZCA9ICcnJwlzdGRvdXQs
+          IGVyciA6PSBjbWQuU3Rkb3V0UGlwZSgpCglpZiBlcnIgIT0gbmlsIHsKCQlyZXR1cm4gZm10LkVy
+          cm9yZigib3BlbiBHYW1lc2NvcGUgUGlwZVdpcmUgaGVscGVyIHN0ZG91dDogJXciLCBlcnIpCgl9
+          CgljbWQuU3RkZXJyID0gb3MuU3RkZXJyCglpZiBlcnIgOj0gY21kLlN0YXJ0KCk7IGVyciAhPSBu
+          aWwgewonJycKbmV3ID0gJycnCXN0ZG91dCwgZXJyIDo9IGNtZC5TdGRvdXRQaXBlKCkKCWlmIGVy
+          ciAhPSBuaWwgewoJCXJldHVybiBmbXQuRXJyb3JmKCJvcGVuIEdhbWVzY29wZSBQaXBlV2lyZSBo
+          ZWxwZXIgc3Rkb3V0OiAldyIsIGVycikKCX0KCXZhciBoZWxwZXJTdGRlcnIgYnl0ZXMuQnVmZmVy
+          CgljbWQuU3RkZXJyID0gJmhlbHBlclN0ZGVycgoJaWYgZXJyIDo9IGNtZC5TdGFydCgpOyBlcnIg
+          IT0gbmlsIHsKJycnCnMgPSByZXBsYWNlX29uY2Uocywgb2xkLCBuZXcsICJjYXB0dXJlIHN0ZGVy
+          ciBidWZmZXIiKQoKcyA9IHJlcGxhY2Vfb25jZSgKICAgIHMsCiAgICAnJycJZ28gcC5yZWFkTG9v
+          cChjbWQsIHN0ZG91dCkKCWdvIHAud2FpdExvb3AoY21kKQoJcmV0dXJuIG5pbAp9CgpmdW5jIChw
+          ICpwaXBld2lyZUNhcHR1cmUpIHdhaXRMb29wKGNtZCAqZXhlYy5DbWQpIHsKCWVyciA6PSBjbWQu
+          V2FpdCgpCglwLm11LkxvY2soKQoJZGVmZXIgcC5tdS5VbmxvY2soKQoJaWYgcC5jbWQgPT0gY21k
+          IHsKCQlwLmNtZCA9IG5pbAoJCWlmIGVyciAhPSBuaWwgewoJCQlwLmxhc3RFcnJvciA9IGVyci5F
+          cnJvcigpCgkJCXAuZmFpbHVyZXMrKwoJCX0KCX0KfQonJycsCiAgICAnJycJZ28gcC5yZWFkTG9v
+          cChjbWQsIHN0ZG91dCkKCWdvIHAud2FpdExvb3AoY21kLCAmaGVscGVyU3RkZXJyKQoJcmV0dXJu
+          IG5pbAp9CgpmdW5jIGhlbHBlclN0ZGVyclRhaWwocyBzdHJpbmcpIHN0cmluZyB7CglzID0gc3Ry
+          aW5ncy5UcmltU3BhY2UocykKCWNvbnN0IG1heCA9IDQwOTYKCWlmIGxlbihzKSA+IG1heCB7CgkJ
+          cyA9IHNbbGVuKHMpLW1heDpdCgl9CglyZXR1cm4gcwp9CgpmdW5jIChwICpwaXBld2lyZUNhcHR1
+          cmUpIHdhaXRMb29wKGNtZCAqZXhlYy5DbWQsIGhlbHBlclN0ZGVyciAqYnl0ZXMuQnVmZmVyKSB7
+          CgllcnIgOj0gY21kLldhaXQoKQoJZGV0YWlsIDo9ICIiCglpZiBoZWxwZXJTdGRlcnIgIT0gbmls
+          IHsKCQlkZXRhaWwgPSBoZWxwZXJTdGRlcnJUYWlsKGhlbHBlclN0ZGVyci5TdHJpbmcoKSkKCX0K
+          CglwLm11LkxvY2soKQoJZGVmZXIgcC5tdS5VbmxvY2soKQoJaWYgcC5jbWQgPT0gY21kIHsKCQlw
+          LmNtZCA9IG5pbAoJCWlmIGVyciAhPSBuaWwgewoJCQlpZiBkZXRhaWwgIT0gIiIgewoJCQkJcC5s
+          YXN0RXJyb3IgPSBkZXRhaWwKCQkJfSBlbHNlIHsKCQkJCXAubGFzdEVycm9yID0gZXJyLkVycm9y
+          KCkKCQkJfQoJCQlwLmZhaWx1cmVzKysKCQl9Cgl9Cn0KJycnLAogICAgImNhcHR1cmUgd2FpdExv
+          b3AgZGlhZ25vc3RpY3MiLAopCgpzID0gcy5yZXBsYWNlKAogICAgJyJyZXF1ZXN0ZWQiOiAgICAg
+          ICAgIjEyODB4ODAwQDEwIiwnLAogICAgJyJyZXF1ZXN0ZWQiOiAgICAgICAgImZsZXhpYmxlIHBy
+          b2R1Y2VyIHJhdGU7IEpBQ29CIGVtaXRzIDw9MTAgZnBzIiwnLAopCnAud3JpdGVfdGV4dChzLCBl
+          bmNvZGluZz0idXRmLTgiKQoKIyBIVUQgYnJpZGdlIG5vdGUuCnAgPSBQYXRoKCJpbnRlcm5hbC9w
+          bGF0Zm9ybS9vdmVybGF5X2xpbnV4X2JyaWRnZS5nbyIpCnMgPSBwLnJlYWRfdGV4dChlbmNvZGlu
+          Zz0idXRmLTgiKQpzID0gcmVwbGFjZV9vbmNlKAogICAgcywKICAgICdub3RlIDo9ICJTdGVhbSBD
+          RUYgSFVEMiBicmlkZ2UgcmVhZHk7IHdhaXRpbmcgZm9yIERlY2t5IHJlbmRlcmVyIGhlYXJ0YmVh
+          dC4iJywKICAgICdub3RlIDo9ICJTdGVhbSBDRUYgSFVEMiBicmlkZ2UgcmVhZHk7IERlY2t5IHJl
+          bmRlcmVyIGhhcyBub3QgY29ubmVjdGVkIHlldC4gQSBuZXdseSBpbnN0YWxsZWQgRGVja3kgcGx1
+          Z2luIHJlcXVpcmVzIHBsdWdpbl9sb2FkZXIgcmVsb2FkIG9yIGEgcmVib290LiInLAogICAgIkhV
+          RCBicmlkZ2UgZGlzY29ubmVjdGVkIG5vdGUiLAopCnAud3JpdGVfdGV4dChzLCBlbmNvZGluZz0i
+          dXRmLTgiKQoKIyBCdW1wIERlY2t5IHBsdWdpbiB2ZXJzaW9uLgpmb3IgcGF0aCBpbiBbCiAgICBQ
+          YXRoKCJwYWNrYWdpbmcvZGVja3kvSkFDb0ItSFVEL3BsdWdpbi5qc29uIiksCiAgICBQYXRoKCJw
+          YWNrYWdpbmcvZmxhdHBhay9KQUNvQi1IVUQvcGx1Z2luLmpzb24iKSwKXToKICAgIGlmIG5vdCBw
+          YXRoLmV4aXN0cygpOgogICAgICAgIGNvbnRpbnVlCiAgICBkYXRhID0ganNvbi5sb2FkcyhwYXRo
+          LnJlYWRfdGV4dChlbmNvZGluZz0idXRmLTgiKSkKICAgIGRhdGFbInZlcnNpb24iXSA9ICIwLjEu
+          MSIKICAgIHBhdGgud3JpdGVfdGV4dChqc29uLmR1bXBzKGRhdGEsIGluZGVudD0yKSArICJcbiIs
+          IGVuY29kaW5nPSJ1dGYtOCIpCgojIEZsYXRwYWsgYm9vdHN0cmFwOiBoYXNoIHBheWxvYWQgYW5k
+          IHJlcXVlc3QgRGVja3kgcmVsb2FkIG9ubHkgd2hlbiBuZWVkZWQuCnAgPSBQYXRoKCJwYWNrYWdp
+          bmcvZmxhdHBhay9qYWNvYi1mbGF0cGFrLWxhdW5jaCIpCnMgPSBwLnJlYWRfdGV4dChlbmNvZGlu
+          Zz0idXRmLTgiKQoKcyA9IHJlcGxhY2Vfb25jZSgKICAgIHMsCiAgICAnJydIT1NUX0RFQ0tZX0RJ
+          Uj0iJEhPU1RfRElSL2RlY2t5L0pBQ29CLUhVRCIKUEFDS0FHRURfT0NSX0hBU0g9IiQoc2hhMjU2
+          c3VtIC9hcHAvbGliZXhlYy90ZXNzZXJhY3QvQXBwUnVuIHwgYXdrICd7cHJpbnQgJDF9JykiCicn
+          JywKICAgICcnJ0hPU1RfREVDS1lfRElSPSIkSE9TVF9ESVIvZGVja3kvSkFDb0ItSFVEIgpERUNL
+          WV9IQVNIX1NUQU1QPSIkSE9TVF9ESVIvLmRlY2t5LWh1ZC1wYXlsb2FkLXNoYTI1NiIKREVDS1lf
+          UkVMT0FEX1NUQU1QPSIkSE9TVF9ESVIvLmRlY2t5LWh1ZC1sb2FkZWQtc2hhMjU2IgpQQUNLQUdF
+          RF9ERUNLWV9IQVNIPSIkKGZpbmQgL2FwcC9zaGFyZS9qYWNvYi9kZWNreS9KQUNvQi1IVUQgLXR5
+          cGUgZiAtcHJpbnQwIHwgc29ydCAteiB8IHhhcmdzIC0wIHNoYTI1NnN1bSB8IHNoYTI1NnN1bSB8
+          IGF3ayAne3ByaW50ICQxfScpIgpQQUNLQUdFRF9PQ1JfSEFTSD0iJChzaGEyNTZzdW0gL2FwcC9s
+          aWJleGVjL3Rlc3NlcmFjdC9BcHBSdW4gfCBhd2sgJ3twcmludCAkMX0nKSIKJycnLAogICAgIkRl
+          Y2t5IGhhc2ggdmFyaWFibGVzIiwKKQoKb2xkX2Jsb2NrID0gcicnJ3JtIC1yZiAiJEhPU1RfREVD
+          S1lfRElSLm5ldyIKbWtkaXIgLXAgIiQoZGlybmFtZSAiJEhPU1RfREVDS1lfRElSIikiICIkSE9T
+          VF9ERUNLWV9ESVIubmV3IgpjcCAtYSAvYXBwL3NoYXJlL2phY29iL2RlY2t5L0pBQ29CLUhVRC8u
+          ICIkSE9TVF9ERUNLWV9ESVIubmV3LyIKcm0gLXJmICIkSE9TVF9ERUNLWV9ESVIiCm12ICIkSE9T
+          VF9ERUNLWV9ESVIubmV3IiAiJEhPU1RfREVDS1lfRElSIgoKaWYgW1sgLWQgIiRIT1NUX0hPTUUv
+          aG9tZWJyZXcvcGx1Z2lucyIgXV07IHRoZW4KICBERUNLWV9UQVJHRVQ9IiRIT1NUX0hPTUUvaG9t
+          ZWJyZXcvcGx1Z2lucy9KQUNvQi1IVUQiCiAgREVDS1lfTkVXPSIkSE9TVF9IT01FL2hvbWVicmV3
+          L3BsdWdpbnMvLkpBQ29CLUhVRC5uZXciCiAgcm0gLXJmICIkREVDS1lfTkVXIgogIGNwIC1hICIk
+          SE9TVF9ERUNLWV9ESVIiICIkREVDS1lfTkVXIgogIHJtIC1yZiAiJERFQ0tZX1RBUkdFVCIKICBt
+          diAiJERFQ0tZX05FVyIgIiRERUNLWV9UQVJHRVQiCiAgcHJpbnRmICdbJXNdIEluc3RhbGxlZC91
+          cGRhdGVkIEpBQ29CIERlY2t5IEhVRCBicmlkZ2UuXG4nICIkKGRhdGUgLUlzKSIgPj4gIiRMT0df
+          RklMRSIKZWxzZQogIHByaW50ZiAnWyVzXSBEZWNreSBMb2FkZXIgbm90IGRldGVjdGVkOyBIVUQg
+          YnJpZGdlIHJldGFpbmVkIGF0ICVzLlxuJyAiJChkYXRlIC1JcykiICIkSE9TVF9ERUNLWV9ESVIi
+          ID4+ICIkTE9HX0ZJTEUiCmZpCicnJwoKbmV3X2Jsb2NrID0gcicnJ0lOU1RBTExFRF9ERUNLWV9I
+          QVNIPSIkKGNhdCAiJERFQ0tZX0hBU0hfU1RBTVAiIDI+L2Rldi9udWxsIHx8IHRydWUpIgppZiBb
+          WyAhIC1kICIkSE9TVF9ERUNLWV9ESVIiIHx8ICIkSU5TVEFMTEVEX0RFQ0tZX0hBU0giICE9ICIk
+          UEFDS0FHRURfREVDS1lfSEFTSCIgXV07IHRoZW4KICBybSAtcmYgIiRIT1NUX0RFQ0tZX0RJUi5u
+          ZXciCiAgbWtkaXIgLXAgIiQoZGlybmFtZSAiJEhPU1RfREVDS1lfRElSIikiICIkSE9TVF9ERUNL
+          WV9ESVIubmV3IgogIGNwIC1hIC9hcHAvc2hhcmUvamFjb2IvZGVja3kvSkFDb0ItSFVELy4gIiRI
+          T1NUX0RFQ0tZX0RJUi5uZXcvIgogIHJtIC1yZiAiJEhPU1RfREVDS1lfRElSIgogIG12ICIkSE9T
+          VF9ERUNLWV9ESVIubmV3IiAiJEhPU1RfREVDS1lfRElSIgogIHByaW50ZiAnJXNcbicgIiRQQUNL
+          QUdFRF9ERUNLWV9IQVNIIiA+ICIkREVDS1lfSEFTSF9TVEFNUCIKZmkKCmlmIFtbIC1kICIkSE9T
+          VF9IT01FL2hvbWVicmV3L3BsdWdpbnMiIF1dOyB0aGVuCiAgREVDS1lfVEFSR0VUPSIkSE9TVF9I
+          T01FL2hvbWVicmV3L3BsdWdpbnMvSkFDb0ItSFVEIgogIERFQ0tZX05FVz0iJEhPU1RfSE9NRS9o
+          b21lYnJldy9wbHVnaW5zLy5KQUNvQi1IVUQubmV3IgoKICBDVVJSRU5UX1RBUkdFVF9IQVNIPSIi
+          CiAgaWYgW1sgLWQgIiRERUNLWV9UQVJHRVQiIF1dOyB0aGVuCiAgICBDVVJSRU5UX1RBUkdFVF9I
+          QVNIPSIkKGZpbmQgIiRERUNLWV9UQVJHRVQiIC10eXBlIGYgLXByaW50MCB8IHNvcnQgLXogfCB4
+          YXJncyAtMCBzaGEyNTZzdW0gfCBzaGEyNTZzdW0gfCBhd2sgJ3twcmludCAkMX0nIHx8IHRydWUp
+          IgogIGZpCgogIGlmIFtbICIkQ1VSUkVOVF9UQVJHRVRfSEFTSCIgIT0gIiRQQUNLQUdFRF9ERUNL
+          WV9IQVNIIiBdXTsgdGhlbgogICAgcm0gLXJmICIkREVDS1lfTkVXIgogICAgY3AgLWEgIiRIT1NU
+          X0RFQ0tZX0RJUiIgIiRERUNLWV9ORVciCiAgICBybSAtcmYgIiRERUNLWV9UQVJHRVQiCiAgICBt
+          diAiJERFQ0tZX05FVyIgIiRERUNLWV9UQVJHRVQiCiAgICBwcmludGYgJ1slc10gSW5zdGFsbGVk
+          L3VwZGF0ZWQgSkFDb0IgRGVja3kgSFVEIGJyaWRnZSBwYXlsb2FkPSVzLlxuJyAiJChkYXRlIC1J
+          cykiICIkUEFDS0FHRURfREVDS1lfSEFTSCIgPj4gIiRMT0dfRklMRSIKICBmaQoKICBMT0FERURf
+          REVDS1lfSEFTSD0iJChjYXQgIiRERUNLWV9SRUxPQURfU1RBTVAiIDI+L2Rldi9udWxsIHx8IHRy
+          dWUpIgogIGlmIFtbICIkTE9BREVEX0RFQ0tZX0hBU0giICE9ICIkUEFDS0FHRURfREVDS1lfSEFT
+          SCIgJiYgIiR7MTotfSIgIT0gIi0tc2VydmljZS1vbmx5IiBdXTsgdGhlbgogICAgaWYgZmxhdHBh
+          ay1zcGF3biAtLWhvc3Qgc3lzdGVtY3RsIGlzLWFjdGl2ZSAtLXF1aWV0IHBsdWdpbl9sb2FkZXIu
+          c2VydmljZSA+L2Rldi9udWxsIDI+JjE7IHRoZW4KICAgICAgcHJpbnRmICdbJXNdIFJlcXVlc3Rp
+          bmcgRGVja3kgcmVsb2FkIHNvIHRoZSBKQUNvQiBIVUQgcmVuZGVyZXIgYmVjb21lcyBhY3RpdmUu
+          XG4nICIkKGRhdGUgLUlzKSIgPj4gIiRMT0dfRklMRSIKICAgICAgaWYgZmxhdHBhay1zcGF3biAt
+          LWhvc3QgcGtleGVjIHN5c3RlbWN0bCByZXN0YXJ0IHBsdWdpbl9sb2FkZXIuc2VydmljZTsgdGhl
+          bgogICAgICAgIHByaW50ZiAnJXNcbicgIiRQQUNLQUdFRF9ERUNLWV9IQVNIIiA+ICIkREVDS1lf
+          UkVMT0FEX1NUQU1QIgogICAgICAgIHByaW50ZiAnWyVzXSBEZWNreSBwbHVnaW4gbG9hZGVyIHJl
+          c3RhcnRlZDsgSkFDb0IgSFVEIHJlbmRlcmVyIHNob3VsZCBsb2FkIGluIHRoaXMgU3RlYW0gc2Vz
+          c2lvbi5cbicgIiQoZGF0ZSAtSXMpIiA+PiAiJExPR19GSUxFIgogICAgICBlbHNlCiAgICAgICAg
+          cHJpbnRmICdbJXNdIFdBUk5JTkc6IERlY2t5IHJlbG9hZCB3YXMgZGVjbGluZWQvZmFpbGVkLiBS
+          ZWJvb3RpbmcgdGhlIERlY2sgd2lsbCBsb2FkIHRoZSBpbnN0YWxsZWQgSkFDb0IgSFVEIGJyaWRn
+          ZS5cbicgIiQoZGF0ZSAtSXMpIiA+PiAiJExPR19GSUxFIgogICAgICBmaQogICAgZWxzZQogICAg
+          ICBwcmludGYgJ1slc10gRGVja3kgcGx1Z2luX2xvYWRlci5zZXJ2aWNlIGlzIG5vdCBhY3RpdmUu
+          IFJlYm9vdCBvciBzdGFydCBEZWNreSB0byBsb2FkIHRoZSBKQUNvQiBIVUQgYnJpZGdlLlxuJyAi
+          JChkYXRlIC1JcykiID4+ICIkTE9HX0ZJTEUiCiAgICBmaQogIGZpCmVsc2UKICBwcmludGYgJ1sl
+          c10gRGVja3kgTG9hZGVyIG5vdCBkZXRlY3RlZDsgSFVEIGJyaWRnZSByZXRhaW5lZCBhdCAlcy5c
+          bicgIiQoZGF0ZSAtSXMpIiAiJEhPU1RfREVDS1lfRElSIiA+PiAiJExPR19GSUxFIgpmaQonJycK
+          CnMgPSByZXBsYWNlX29uY2Uocywgb2xkX2Jsb2NrLCBuZXdfYmxvY2ssICJEZWNreSBpbnN0YWxs
+          L3JlbG9hZCBibG9jayIpCnAud3JpdGVfdGV4dChzLCBlbmNvZGluZz0idXRmLTgiKQo=
+          JACOB_PATCH
+          python /tmp/jacob-hotfix.py
+
+          gofmt -w \
+            internal/platform/capture_linux_gamescope.go \
+            internal/platform/overlay_linux_bridge.go
+
+      - name: Rebuild Decky HUD runtime
+        working-directory: packaging/decky/JACoB-HUD
+        run: |
+          set -euo pipefail
+          pnpm install --no-frozen-lockfile
+          pnpm build
+          test -s dist/index.js
+          python -m py_compile main.py
+
+          rm -rf ../../flatpak/JACoB-HUD
+          mkdir -p ../../flatpak/JACoB-HUD
+          cp plugin.json main.py ../../flatpak/JACoB-HUD/
+          cp -a dist ../../flatpak/JACoB-HUD/
+
+      - name: Validate hotfix
+        run: |
+          set -euo pipefail
+          grep -Fq 'SPA_POD_CHOICE_RANGE_Rectangle' packaging/flatpak/jacob-gamescope-stream.c
+          grep -Fq 'SPA_POD_CHOICE_RANGE_Fraction' packaging/flatpak/jacob-gamescope-stream.c
+          grep -Fq 'SPA_FRACTION(0, 1)' packaging/flatpak/jacob-gamescope-stream.c
+          grep -Fq 'SPA_FRACTION(30, 1)' packaging/flatpak/jacob-gamescope-stream.c
+          grep -Fq 'SPA_FORMAT_VIDEO_gamescope_focus_appid' packaging/flatpak/jacob-gamescope-stream.c
+          ! grep -Fq 'SPA_FORMAT_VIDEO_requested_size, SPA_POD_Rectangle' packaging/flatpak/jacob-gamescope-stream.c
+
+          grep -Fq 'var helperStderr bytes.Buffer' internal/platform/capture_linux_gamescope.go
+          grep -Fq 'helperStderrTail' internal/platform/capture_linux_gamescope.go
+
+          grep -Fq 'DECKY_RELOAD_STAMP' packaging/flatpak/jacob-flatpak-launch
+          grep -Fq 'pkexec systemctl restart plugin_loader.service' packaging/flatpak/jacob-flatpak-launch
+          grep -Fq '"version": "0.1.1"' packaging/decky/JACoB-HUD/plugin.json
+
+          git diff --check
+
+      - name: Compile PipeWire helper
+        run: |
+          set -euo pipefail
+          cc -O2 -Wall -Wextra -Werror \
+            packaging/flatpak/jacob-gamescope-stream.c \
+            -o /tmp/jacob-gamescope-stream \
+            $(pkg-config --cflags --libs libpipewire-0.3 wayland-client)
+          ldd /tmp/jacob-gamescope-stream | tee /tmp/helper-ldd.txt
+          ! grep -q 'not found' /tmp/helper-ldd.txt
+
+      - name: Test Linux repository
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          set -euo pipefail
+          go test ./internal/platform
+          go test ./internal/vision ./internal/spatial
+          go test ./...
+
+      - name: Windows regression compile gate
+        env:
+          CGO_ENABLED: '0'
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          go test -exec=true ./...
+          go build -trimpath -o /tmp/JACoB-hotfix-v2-windows.exe ./cmd/jacob
+          go build -trimpath -o /tmp/JACoB-Setup-hotfix-v2-windows.exe ./cmd/installer
+
+      - name: Build Linux core
+        env:
+          CGO_ENABLED: '1'
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          v='0.2.18-alpha'
+          go build -trimpath -o "dist/JACoB-$v-linux-amd64" ./cmd/jacob
+          ldd "dist/JACoB-$v-linux-amd64" | tee /tmp/core-ldd.txt
+          ! grep -q 'not found' /tmp/core-ldd.txt
+
+      - name: Prepare OCR runtime
+        run: |
+          set -euo pipefail
+          ocr_url='https://github.com/pkgforge-community/AlexanderP_tesseract-appimage/releases/download/v5.5.2-20260124T161609/tesseract-5.5.2_lept-1.87-x86_64.AppImage'
+          ocr_sha='177a11b5520e6e296de7aa8e2927c00c3ce7b6ffa9a9777454a2be3e87e8a391'
+
+          curl -fL --retry 3 "$ocr_url" -o /tmp/jacob-tesseract.AppImage
+          printf '%s  %s\n' "$ocr_sha" /tmp/jacob-tesseract.AppImage | sha256sum -c -
+          chmod +x /tmp/jacob-tesseract.AppImage
+
+          rm -rf packaging/flatpak/tesseract-appdir packaging/flatpak/squashfs-root
+          (
+            cd packaging/flatpak
+            /tmp/jacob-tesseract.AppImage --appimage-extract >/dev/null
+            mv squashfs-root tesseract-appdir
+          )
+
+      - name: Build Deck Flatpak before commit
+        run: |
+          set -euo pipefail
+          v='0.2.18-alpha'
+          cp "dist/JACoB-$v-linux-amd64" packaging/flatpak/JACoB
+          cp assets/jacob-icon-256.png packaging/flatpak/jacob-icon-256.png
+          printf '%s\n' "$v" > packaging/flatpak/VERSION
+
+          flatpak remote-add --user --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+          rm -rf flatpak-build flatpak-repo
+          flatpak-builder --user --force-clean --install-deps-from=flathub \
+            --repo=flatpak-repo flatpak-build packaging/flatpak/com.pseudosci.JACoB.yml
+
+          flatpak build-bundle \
+            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+            flatpak-repo "dist/JACoB-$v-SteamDeck.flatpak" com.pseudosci.JACoB stable
+
+          test -s "dist/JACoB-$v-SteamDeck.flatpak"
+          sha256sum "dist/JACoB-$v-SteamDeck.flatpak" \
+            > dist/STEAMDECK-PIPEWIRE-HUD2-V2-SHA256.txt
+
+      - name: Commit tested hotfix
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          rm -rf packaging/decky/JACoB-HUD/node_modules
+          rm -rf packaging/decky/JACoB-HUD/dist
+          rm -f packaging/decky/JACoB-HUD/pnpm-lock.yaml
+
+          git add \
+            packaging/flatpak/jacob-gamescope-stream.c \
+            internal/platform/capture_linux_gamescope.go \
+            internal/platform/overlay_linux_bridge.go \
+            packaging/decky/JACoB-HUD/plugin.json \
+            packaging/flatpak/JACoB-HUD \
+            packaging/flatpak/jacob-flatpak-launch
+
+          if git diff --cached --quiet; then
+            echo "Hotfix already present."
+          else
+            git commit -m "Fix Deck PipeWire negotiation and HUD plugin loading"
+            git push origin HEAD:${{ github.event.repository.default_branch }}
+          fi
+
+      - name: Upload replacement Deck release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v='0.2.18-alpha'
+          tag="v$v"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" \
+              "dist/JACoB-$v-SteamDeck.flatpak" \
+              "dist/STEAMDECK-PIPEWIRE-HUD2-V2-SHA256.txt" \
+              --clobber
+          else
+            gh release create "$tag" \
+              "dist/JACoB-$v-SteamDeck.flatpak" \
+              "dist/STEAMDECK-PIPEWIRE-HUD2-V2-SHA256.txt" \
+              --target "$(git rev-parse HEAD)" \
+              --draft --prerelease \
+              --title "JACoB $v" \
+              --notes "Steam Deck PipeWire negotiation + Decky HUD loader hotfix."
+          fi
