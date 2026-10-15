@@ -67,9 +67,7 @@ static JacobOverlay* jacob_overlay_create(const char *display_name, unsigned lon
         return NULL;
     }
     XStoreName(d, win, "JACoB HUD");
-    if (parent_window != 0) {
-        XSetTransientForHint(d, win, (Window)parent_window);
-    }
+    (void)parent_window;
 
     // Gamescope's external-overlay slot is owned by Mangoapp on Steam Deck.
     // Tag this as a secondary Elite window instead; embedded Gamescope stacks
@@ -94,24 +92,6 @@ static JacobOverlay* jacob_overlay_create(const char *display_name, unsigned lon
         XSetWMHints(d, win, wmh);
         XFree(wmh);
     }
-
-    Atom type_atom = XInternAtom(d, "_NET_WM_WINDOW_TYPE", False);
-    Atom type_notification = XInternAtom(d, "_NET_WM_WINDOW_TYPE_NOTIFICATION", False);
-    XChangeProperty(d, win, type_atom, XA_ATOM, 32, PropModeReplace,
-        (unsigned char*)&type_notification, 1);
-
-    Atom state_atom = XInternAtom(d, "_NET_WM_STATE", False);
-    Atom states[3];
-    states[0] = XInternAtom(d, "_NET_WM_STATE_ABOVE", False);
-    states[1] = XInternAtom(d, "_NET_WM_STATE_SKIP_TASKBAR", False);
-    states[2] = XInternAtom(d, "_NET_WM_STATE_SKIP_PAGER", False);
-    XChangeProperty(d, win, state_atom, XA_ATOM, 32, PropModeReplace,
-        (unsigned char*)states, 3);
-
-    Atom no_focus = XInternAtom(d, "GAMESCOPE_NO_FOCUS", False);
-    unsigned long one_no_focus = 1;
-    XChangeProperty(d, win, no_focus, XA_CARDINAL, 32, PropModeReplace,
-        (unsigned char*)&one_no_focus, 1);
 
     // Keep the old Gamescope external-overlay path available for non-Deck
     // experiments, but never request it by default on SteamOS.
@@ -138,9 +118,8 @@ static JacobOverlay* jacob_overlay_create(const char *display_name, unsigned lon
     return o;
 }
 static void jacob_overlay_attach(JacobOverlay *o, unsigned long parent_window) {
-    if (!o || parent_window == 0) return;
-    XSetTransientForHint(o->dpy, o->win, (Window)parent_window);
-    XFlush(o->dpy);
+    (void)o;
+    (void)parent_window;
 }
 static void jacob_overlay_destroy(JacobOverlay *o) {
     if (!o) return;
@@ -156,11 +135,8 @@ static int jacob_overlay_mapped(JacobOverlay *o){ return o?o->mapped:0; }
 static void jacob_overlay_refresh_size(JacobOverlay *o){ if(!o)return; int w=DisplayWidth(o->dpy,o->screen),h=DisplayHeight(o->dpy,o->screen); if(w!=o->width||h!=o->height){o->width=w;o->height=h;XMoveResizeWindow(o->dpy,o->win,0,0,w,h);} }
 static void jacob_overlay_show(JacobOverlay *o, int show) {
     if(!o) return;
-    if(show && !o->mapped){ XMapWindow(o->dpy,o->win); o->mapped=1; }
-    if(!show && o->mapped){
-        XSetForeground(o->dpy,o->gc,0x00000000UL);
-        XFillRectangle(o->dpy,o->win,o->gc,0,0,o->width,o->height);
-    }
+    if(show && !o->mapped){ XMapRaised(o->dpy,o->win); o->mapped=1; }
+    if(!show && o->mapped){ XUnmapWindow(o->dpy,o->win); o->mapped=0; }
     XFlush(o->dpy);
 }
 static void jacob_overlay_begin(JacobOverlay *o) {
@@ -213,7 +189,7 @@ func newOverlayDriver() OverlayDriver {
 	}
 	return o
 }
-func (o *linuxOverlay) Name() string { return "linux-x11-gamescope-transient-hud" }
+func (o *linuxOverlay) Name() string { return "linux-x11-gamescope-steam-window-overlay-recovered" }
 func (o *linuxOverlay) Available() bool {
 	return o.err == nil && (o.native != nil || os.Getenv("DISPLAY") != "" || len(linuxX11Displays()) > 0)
 }
@@ -274,7 +250,7 @@ func (o *linuxOverlay) Info() OverlayInfo {
 		w = int(C.jacob_overlay_width(o.native))
 		h = int(C.jacob_overlay_height(o.native))
 	}
-	note := "X11 HUD surface is grouped as a no-input transient of the verified Elite client. It remains mapped after first use and clears to transparent when hidden so Gamescope does not reclassify it during calibration/debug updates."
+	note := "Steam Deck HUD uses the recovered secondary STEAM_GAME path on the resolved Elite XWayland display. Hidden HUDs are unmapped so a later toggle produces a real Gamescope map event."
 	if o.err != nil {
 		note = o.err.Error()
 	}

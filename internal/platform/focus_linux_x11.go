@@ -130,6 +130,26 @@ static int jacob_focus_inspect_window(const char *display_name,
     return 1;
 }
 
+static int jacob_focus_window_is_elite_client_dpy(Display *d, Window win) {
+    if (!d || !win) return 0;
+    char *name = NULL;
+    int ok = 0;
+    if (XFetchName(d, win, &name) && name) {
+        if (strstr(name, "Elite - Dangerous (CLIENT)") != NULL) ok = 1;
+        XFree(name);
+    }
+    return ok;
+}
+
+static int jacob_focus_window_is_elite_client(const char *display_name, unsigned long window_id) {
+    if (!display_name || !window_id) return 0;
+    Display *d = XOpenDisplay(display_name);
+    if (!d) return 0;
+    int ok = jacob_focus_window_is_elite_client_dpy(d, (Window)window_id);
+    XCloseDisplay(d);
+    return ok;
+}
+
 static int jacob_focus_find_elite_class_window(const char *display_name,
     unsigned long self_pid,
     unsigned long *window_id,
@@ -163,7 +183,7 @@ static int jacob_focus_find_elite_class_window(const char *display_name,
 
         int class_elite = 0, class_jacob = 0;
         jacob_focus_classify(d, win, &class_elite, &class_jacob);
-        if (class_elite && !class_jacob) {
+        if (class_elite && !class_jacob && jacob_focus_window_is_elite_client_dpy(d, win)) {
             *window_id = (unsigned long)win;
             *pid = wp;
             if (children) XFree(children);
@@ -184,6 +204,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"unsafe"
 )
 
@@ -202,6 +223,37 @@ type linuxWindowEvidence struct {
 	classElite bool
 	classJACoB bool
 	viewable   bool
+}
+
+var linuxEliteTargetCache struct {
+	sync.Mutex
+	display string
+	window  uintptr
+}
+
+func rememberLinuxEliteWindowTarget(display string, window uintptr) {
+	if strings.TrimSpace(display) == "" || window == 0 {
+		return
+	}
+	linuxEliteTargetCache.Lock()
+	linuxEliteTargetCache.display = display
+	linuxEliteTargetCache.window = window
+	linuxEliteTargetCache.Unlock()
+}
+
+func cachedLinuxEliteWindowTarget() (string, uintptr, bool) {
+	linuxEliteTargetCache.Lock()
+	display := linuxEliteTargetCache.display
+	window := linuxEliteTargetCache.window
+	linuxEliteTargetCache.Unlock()
+	if strings.TrimSpace(display) == "" || window == 0 {
+		return "", 0, false
+	}
+	ev, ok := inspectLinuxX11WindowEvidence(display, window)
+	if !ok || !linuxWindowIsElite(ev) {
+		return "", 0, false
+	}
+	return display, window, true
 }
 
 func linuxX11Displays() []string {
@@ -260,11 +312,23 @@ func inspectLinuxX11WindowEvidence(display string, window uintptr) (linuxWindowE
 	}, true
 }
 
+func linuxWindowHasEliteClientTitle(ev linuxWindowEvidence) bool {
+	if strings.TrimSpace(ev.display) == "" || ev.window == 0 {
+		return false
+	}
+	cd := C.CString(ev.display)
+	defer C.free(unsafe.Pointer(cd))
+	return C.jacob_focus_window_is_elite_client(cd, C.ulong(ev.window)) != 0
+}
+
 func linuxWindowIsElite(ev linuxWindowEvidence) bool {
 	if !ev.viewable || ev.window == 0 {
 		return false
 	}
 	if ev.pid == os.Getpid() || ev.classJACoB {
+		return false
+	}
+	if !linuxWindowHasEliteClientTitle(ev) {
 		return false
 	}
 	if ev.classElite {
@@ -276,6 +340,18 @@ func linuxWindowIsElite(ev linuxWindowEvidence) bool {
 func inspectLinuxX11Window(display string, window uintptr) (exists bool, elite bool) {
 	ev, ok := inspectLinuxX11WindowEvidence(display, window)
 	return ok, ok && linuxWindowIsElite(ev)
+}
+
+func inspectFocusedWindowKind(window uintptr, displays []string) (known bool, jacob bool) {
+	if window == 0 {
+		return false, false
+	}
+	for _, display := range displays {
+		if ev, ok := inspectLinuxX11WindowEvidence(display, window); ok {
+			return true, ev.classJACoB || ev.pid == os.Getpid()
+		}
+	}
+	return false, false
 }
 
 func findEliteFocusedWindowTarget(window uintptr, displays []string) (string, uintptr, bool) {
@@ -328,12 +404,35 @@ func linuxNativeEliteWindowTarget() (display string, window uintptr, ok bool) {
 		return "", 0, false
 	}
 
+	resolveEliteAppProbe := func(probe linuxFocusEvidence) (string, uintptr, bool) {
+		if d, w, found := findEliteFocusedWindowTarget(probe.window, displays); found {
+			rememberLinuxEliteWindowTarget(d, w)
+			return d, w, true
+		}
+
+		if known, jacob := inspectFocusedWindowKind(probe.window, displays); known {
+			if jacob {
+				if d, w, found := cachedLinuxEliteWindowTarget(); found {
+					return d, w, true
+				}
+				if d, w, found := findEliteClassWindowTarget(displays); found {
+					rememberLinuxEliteWindowTarget(d, w)
+					return d, w, true
+				}
+			}
+			return "", 0, false
+		}
+
+		if d, w, found := findEliteClassWindowTarget(displays); found {
+			rememberLinuxEliteWindowTarget(d, w)
+			return d, w, true
+		}
+		return "", 0, false
+	}
+
 	for _, probe := range probes {
 		if probe.focusedGFX == 359320 {
-			if d, w, found := findEliteFocusedWindowTarget(probe.window, displays); found {
-				return d, w, true
-			}
-			return findEliteClassWindowTarget(displays)
+			return resolveEliteAppProbe(probe)
 		}
 	}
 	for _, probe := range probes {
@@ -344,15 +443,13 @@ func linuxNativeEliteWindowTarget() (display string, window uintptr, ok bool) {
 
 	for _, probe := range probes {
 		if probe.focusedApp == 359320 {
-			if d, w, found := findEliteFocusedWindowTarget(probe.window, displays); found {
-				return d, w, true
-			}
-			return findEliteClassWindowTarget(displays)
+			return resolveEliteAppProbe(probe)
 		}
 	}
 
 	for _, probe := range probes {
 		if d, w, found := findEliteFocusedWindowTarget(probe.window, displays); found {
+			rememberLinuxEliteWindowTarget(d, w)
 			return d, w, true
 		}
 	}
@@ -368,10 +465,10 @@ func linuxNativeFocusAvailable() bool {
 	return false
 }
 
-// linuxNativeFocusProbe answers the input-safety question. A positive Gamescope
-// GFX app id is sufficient to allow input even during a short window transition,
-// but capture callers separately require linuxNativeEliteWindowTarget so they
-// can never capture JACoB's own HUD.
+// linuxNativeFocusProbe answers the input-safety question. Steam app id 359320
+// is shared by the Frontier launcher and the game, so input is allowed only when
+// linuxNativeEliteWindowTarget resolves the actual Elite - Dangerous (CLIENT)
+// window (or safely recovers it while JACoB's own HUD is the focused surface).
 func linuxNativeFocusProbe() (resolved bool, elite bool, window uintptr) {
 	displays, probes := linuxFocusSnapshot()
 	if len(probes) == 0 {
@@ -383,7 +480,7 @@ func linuxNativeFocusProbe() (resolved bool, elite bool, window uintptr) {
 			if _, w, ok := linuxNativeEliteWindowTarget(); ok {
 				return true, true, w
 			}
-			return true, true, 0
+			return true, false, probe.window
 		}
 	}
 	for _, probe := range probes {
@@ -396,7 +493,7 @@ func linuxNativeFocusProbe() (resolved bool, elite bool, window uintptr) {
 			if _, w, ok := linuxNativeEliteWindowTarget(); ok {
 				return true, true, w
 			}
-			return true, true, 0
+			return true, false, probe.window
 		}
 	}
 	for _, probe := range probes {
