@@ -10,6 +10,7 @@ package platform
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef XID XserverRegion;
 extern XserverRegion XFixesCreateRegion(Display *dpy, XRectangle *rectangles, int nrectangles);
@@ -56,11 +57,10 @@ static JacobOverlay* jacob_overlay_create() {
     attr.colormap = cmap;
     attr.border_pixel = 0;
     attr.background_pixel = 0;
-    attr.override_redirect = True;
     int w = DisplayWidth(d, screen);
     int h = DisplayHeight(d, screen);
     Window win = XCreateWindow(d, root, 0, 0, w, h, 0, 32, InputOutput, vi.visual,
-        CWColormap | CWBorderPixel | CWBackPixel | CWOverrideRedirect, &attr);
+        CWColormap | CWBorderPixel | CWBackPixel, &attr);
     if (!win) {
         XFreeColormap(d, cmap);
         XCloseDisplay(d);
@@ -68,12 +68,43 @@ static JacobOverlay* jacob_overlay_create() {
     }
     XStoreName(d, win, "JACoB HUD");
 
-    Atom ext = XInternAtom(d, "GAMESCOPE_EXTERNAL_OVERLAY", False);
-    unsigned long one = 1;
-    XChangeProperty(d, win, ext, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)&one, 1);
+    // Gamescope's external-overlay slot is owned by Mangoapp on Steam Deck.
+    // Tag this as a secondary Elite window instead; embedded Gamescope stacks
+    // STEAM_GAME windows above the main game and can composite our ARGB pixels.
+    unsigned long elite_app = 359320UL;
+    Atom steam_game = XInternAtom(d, "STEAM_GAME", False);
+    XChangeProperty(d, win, steam_game, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)&elite_app, 1);
+
+    unsigned long pid = (unsigned long)getpid();
+    Atom pid_atom = XInternAtom(d, "_NET_WM_PID", False);
+    XChangeProperty(d, win, pid_atom, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)&pid, 1);
+
+    XClassHint class_hint;
+    class_hint.res_name = "jacob-hud";
+    class_hint.res_class = "JACoB";
+    XSetClassHint(d, win, &class_hint);
+
+    XWMHints *wmh = XAllocWMHints();
+    if (wmh) {
+        wmh->flags = InputHint;
+        wmh->input = False;
+        XSetWMHints(d, win, wmh);
+        XFree(wmh);
+    }
+
+    // Keep the old Gamescope external-overlay path available for non-Deck
+    // experiments, but never request it by default on SteamOS.
+    const char *external = getenv("JACOB_GAMESCOPE_EXTERNAL_OVERLAY");
+    if (external && strcmp(external, "1") == 0) {
+        Atom ext = XInternAtom(d, "GAMESCOPE_EXTERNAL_OVERLAY", False);
+        unsigned long one = 1;
+        XChangeProperty(d, win, ext, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)&one, 1);
+    }
+
     Atom opacity = XInternAtom(d, "_NET_WM_WINDOW_OPACITY", False);
     unsigned long opaque = 0xffffffffUL;
     XChangeProperty(d, win, opacity, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)&opaque, 1);
+    XSync(d, False);
 
     XserverRegion empty = XFixesCreateRegion(d, NULL, 0);
     XFixesSetWindowShapeRegion(d, win, ShapeInput, 0, 0, empty);
@@ -156,7 +187,7 @@ func newOverlayDriver() OverlayDriver {
 	}
 	return o
 }
-func (o *linuxOverlay) Name() string    { return "linux-x11-gamescope-external-overlay" }
+func (o *linuxOverlay) Name() string    { return "linux-x11-gamescope-steam-window-overlay" }
 func (o *linuxOverlay) Available() bool { return o.native != nil && o.err == nil }
 func (o *linuxOverlay) SetLayer(layer string, scene OverlayScene) error {
 	if layer == "" {
@@ -187,7 +218,7 @@ func (o *linuxOverlay) Info() OverlayInfo {
 		w = int(C.jacob_overlay_width(o.native))
 		h = int(C.jacob_overlay_height(o.native))
 	}
-	note := "Designed for Steam Deck Gaming Mode/Gamescope via GAMESCOPE_EXTERNAL_OVERLAY; also works on many composited X11 desktops."
+	note := "X11 HUD surface created as a transparent secondary Elite Steam window. Gamescope compositor visibility cannot be confirmed from the client; JACoB reports only local surface state."
 	if o.err != nil {
 		note = o.err.Error()
 	}

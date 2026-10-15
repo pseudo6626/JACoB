@@ -15,3 +15,10 @@ This release repairs the Steam Deck/Linux package path and adds the first workin
 
 - OCR remains platform-dependent; this release targets canonical frame capture and Vision analysis first.
 - The X11/XComposite capture path is intended for Steam Deck Gaming Mode's Gamescope/XWayland stack. It should fail closed if Elite cannot be positively identified.
+
+## Steam Deck field hotfix
+
+- HUD windows now use Gamescope's normal secondary `STEAM_GAME=359320` window path instead of competing with Mangoapp for the single `GAMESCOPE_EXTERNAL_OVERLAY` slot.
+- Linux input focus verification now has a native X11/Gamescope probe, including `XGetInputFocus` fallback for Proton child windows, while still failing closed when another app is positively focused.
+- Steam Deck launcher marks the JACoB process with the Elite app id for diagnostics.
+- Flatpak packaging disables unnecessary debug-symbol splitting of the prebuilt Go executable.

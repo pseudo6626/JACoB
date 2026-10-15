@@ -54,6 +54,9 @@ func (l *linuxInput) Available() bool {
 		return false
 	}
 	_ = syscall.Close(fd)
+	if linuxNativeFocusAvailable() {
+		return true
+	}
 	_, xdotoolErr := exec.LookPath("xdotool")
 	_, xpropErr := exec.LookPath("xprop")
 	return xdotoolErr == nil || xpropErr == nil
@@ -63,6 +66,13 @@ func (l *linuxInput) FocusGame() error {
 }
 
 func verifyLinuxEliteForeground() error {
+	if resolved, elite := linuxNativeEliteFocus(); resolved {
+		if elite {
+			return nil
+		}
+		return fmt.Errorf("Elite Dangerous is not the foreground Gamescope/X11 app; Linux input was blocked for safety")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 900*time.Millisecond)
 	defer cancel()
 

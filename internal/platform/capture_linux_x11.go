@@ -209,6 +209,10 @@ func (l *linuxCapture) CaptureJPEG(maxWidth int, quality int) ([]byte, CaptureIn
 }
 
 func verifiedLinuxEliteWindowX11() (uintptr, error) {
+	if win, ok := linuxNativeEliteWindow(); ok {
+		return win, nil
+	}
+
 	var win, pid, appID C.ulong
 	if C.jacob_resolve_focused_window(&win, &pid, &appID) == 0 || win == 0 {
 		return 0, fmt.Errorf("focused X11/Gamescope window is unavailable")

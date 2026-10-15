@@ -7,7 +7,7 @@ HOST_HOME="${JACOB_HOST_HOME:-$(flatpak-spawn --host sh -lc 'printf %s "$HOME"')
 HOST_DIR="$HOST_HOME/.local/share/JACoB"
 HOST_BIN="$HOST_DIR/JACoB"
 LAUNCHER="$HOST_DIR/jacob-elite-launch"
-HOOK_STAMP="$HOST_DIR/.steam-hook-v2"
+HOOK_STAMP="$HOST_DIR/.steam-hook-v3"
 LOG_DIR="$HOST_HOME/.config/JACoB"
 LOG_FILE="$LOG_DIR/deck-install.log"
 mkdir -p "$HOST_DIR" "$LOG_DIR"
@@ -67,7 +67,7 @@ set -u
 JACOB_BIN="$HOME/.local/share/JACoB/JACoB"
 JACOB_PID=""
 if [[ -x "$JACOB_BIN" ]]; then
-  JACOB_OPEN_BROWSER=1 "$JACOB_BIN" >/dev/null 2>&1 &
+  JACOB_OPEN_BROWSER=1 JACOB_STEAM_APP_ID=359320 "$JACOB_BIN" >/dev/null 2>&1 &
   JACOB_PID=$!
 fi
 cleanup(){ if [[ -n "${JACOB_PID:-}" ]] && kill -0 "$JACOB_PID" 2>/dev/null; then kill "$JACOB_PID" 2>/dev/null || true; wait "$JACOB_PID" 2>/dev/null || true; fi; }
