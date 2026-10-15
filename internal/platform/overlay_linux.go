@@ -23,6 +23,7 @@ extern void XFixesDestroyRegion(Display *dpy, XserverRegion region);
 typedef struct {
     Display *dpy;
     int screen;
+    Window parent;
     Window win;
     Visual *visual;
     Colormap cmap;
@@ -33,8 +34,20 @@ typedef struct {
 } JacobOverlay;
 
 static JacobOverlay* jacob_overlay_create(const char *display_name, unsigned long parent_window) {
+    if (!parent_window) return NULL;
+
     Display *d = XOpenDisplay(display_name && *display_name ? display_name : NULL);
     if (!d) return NULL;
+
+    Window parent = (Window)parent_window;
+    XWindowAttributes parent_attr;
+    if (!XGetWindowAttributes(d, parent, &parent_attr) ||
+        parent_attr.width <= 0 || parent_attr.height <= 0 ||
+        parent_attr.map_state != IsViewable) {
+        XCloseDisplay(d);
+        return NULL;
+    }
+
     int screen = DefaultScreen(d);
     XVisualInfo tpl;
     memset(&tpl, 0, sizeof(tpl));
@@ -42,46 +55,48 @@ static JacobOverlay* jacob_overlay_create(const char *display_name, unsigned lon
     tpl.depth = 32;
     tpl.class = TrueColor;
     int n = 0;
-    XVisualInfo *vis = XGetVisualInfo(d, VisualScreenMask | VisualDepthMask | VisualClassMask, &tpl, &n);
+    XVisualInfo *vis = XGetVisualInfo(
+        d, VisualScreenMask | VisualDepthMask | VisualClassMask, &tpl, &n);
     if (!vis || n <= 0) {
         if (vis) XFree(vis);
         XCloseDisplay(d);
         return NULL;
     }
+
     XVisualInfo vi = vis[0];
     XFree(vis);
+
     Window root = RootWindow(d, screen);
     Colormap cmap = XCreateColormap(d, root, vi.visual, AllocNone);
+
     XSetWindowAttributes attr;
     memset(&attr, 0, sizeof(attr));
     attr.colormap = cmap;
     attr.border_pixel = 0;
     attr.background_pixel = 0;
-    int w = DisplayWidth(d, screen);
-    int h = DisplayHeight(d, screen);
-    Window win = XCreateWindow(d, root, 0, 0, w, h, 0, 32, InputOutput, vi.visual,
+
+    int w = parent_attr.width;
+    int h = parent_attr.height;
+
+    Window win = XCreateWindow(
+        d, parent, 0, 0, w, h, 0, 32, InputOutput, vi.visual,
         CWColormap | CWBorderPixel | CWBackPixel, &attr);
     if (!win) {
         XFreeColormap(d, cmap);
         XCloseDisplay(d);
         return NULL;
     }
-    XStoreName(d, win, "JACoB HUD");
-    (void)parent_window;
 
-    // Gamescope's external-overlay slot is owned by Mangoapp on Steam Deck.
-    // Tag this as a secondary Elite window instead; embedded Gamescope stacks
-    // STEAM_GAME windows above the main game and can composite our ARGB pixels.
-    unsigned long elite_app = 359320UL;
-    Atom steam_game = XInternAtom(d, "STEAM_GAME", False);
-    XChangeProperty(d, win, steam_game, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)&elite_app, 1);
+    XStoreName(d, win, "JACoB HUD Child");
 
     unsigned long pid = (unsigned long)getpid();
     Atom pid_atom = XInternAtom(d, "_NET_WM_PID", False);
-    XChangeProperty(d, win, pid_atom, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)&pid, 1);
+    XChangeProperty(
+        d, win, pid_atom, XA_CARDINAL, 32, PropModeReplace,
+        (unsigned char*)&pid, 1);
 
     XClassHint class_hint;
-    class_hint.res_name = "jacob-hud";
+    class_hint.res_name = "jacob-hud-child";
     class_hint.res_class = "JACoB";
     XSetClassHint(d, win, &class_hint);
 
@@ -93,27 +108,37 @@ static JacobOverlay* jacob_overlay_create(const char *display_name, unsigned lon
         XFree(wmh);
     }
 
-    // Keep the old Gamescope external-overlay path available for non-Deck
-    // experiments, but never request it by default on SteamOS.
-    const char *external = getenv("JACOB_GAMESCOPE_EXTERNAL_OVERLAY");
-    if (external && strcmp(external, "1") == 0) {
-        Atom ext = XInternAtom(d, "GAMESCOPE_EXTERNAL_OVERLAY", False);
-        unsigned long one = 1;
-        XChangeProperty(d, win, ext, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)&one, 1);
-    }
-
     Atom opacity = XInternAtom(d, "_NET_WM_WINDOW_OPACITY", False);
     unsigned long opaque = 0xffffffffUL;
-    XChangeProperty(d, win, opacity, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)&opaque, 1);
-    XSync(d, False);
+    XChangeProperty(
+        d, win, opacity, XA_CARDINAL, 32, PropModeReplace,
+        (unsigned char*)&opaque, 1);
 
     XserverRegion empty = XFixesCreateRegion(d, NULL, 0);
     XFixesSetWindowShapeRegion(d, win, ShapeInput, 0, 0, empty);
     XFixesDestroyRegion(d, empty);
 
     GC gc = XCreateGC(d, win, 0, NULL);
+
     JacobOverlay *o = (JacobOverlay*)calloc(1, sizeof(JacobOverlay));
-    o->dpy=d; o->screen=screen; o->win=win; o->visual=vi.visual; o->cmap=cmap; o->gc=gc; o->width=w; o->height=h;
+    if (!o) {
+        XFreeGC(d, gc);
+        XDestroyWindow(d, win);
+        XFreeColormap(d, cmap);
+        XCloseDisplay(d);
+        return NULL;
+    }
+
+    o->dpy = d;
+    o->screen = screen;
+    o->parent = parent;
+    o->win = win;
+    o->visual = vi.visual;
+    o->cmap = cmap;
+    o->gc = gc;
+    o->width = w;
+    o->height = h;
+
     XFlush(d);
     return o;
 }
@@ -132,7 +157,17 @@ static void jacob_overlay_destroy(JacobOverlay *o) {
 static int jacob_overlay_width(JacobOverlay *o){ return o?o->width:0; }
 static int jacob_overlay_height(JacobOverlay *o){ return o?o->height:0; }
 static int jacob_overlay_mapped(JacobOverlay *o){ return o?o->mapped:0; }
-static void jacob_overlay_refresh_size(JacobOverlay *o){ if(!o)return; int w=DisplayWidth(o->dpy,o->screen),h=DisplayHeight(o->dpy,o->screen); if(w!=o->width||h!=o->height){o->width=w;o->height=h;XMoveResizeWindow(o->dpy,o->win,0,0,w,h);} }
+static void jacob_overlay_refresh_size(JacobOverlay *o) {
+    if (!o || !o->parent) return;
+    XWindowAttributes a;
+    if (!XGetWindowAttributes(o->dpy, o->parent, &a) ||
+        a.width <= 0 || a.height <= 0) return;
+    if (a.width != o->width || a.height != o->height) {
+        o->width = a.width;
+        o->height = a.height;
+        XMoveResizeWindow(o->dpy, o->win, 0, 0, a.width, a.height);
+    }
+}
 static void jacob_overlay_show(JacobOverlay *o, int show) {
     if(!o) return;
     if(show && !o->mapped){ XMapRaised(o->dpy,o->win); o->mapped=1; }
@@ -179,6 +214,7 @@ type linuxOverlay struct {
 	mu      sync.Mutex
 	native  *C.JacobOverlay
 	display string
+	parent  uintptr
 	err     error
 }
 
@@ -189,35 +225,35 @@ func newOverlayDriver() OverlayDriver {
 	}
 	return o
 }
-func (o *linuxOverlay) Name() string { return "linux-x11-gamescope-steam-window-overlay-recovered" }
+func (o *linuxOverlay) Name() string { return "linux-x11-elite-child-hud" }
 func (o *linuxOverlay) Available() bool {
 	return o.err == nil && (o.native != nil || os.Getenv("DISPLAY") != "" || len(linuxX11Displays()) > 0)
 }
 
 func (o *linuxOverlay) ensureNativeLocked() error {
-	display := os.Getenv("DISPLAY")
-	parent := uintptr(0)
-	if targetDisplay, targetWindow, ok := linuxNativeEliteWindowTarget(); ok {
-		display = targetDisplay
-		parent = targetWindow
+	display, parent, ok := linuxNativeEliteWindowTarget()
+	if !ok || display == "" || parent == 0 {
+		return fmt.Errorf("verified Elite client is unavailable for HUD attachment")
 	}
-	if display == "" {
-		return fmt.Errorf("X11/XWayland overlay display is unavailable")
-	}
-	if o.native != nil && o.display != display {
+
+	if o.native != nil && (o.display != display || o.parent != parent) {
 		C.jacob_overlay_destroy(o.native)
 		o.native = nil
+		o.display = ""
+		o.parent = 0
 	}
+
 	if o.native == nil {
 		cd := C.CString(display)
 		o.native = C.jacob_overlay_create(cd, C.ulong(parent))
 		C.free(unsafe.Pointer(cd))
 		if o.native == nil {
-			return fmt.Errorf("could not create a 32-bit X11 overlay window on %s", display)
+			return fmt.Errorf(
+				"could not create a 32-bit child HUD on verified Elite client %s/0x%x",
+				display, parent)
 		}
 		o.display = display
-	} else if parent != 0 {
-		C.jacob_overlay_attach(o.native, C.ulong(parent))
+		o.parent = parent
 	}
 	return nil
 }
@@ -250,7 +286,7 @@ func (o *linuxOverlay) Info() OverlayInfo {
 		w = int(C.jacob_overlay_width(o.native))
 		h = int(C.jacob_overlay_height(o.native))
 	}
-	note := "Steam Deck HUD uses the recovered secondary STEAM_GAME path on the resolved Elite XWayland display. Hidden HUDs are unmapped so a later toggle produces a real Gamescope map event."
+	note := "HUD is an input-transparent X11 child of the verified Elite client, so it is not exposed to Gamescope as another Steam window."
 	if o.err != nil {
 		note = o.err.Error()
 	}
@@ -273,9 +309,6 @@ func (o *linuxOverlay) render() {
 	}
 	layers, visible := o.state.snapshot()
 	show := visible && len(layers) > 0
-	if display, parent, ok := linuxNativeEliteWindowTarget(); ok && display == o.display {
-		C.jacob_overlay_attach(o.native, C.ulong(parent))
-	}
 	C.jacob_overlay_show(o.native, boolInt(show))
 	if !show {
 		return

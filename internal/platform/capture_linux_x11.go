@@ -48,6 +48,35 @@ static XImage* jacob_get_image_guarded(Display *d, Drawable draw, int w, int h) 
     return img;
 }
 
+static int jacob_ximage_looks_blank(XImage *img, int w, int h) {
+    if (!img || w <= 0 || h <= 0) return 1;
+    const int grid_x = 64;
+    const int grid_y = 36;
+    unsigned int max_channel = 0;
+    uint64_t sum = 0;
+    uint64_t samples = 0;
+
+    for (int gy = 0; gy < grid_y; gy++) {
+        int y = gy * (h - 1) / (grid_y - 1);
+        for (int gx = 0; gx < grid_x; gx++) {
+            int x = gx * (w - 1) / (grid_x - 1);
+            unsigned long p = XGetPixel(img, x, y);
+            unsigned int r = jacob_component(p, img->red_mask);
+            unsigned int g = jacob_component(p, img->green_mask);
+            unsigned int b = jacob_component(p, img->blue_mask);
+            if (r > max_channel) max_channel = r;
+            if (g > max_channel) max_channel = g;
+            if (b > max_channel) max_channel = b;
+            sum += (uint64_t)r + (uint64_t)g + (uint64_t)b;
+            samples += 3;
+        }
+    }
+
+    if (!samples) return 1;
+    double mean = (double)sum / (double)samples;
+    return max_channel <= 8 && mean < 1.5;
+}
+
 static int jacob_capture_window(const char *display_name, unsigned long window_id,
     unsigned char **out_rgba, int *out_w, int *out_h, int *used_composite) {
     if (!out_rgba || !out_w || !out_h || !used_composite || window_id == 0) return 0;
@@ -62,11 +91,13 @@ static int jacob_capture_window(const char *display_name, unsigned long window_i
     Window win = (Window)window_id;
     XWindowAttributes attr;
     jacob_capture_x_error = 0;
-    int (*old_handler)(Display*, XErrorEvent*) = XSetErrorHandler(jacob_capture_x_error_handler);
+    int (*old_handler)(Display*, XErrorEvent*) =
+        XSetErrorHandler(jacob_capture_x_error_handler);
     int got_attr = XGetWindowAttributes(d, win, &attr);
     XSync(d, False);
     XSetErrorHandler(old_handler);
-    if (!got_attr || jacob_capture_x_error || attr.width <= 0 || attr.height <= 0 || attr.map_state != IsViewable) {
+    if (!got_attr || jacob_capture_x_error || attr.width <= 0 ||
+        attr.height <= 0 || attr.map_state != IsViewable) {
         XCloseDisplay(d);
         return 0;
     }
@@ -76,24 +107,30 @@ static int jacob_capture_window(const char *display_name, unsigned long window_i
     XImage *img = NULL;
     Pixmap named = None;
 
-    int event_base = 0, error_base = 0;
-    if (XCompositeQueryExtension(d, &event_base, &error_base)) {
-        jacob_capture_x_error = 0;
-        old_handler = XSetErrorHandler(jacob_capture_x_error_handler);
-        named = XCompositeNameWindowPixmap(d, win);
-        XSync(d, False);
-        XSetErrorHandler(old_handler);
-        if (jacob_capture_x_error) named = None;
-        if (named != None) {
-            img = jacob_get_image_guarded(d, named, w, h);
-            if (img) *used_composite = 1;
+    // Direct XGetImage was the pre-SDK14 Deck path.
+    img = jacob_get_image_guarded(d, win, w, h);
+    if (img && jacob_ximage_looks_blank(img, w, h)) {
+        XDestroyImage(img);
+        img = NULL;
+    }
+
+    // Fall back to XComposite only when direct capture failed or was black.
+    if (!img) {
+        int event_base = 0, error_base = 0;
+        if (XCompositeQueryExtension(d, &event_base, &error_base)) {
+            jacob_capture_x_error = 0;
+            old_handler = XSetErrorHandler(jacob_capture_x_error_handler);
+            named = XCompositeNameWindowPixmap(d, win);
+            XSync(d, False);
+            XSetErrorHandler(old_handler);
+            if (jacob_capture_x_error) named = None;
+            if (named != None) {
+                img = jacob_get_image_guarded(d, named, w, h);
+                if (img) *used_composite = 1;
+            }
         }
     }
 
-    if (!img) {
-        img = jacob_get_image_guarded(d, win, w, h);
-        *used_composite = 0;
-    }
     if (named != None) XFreePixmap(d, named);
     if (!img) {
         XCloseDisplay(d);
@@ -109,7 +146,9 @@ static int jacob_capture_window(const char *display_name, unsigned long window_i
     }
 
     for (int y = 0; y < h; y++) {
-        const unsigned char *row = (const unsigned char*)img->data + (size_t)y * (size_t)img->bytes_per_line;
+        const unsigned char *row =
+            (const unsigned char*)img->data +
+            (size_t)y * (size_t)img->bytes_per_line;
         for (int x = 0; x < w; x++) {
             unsigned long p = 0;
             if (img->bits_per_pixel == 32) {
@@ -118,8 +157,15 @@ static int jacob_capture_window(const char *display_name, unsigned long window_i
                 p = (unsigned long)v;
             } else if (img->bits_per_pixel == 24) {
                 const unsigned char *q = row + (size_t)x * 3u;
-                if (img->byte_order == LSBFirst) p = (unsigned long)q[0] | ((unsigned long)q[1] << 8) | ((unsigned long)q[2] << 16);
-                else p = ((unsigned long)q[0] << 16) | ((unsigned long)q[1] << 8) | (unsigned long)q[2];
+                if (img->byte_order == LSBFirst) {
+                    p = (unsigned long)q[0] |
+                        ((unsigned long)q[1] << 8) |
+                        ((unsigned long)q[2] << 16);
+                } else {
+                    p = ((unsigned long)q[0] << 16) |
+                        ((unsigned long)q[1] << 8) |
+                        (unsigned long)q[2];
+                }
             } else {
                 p = XGetPixel(img, x, y);
             }
@@ -139,7 +185,6 @@ static int jacob_capture_window(const char *display_name, unsigned long window_i
     *out_h = h;
     return 1;
 }
-
 static void jacob_capture_free(void *p) { free(p); }
 */
 import "C"
@@ -153,18 +198,21 @@ import (
 )
 
 type linuxCapture struct {
-	mu            sync.Mutex
-	cached        GameFrame
-	captures      uint64
-	cacheHits     uint64
-	failures      uint64
-	lastLatency   time.Duration
-	targetDisplay string
-	targetWindow  uintptr
+	mu              sync.Mutex
+	cached          GameFrame
+	captures        uint64
+	cacheHits       uint64
+	failures        uint64
+	blankFrames     uint64
+	directFrames    uint64
+	compositeFrames uint64
+	lastLatency     time.Duration
+	targetDisplay   string
+	targetWindow    uintptr
 }
 
 func newCaptureDriver() CaptureDriver { return &linuxCapture{} }
-func (l *linuxCapture) Name() string  { return "linux-x11-xcomposite-elite-window" }
+func (l *linuxCapture) Name() string  { return "linux-x11-elite-window-direct-first" }
 
 func (l *linuxCapture) Available() bool {
 	for _, display := range linuxX11Displays() {
@@ -207,7 +255,7 @@ func (l *linuxCapture) CaptureFrame(maxWidth int, intent CaptureIntent) (GameFra
 	var cw, ch, usedComposite C.int
 	if C.jacob_capture_window(cd, C.ulong(windowID), &raw, &cw, &ch, &usedComposite) == 0 || raw == nil {
 		l.failures++
-		return GameFrame{}, fmt.Errorf("verified Elite window could not be captured through X11/XComposite")
+		return GameFrame{}, fmt.Errorf("verified Elite window could not be captured through direct X11 or XComposite")
 	}
 	defer C.jacob_capture_free(unsafe.Pointer(raw))
 
@@ -220,11 +268,15 @@ func (l *linuxCapture) CaptureFrame(maxWidth int, intent CaptureIntent) (GameFra
 
 	pix := C.GoBytes(unsafe.Pointer(raw), C.int(w*h*4))
 	sourceW, sourceH := w, h
-	driver := l.Name()
-	if usedComposite == 0 {
-		driver = "linux-x11-direct-elite-window"
+	driver := "linux-x11-direct-elite-window"
+	if usedComposite != 0 {
+		driver = "linux-x11-xcomposite-elite-window"
+		l.compositeFrames++
+	} else {
+		l.directFrames++
 	}
 	if linuxFrameLooksBlank(pix, w, h) {
+		l.blankFrames++
 		frame := blankGameFrame(driver, sourceW, sourceH,
 			"verified Elite window returned an effectively black frame; capture was blanked instead of exposing false Vision results")
 		l.captures++
@@ -279,7 +331,9 @@ func (l *linuxCapture) CaptureStats() map[string]any {
 	}
 	return map[string]any{
 		"captures": l.captures, "cacheHits": l.cacheHits, "failures": l.failures,
-		"lastLatencyMs": l.lastLatency.Milliseconds(), "cachedFrameAgeMs": age,
+		"blankFrames": l.blankFrames, "directFrames": l.directFrames,
+		"compositeFrames": l.compositeFrames,
+		"lastLatencyMs":   l.lastLatency.Milliseconds(), "cachedFrameAgeMs": age,
 		"cacheWindowMs": 100, "targetDisplay": l.targetDisplay,
 		"targetWindow": fmt.Sprintf("0x%x", l.targetWindow),
 	}
