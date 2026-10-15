@@ -211,7 +211,7 @@ type linuxCapture struct {
 	targetWindow    uintptr
 }
 
-func newCaptureDriver() CaptureDriver { return &linuxCapture{} }
+func newCaptureDriver() CaptureDriver { return newLinuxCaptureDriver() }
 func (l *linuxCapture) Name() string  { return "linux-x11-elite-window-direct-first" }
 
 func (l *linuxCapture) Available() bool {
