@@ -11,6 +11,9 @@ OCR_DIR="$HOST_DIR/ocr/tesseract"
 OCR_STAMP="$HOST_DIR/.flatpak-ocr-sha256"
 PACKAGED_VERSION="$(cat /app/share/jacob/VERSION 2>/dev/null || echo unknown)"
 PACKAGED_HASH="$(sha256sum /app/libexec/JACoB | awk '{print $1}')"
+PACKAGED_HELPER_HASH="$(sha256sum /app/libexec/jacob-gamescope-stream | awk '{print $1}')"
+HOST_HELPER="$HOST_DIR/jacob-gamescope-stream"
+HOST_DECKY_DIR="$HOST_DIR/decky/JACoB-HUD"
 PACKAGED_OCR_HASH="$(sha256sum /app/libexec/tesseract/AppRun | awk '{print $1}')"
 LOG_DIR="$HOST_HOME/.config/JACoB"
 LOG_FILE="$LOG_DIR/deck-install.log"
@@ -32,6 +35,31 @@ else
 fi
 printf '%s\n' "$PACKAGED_VERSION" > "$STAMP"
 printf '%s\n' "$PACKAGED_HASH" > "$HASH_STAMP"
+
+HOST_HELPER_HASH="$(sha256sum "$HOST_HELPER" 2>/dev/null | awk '{print $1}' || true)"
+if [[ ! -x "$HOST_HELPER" || "$HOST_HELPER_HASH" != "$PACKAGED_HELPER_HASH" ]]; then
+  install -m 0755 /app/libexec/jacob-gamescope-stream "$HOST_HELPER.new"
+  mv -f "$HOST_HELPER.new" "$HOST_HELPER"
+  printf '[%s] Installed Gamescope PipeWire helper sha256=%s\n' "$(date -Is)" "$PACKAGED_HELPER_HASH" >> "$LOG_FILE"
+fi
+
+rm -rf "$HOST_DECKY_DIR.new"
+mkdir -p "$(dirname "$HOST_DECKY_DIR")" "$HOST_DECKY_DIR.new"
+cp -a /app/share/jacob/decky/JACoB-HUD/. "$HOST_DECKY_DIR.new/"
+rm -rf "$HOST_DECKY_DIR"
+mv "$HOST_DECKY_DIR.new" "$HOST_DECKY_DIR"
+
+if [[ -d "$HOST_HOME/homebrew/plugins" ]]; then
+  DECKY_TARGET="$HOST_HOME/homebrew/plugins/JACoB-HUD"
+  DECKY_NEW="$HOST_HOME/homebrew/plugins/.JACoB-HUD.new"
+  rm -rf "$DECKY_NEW"
+  cp -a "$HOST_DECKY_DIR" "$DECKY_NEW"
+  rm -rf "$DECKY_TARGET"
+  mv "$DECKY_NEW" "$DECKY_TARGET"
+  printf '[%s] Installed/updated JACoB Decky HUD bridge.\n' "$(date -Is)" >> "$LOG_FILE"
+else
+  printf '[%s] Decky Loader not detected; HUD bridge retained at %s.\n' "$(date -Is)" "$HOST_DECKY_DIR" >> "$LOG_FILE"
+fi
 
 HOST_OCR_HASH="$(cat "$OCR_STAMP" 2>/dev/null || true)"
 if [[ ! -x "$OCR_DIR/AppRun" || "$HOST_OCR_HASH" != "$PACKAGED_OCR_HASH" ]]; then
@@ -65,4 +93,4 @@ udevadm trigger --subsystem-match=input --action=change
   JACOB_HOST_HOME="$HOST_HOME" /app/bin/jacob-steam-integrate || true
 fi
 
-exec flatpak-spawn --host sh -lc 'export JACOB_OPEN_BROWSER=1; export JACOB_TESSERACT="$HOME/.local/share/JACoB/ocr/tesseract/AppRun"; exec "$HOME/.local/share/JACoB/JACoB"'
+exec flatpak-spawn --host sh -lc 'export JACOB_OPEN_BROWSER=1; export JACOB_TESSERACT="$HOME/.local/share/JACoB/ocr/tesseract/AppRun"; export JACOB_GAMESCOPE_CAPTURE_HELPER="$HOME/.local/share/JACoB/jacob-gamescope-stream"; exec "$HOME/.local/share/JACoB/JACoB"'

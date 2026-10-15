@@ -1,0 +1,14 @@
+{
+  "name": "JACoB HUD Bridge",
+  "author": "Pseudo Science Inc.",
+  "version": "0.1.0",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": [
+      "utility",
+      "overlay"
+    ],
+    "description": "Steam Gaming Mode HUD renderer for JACoB."
+  }
+}

@@ -17,6 +17,9 @@ modules:
     buildsystem: simple
     build-commands:
       - install -Dm755 JACoB /app/libexec/JACoB
+      - cc -O2 -Wall -Wextra jacob-gamescope-stream.c -o /app/libexec/jacob-gamescope-stream $(pkg-config --cflags --libs libpipewire-0.3 wayland-client)
+      - mkdir -p /app/share/jacob/decky/JACoB-HUD
+      - cp -a JACoB-HUD/. /app/share/jacob/decky/JACoB-HUD/
       - mkdir -p /app/libexec/tesseract
       - cp -a tesseract-appdir/. /app/libexec/tesseract/
       - install -Dm755 jacob-flatpak-launch /app/bin/jacob-flatpak-launch
@@ -28,6 +31,11 @@ modules:
     sources:
       - type: file
         path: JACoB
+      - type: file
+        path: jacob-gamescope-stream.c
+      - type: dir
+        path: JACoB-HUD
+        dest: JACoB-HUD
       - type: file
         path: jacob-flatpak-launch
       - type: file

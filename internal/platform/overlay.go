@@ -138,6 +138,23 @@ type OverlayDriver interface {
 	Info() OverlayInfo
 }
 
+// DeckOverlaySnapshot is an internal renderer transport. Custom tabs never
+// see or target it; they continue using Elite.overlay.*.
+type DeckOverlaySnapshot struct {
+	HUDVersion        int                     `json:"hudVersion"`
+	Version           uint64                  `json:"version"`
+	Visible           bool                    `json:"visible"`
+	Layers            map[string]OverlayScene `json:"layers"`
+	RendererConnected bool                    `json:"rendererConnected"`
+}
+
+type DeckOverlayBridge interface {
+	OverlayDriver
+	DeckBridgeSeen()
+	DeckBridgeSnapshot() DeckOverlaySnapshot
+	DeckBridgeWait(since uint64, timeoutMs int) DeckOverlaySnapshot
+}
+
 type overlayState struct {
 	mu      sync.RWMutex
 	layers  map[string]OverlayScene

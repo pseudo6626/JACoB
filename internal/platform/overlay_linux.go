@@ -218,7 +218,7 @@ type linuxOverlay struct {
 	err     error
 }
 
-func newOverlayDriver() OverlayDriver {
+func newLinuxNativeOverlayDriver() OverlayDriver {
 	o := &linuxOverlay{state: newOverlayState()}
 	if os.Getenv("DISPLAY") == "" && len(linuxX11Displays()) == 0 {
 		o.err = fmt.Errorf("X11/XWayland overlay display is unavailable")

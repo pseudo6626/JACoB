@@ -244,6 +244,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/video/frame.jpg", s.handleVideoFrame)
 	mux.HandleFunc("/api/video.mjpeg", s.handleVideoMJPEG)
 	mux.HandleFunc("/api/vision/calibration.jpg", s.handleVisionCalibrationFrame)
+	mux.HandleFunc("/api/deck/hud/state", s.handleDeckHUDState)
 	mux.Handle("/", webui.Handler())
 	httpServer := &http.Server{
 		Addr:              s.cfg.Bind,
@@ -583,6 +584,51 @@ func (s *Server) revokeDevice(id string) error {
 	}()
 	s.broadcastDevicesChanged()
 	return nil
+}
+
+func (s *Server) handleDeckHUDState(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil || !ip.IsLoopback() {
+		http.Error(w, "Deck HUD state is loopback-only", http.StatusForbidden)
+		return
+	}
+
+	bridge, ok := s.overlay.(platform.DeckOverlayBridge)
+	if !ok {
+		http.Error(w, "Deck HUD bridge is not active on this platform", http.StatusNotFound)
+		return
+	}
+
+	bridge.DeckBridgeSeen()
+	since, _ := strconv.ParseUint(strings.TrimSpace(r.URL.Query().Get("since")), 10, 64)
+	waitMs, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("wait")))
+	if waitMs < 0 {
+		waitMs = 0
+	}
+	if waitMs > 1500 {
+		waitMs = 1500
+	}
+	snap := bridge.DeckBridgeWait(since, waitMs)
+	bridge.DeckBridgeSeen()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(snap)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
