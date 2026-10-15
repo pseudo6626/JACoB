@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -194,7 +195,8 @@ func (p *pipewireCapture) ensureRunning() error {
 	if err != nil {
 		return fmt.Errorf("open Gamescope PipeWire helper stdout: %w", err)
 	}
-	cmd.Stderr = os.Stderr
+	var helperStderr bytes.Buffer
+	cmd.Stderr = &helperStderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start Gamescope PipeWire helper: %w", err)
 	}
@@ -208,18 +210,36 @@ func (p *pipewireCapture) ensureRunning() error {
 	p.lastError = ""
 
 	go p.readLoop(cmd, stdout)
-	go p.waitLoop(cmd)
+	go p.waitLoop(cmd, &helperStderr)
 	return nil
 }
 
-func (p *pipewireCapture) waitLoop(cmd *exec.Cmd) {
+func helperStderrTail(s string) string {
+	s = strings.TrimSpace(s)
+	const max = 4096
+	if len(s) > max {
+		s = s[len(s)-max:]
+	}
+	return s
+}
+
+func (p *pipewireCapture) waitLoop(cmd *exec.Cmd, helperStderr *bytes.Buffer) {
 	err := cmd.Wait()
+	detail := ""
+	if helperStderr != nil {
+		detail = helperStderrTail(helperStderr.String())
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.cmd == cmd {
 		p.cmd = nil
 		if err != nil {
-			p.lastError = err.Error()
+			if detail != "" {
+				p.lastError = detail
+			} else {
+				p.lastError = err.Error()
+			}
 			p.failures++
 		}
 	}
@@ -402,7 +422,7 @@ func (p *pipewireCapture) CaptureStats() map[string]any {
 		"failures":         p.failures,
 		"blankFrames":      p.blankFrames,
 		"lastError":        p.lastError,
-		"requested":        "1280x800@10",
+		"requested":        "flexible producer rate; JACoB emits <=10 fps",
 		"focusFilter":      strconv.FormatUint(359320, 10),
 		"eliteFocusGuard":  "exact-client-on-read",
 	}

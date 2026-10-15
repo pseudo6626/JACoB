@@ -148,10 +148,14 @@ static void stream_state_changed(
     enum pw_stream_state state, const char *error) {
     (void)old_state;
     struct jacob_data *data = userdata;
+    fprintf(stderr, "jacob-gamescope-stream: state %s -> %s%s%s\n",
+            pw_stream_state_as_string(old_state),
+            pw_stream_state_as_string(state),
+            error ? ": " : "",
+            error ? error : "");
+
     if (state == PW_STREAM_STATE_ERROR) {
         data->stream_error = true;
-        fprintf(stderr, "jacob-gamescope-stream: PipeWire stream error: %s\n",
-                error ? error : "unknown");
         pw_main_loop_quit(data->loop);
     } else if (state == PW_STREAM_STATE_UNCONNECTED && old_state != PW_STREAM_STATE_UNCONNECTED) {
         pw_main_loop_quit(data->loop);
@@ -278,10 +282,15 @@ static const struct pw_stream_events stream_events = {
 };
 
 static const struct spa_pod *build_format(struct jacob_data *data, struct spa_pod_builder *b) {
-    struct spa_rectangle size = SPA_RECTANGLE(
+    struct spa_rectangle default_size = SPA_RECTANGLE(
         data->requested_width, data->requested_height);
-    struct spa_fraction rate = SPA_FRACTION(
+    struct spa_rectangle min_size = SPA_RECTANGLE(1, 1);
+    struct spa_rectangle max_size = SPA_RECTANGLE(65535, 65535);
+
+    struct spa_fraction default_rate = SPA_FRACTION(
         data->fps ? data->fps : JACOB_DEFAULT_FPS, 1);
+    struct spa_fraction min_rate = SPA_FRACTION(0, 1);
+    struct spa_fraction max_rate = SPA_FRACTION(30, 1);
 
     return spa_pod_builder_add_object(
         b,
@@ -289,9 +298,12 @@ static const struct spa_pod *build_format(struct jacob_data *data, struct spa_po
         SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
         SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
         SPA_FORMAT_VIDEO_format, SPA_POD_Id(SPA_VIDEO_FORMAT_BGRx),
-        SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
-        SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&rate),
-        SPA_FORMAT_VIDEO_requested_size, SPA_POD_Rectangle(&size),
+        SPA_FORMAT_VIDEO_size,
+            SPA_POD_CHOICE_RANGE_Rectangle(
+                &default_size, &min_size, &max_size),
+        SPA_FORMAT_VIDEO_framerate,
+            SPA_POD_CHOICE_RANGE_Fraction(
+                &default_rate, &min_rate, &max_rate),
         SPA_FORMAT_VIDEO_gamescope_focus_appid,
             SPA_POD_Long((int64_t)data->appid));
 }

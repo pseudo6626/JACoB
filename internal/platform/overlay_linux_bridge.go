@@ -137,7 +137,7 @@ func (o *deckOverlayBridge) DeckBridgeWait(since uint64, timeoutMs int) DeckOver
 
 func (o *deckOverlayBridge) Info() OverlayInfo {
 	snap := o.DeckBridgeSnapshot()
-	note := "Steam CEF HUD2 bridge ready; waiting for Decky renderer heartbeat."
+	note := "Steam CEF HUD2 bridge ready; Decky renderer has not connected yet. A newly installed Decky plugin requires plugin_loader reload or a reboot."
 	if snap.RendererConnected {
 		note = "Steam CEF HUD2 renderer connected. Tabs use the same OverlayScene contract as Windows."
 	}

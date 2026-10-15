@@ -14,6 +14,9 @@ PACKAGED_HASH="$(sha256sum /app/libexec/JACoB | awk '{print $1}')"
 PACKAGED_HELPER_HASH="$(sha256sum /app/libexec/jacob-gamescope-stream | awk '{print $1}')"
 HOST_HELPER="$HOST_DIR/jacob-gamescope-stream"
 HOST_DECKY_DIR="$HOST_DIR/decky/JACoB-HUD"
+DECKY_HASH_STAMP="$HOST_DIR/.decky-hud-payload-sha256"
+DECKY_RELOAD_STAMP="$HOST_DIR/.decky-hud-loaded-sha256"
+PACKAGED_DECKY_HASH="$(find /app/share/jacob/decky/JACoB-HUD -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
 PACKAGED_OCR_HASH="$(sha256sum /app/libexec/tesseract/AppRun | awk '{print $1}')"
 LOG_DIR="$HOST_HOME/.config/JACoB"
 LOG_FILE="$LOG_DIR/deck-install.log"
@@ -43,20 +46,47 @@ if [[ ! -x "$HOST_HELPER" || "$HOST_HELPER_HASH" != "$PACKAGED_HELPER_HASH" ]]; 
   printf '[%s] Installed Gamescope PipeWire helper sha256=%s\n' "$(date -Is)" "$PACKAGED_HELPER_HASH" >> "$LOG_FILE"
 fi
 
-rm -rf "$HOST_DECKY_DIR.new"
-mkdir -p "$(dirname "$HOST_DECKY_DIR")" "$HOST_DECKY_DIR.new"
-cp -a /app/share/jacob/decky/JACoB-HUD/. "$HOST_DECKY_DIR.new/"
-rm -rf "$HOST_DECKY_DIR"
-mv "$HOST_DECKY_DIR.new" "$HOST_DECKY_DIR"
+INSTALLED_DECKY_HASH="$(cat "$DECKY_HASH_STAMP" 2>/dev/null || true)"
+if [[ ! -d "$HOST_DECKY_DIR" || "$INSTALLED_DECKY_HASH" != "$PACKAGED_DECKY_HASH" ]]; then
+  rm -rf "$HOST_DECKY_DIR.new"
+  mkdir -p "$(dirname "$HOST_DECKY_DIR")" "$HOST_DECKY_DIR.new"
+  cp -a /app/share/jacob/decky/JACoB-HUD/. "$HOST_DECKY_DIR.new/"
+  rm -rf "$HOST_DECKY_DIR"
+  mv "$HOST_DECKY_DIR.new" "$HOST_DECKY_DIR"
+  printf '%s\n' "$PACKAGED_DECKY_HASH" > "$DECKY_HASH_STAMP"
+fi
 
 if [[ -d "$HOST_HOME/homebrew/plugins" ]]; then
   DECKY_TARGET="$HOST_HOME/homebrew/plugins/JACoB-HUD"
   DECKY_NEW="$HOST_HOME/homebrew/plugins/.JACoB-HUD.new"
-  rm -rf "$DECKY_NEW"
-  cp -a "$HOST_DECKY_DIR" "$DECKY_NEW"
-  rm -rf "$DECKY_TARGET"
-  mv "$DECKY_NEW" "$DECKY_TARGET"
-  printf '[%s] Installed/updated JACoB Decky HUD bridge.\n' "$(date -Is)" >> "$LOG_FILE"
+
+  CURRENT_TARGET_HASH=""
+  if [[ -d "$DECKY_TARGET" ]]; then
+    CURRENT_TARGET_HASH="$(find "$DECKY_TARGET" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}' || true)"
+  fi
+
+  if [[ "$CURRENT_TARGET_HASH" != "$PACKAGED_DECKY_HASH" ]]; then
+    rm -rf "$DECKY_NEW"
+    cp -a "$HOST_DECKY_DIR" "$DECKY_NEW"
+    rm -rf "$DECKY_TARGET"
+    mv "$DECKY_NEW" "$DECKY_TARGET"
+    printf '[%s] Installed/updated JACoB Decky HUD bridge payload=%s.\n' "$(date -Is)" "$PACKAGED_DECKY_HASH" >> "$LOG_FILE"
+  fi
+
+  LOADED_DECKY_HASH="$(cat "$DECKY_RELOAD_STAMP" 2>/dev/null || true)"
+  if [[ "$LOADED_DECKY_HASH" != "$PACKAGED_DECKY_HASH" && "${1:-}" != "--service-only" ]]; then
+    if flatpak-spawn --host systemctl is-active --quiet plugin_loader.service >/dev/null 2>&1; then
+      printf '[%s] Requesting Decky reload so the JACoB HUD renderer becomes active.\n' "$(date -Is)" >> "$LOG_FILE"
+      if flatpak-spawn --host pkexec systemctl restart plugin_loader.service; then
+        printf '%s\n' "$PACKAGED_DECKY_HASH" > "$DECKY_RELOAD_STAMP"
+        printf '[%s] Decky plugin loader restarted; JACoB HUD renderer should load in this Steam session.\n' "$(date -Is)" >> "$LOG_FILE"
+      else
+        printf '[%s] WARNING: Decky reload was declined/failed. Rebooting the Deck will load the installed JACoB HUD bridge.\n' "$(date -Is)" >> "$LOG_FILE"
+      fi
+    else
+      printf '[%s] Decky plugin_loader.service is not active. Reboot or start Decky to load the JACoB HUD bridge.\n' "$(date -Is)" >> "$LOG_FILE"
+    fi
+  fi
 else
   printf '[%s] Decky Loader not detected; HUD bridge retained at %s.\n' "$(date -Is)" "$HOST_DECKY_DIR" >> "$LOG_FILE"
 fi
