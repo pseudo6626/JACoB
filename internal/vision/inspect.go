@@ -98,11 +98,6 @@ func (t *Tracker) Inspect(req InspectRequest) (InspectResult, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if !t.lastCapture.IsZero() && time.Since(t.lastCapture) < 125*time.Millisecond {
-		return out, errors.New("vision inspection rate limited")
-	}
-	t.lastCapture = time.Now()
-
 	maxWidth := req.MaxWidth
 	if maxWidth == 0 {
 		maxWidth = 1280

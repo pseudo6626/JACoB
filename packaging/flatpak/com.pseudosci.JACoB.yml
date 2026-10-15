@@ -17,6 +17,8 @@ modules:
     buildsystem: simple
     build-commands:
       - install -Dm755 JACoB /app/libexec/JACoB
+      - mkdir -p /app/libexec/tesseract
+      - cp -a tesseract-appdir/. /app/libexec/tesseract/
       - install -Dm755 jacob-flatpak-launch /app/bin/jacob-flatpak-launch
       - install -Dm755 jacob-steam-integrate /app/bin/jacob-steam-integrate
       - install -Dm644 VERSION /app/share/jacob/VERSION
@@ -38,3 +40,6 @@ modules:
         path: com.pseudosci.JACoB.metainfo.xml
       - type: file
         path: jacob-icon-256.png
+      - type: dir
+        path: tesseract-appdir
+        dest: tesseract-appdir

@@ -628,6 +628,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		log.Printf("ws/disconnect: local=%t remote=%q device=%q", local, remoteAddressKey(r), deviceID)
 		s.stopRecorderOwnedBy(client)
+		if s.controls != nil {
+			if released, err := s.controls.ReleaseAll(); released > 0 || err != nil {
+				log.Printf("input/release-on-disconnect: released=%d err=%v", released, err)
+			}
+		}
 		s.unregisterClient(client)
 		_ = client.Close()
 	}()
@@ -711,6 +716,9 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		if s.recorder.Status().Recording {
 			_, _ = s.recorder.Stop()
 		}
+		if s.controls != nil {
+			_, _ = s.controls.ReleaseAll()
+		}
 		if s.overlay != nil {
 			_ = s.overlay.ClearAll()
 		}
@@ -747,6 +755,10 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		s.sendResult(c, req.ID, map[string]any{"events": events, "info": info})
 	case "system.health":
 		s.sendResult(c, req.ID, s.healthForClient(s.clientPrivileged(c)))
+	case "system.performance":
+		s.sendResult(c, req.ID, s.performanceProfile())
+	case "system.capabilities":
+		s.sendResult(c, req.ID, s.capabilities())
 	case "network.diagnostics":
 		if !s.requireLocal(c, req.ID, "network diagnostics") {
 			return
@@ -1923,6 +1935,17 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			return
 		}
 		s.sendResult(c, req.ID, result)
+	case "binding.releaseAll", "bindings.releaseAll", "input.releaseAll":
+		if s.controls == nil {
+			s.sendResult(c, req.ID, map[string]any{"released": 0})
+			return
+		}
+		released, err := s.controls.ReleaseAll()
+		if err != nil {
+			_ = s.sendError(c, req.ID, "INPUT_RELEASE_FAILED", err.Error())
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"released": released, "held": s.controls.HeldCount()})
 	case "binding.hold":
 		if !s.requireInput(c, req.ID) {
 			return
@@ -2253,7 +2276,7 @@ func (s *Server) systemInfo(includeSecret bool) map[string]any {
 	// token. A tab with Video permission must never receive a WebSocket credential.
 	mediaToken := s.mediaToken
 	return map[string]any{
-		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 12, "pid": os.Getpid(), "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken,
+		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 14, "pid": os.Getpid(), "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken, "capabilities": s.capabilities(), "performance": s.performanceProfile(),
 		"journalDir": journalDir, "bindingsDir": bindingsDir, "bindingsFile": bindingsFile, "bindingsFiles": bindingsFiles, "bindingsSource": s.bindings.ActiveSource(), "bindingsCount": len(s.bindings.ListActions()), "autoBind": s.autoBind,
 		"input": map[string]any{"enabled": s.cfg.EnableInput, "available": s.input.Available(), "driver": s.input.Name()}, "recorder": s.recorder.Status(), "capture": map[string]any{"available": s.capture.Available(), "driver": s.capture.Name(), "eliteOnly": true, "foregroundOnly": true}, "vision": func() map[string]any {
 			if s.vision != nil {

@@ -96,6 +96,12 @@ type CaptureDriver interface {
 	CaptureJPEG(maxWidth int, quality int) ([]byte, CaptureInfo, error)
 }
 
+// CaptureStatsProvider is implemented by capture backends that can expose
+// low-information performance/targeting diagnostics without exposing pixels.
+type CaptureStatsProvider interface {
+	CaptureStats() map[string]any
+}
+
 // PrivacyMatteCaptureDriver is an optional Game View presentation capability.
 // It is not part of the canonical frame contract and Vision never calls it.
 type PrivacyMatteCaptureDriver interface {

@@ -106,21 +106,25 @@ type OverlayItem struct {
 }
 
 type OverlayInfo struct {
-	Available       bool     `json:"available"`
-	Driver          string   `json:"driver"`
-	Visible         bool     `json:"visible"`
-	Layers          int      `json:"layers"`
-	Width           int      `json:"width,omitempty"`
-	Height          int      `json:"height,omitempty"`
-	SupportsAlpha   bool     `json:"supportsAlpha"`
-	SupportsText    bool     `json:"supportsText"`
-	SupportsShapes  []string `json:"supportsShapes"`
-	CoordinateSpace []string `json:"coordinateSpaces"`
-	HUDVersion      int      `json:"hudVersion,omitempty"`
-	Themes          []string `json:"themes,omitempty"`
-	SemanticTypes   []string `json:"semanticTypes,omitempty"`
-	Effects         []string `json:"effects,omitempty"`
-	Note            string   `json:"note,omitempty"`
+	Available           bool     `json:"available"`
+	Driver              string   `json:"driver"`
+	Visible             bool     `json:"visible"`
+	Layers              int      `json:"layers"`
+	Width               int      `json:"width,omitempty"`
+	Height              int      `json:"height,omitempty"`
+	SupportsAlpha       bool     `json:"supportsAlpha"`
+	SupportsText        bool     `json:"supportsText"`
+	SupportsShapes      []string `json:"supportsShapes"`
+	CoordinateSpace     []string `json:"coordinateSpaces"`
+	HUDVersion          int      `json:"hudVersion,omitempty"`
+	Themes              []string `json:"themes,omitempty"`
+	SemanticTypes       []string `json:"semanticTypes,omitempty"`
+	Effects             []string `json:"effects,omitempty"`
+	TargetDisplay       string   `json:"targetDisplay,omitempty"`
+	SurfaceCreated      bool     `json:"surfaceCreated,omitempty"`
+	Mapped              bool     `json:"mapped,omitempty"`
+	CompositionVerified bool     `json:"compositionVerified,omitempty"`
+	Note                string   `json:"note,omitempty"`
 }
 
 type OverlayDriver interface {

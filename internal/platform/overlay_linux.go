@@ -32,8 +32,8 @@ typedef struct {
     int mapped;
 } JacobOverlay;
 
-static JacobOverlay* jacob_overlay_create() {
-    Display *d = XOpenDisplay(NULL);
+static JacobOverlay* jacob_overlay_create(const char *display_name, unsigned long parent_window) {
+    Display *d = XOpenDisplay(display_name && *display_name ? display_name : NULL);
     if (!d) return NULL;
     int screen = DefaultScreen(d);
     XVisualInfo tpl;
@@ -67,6 +67,9 @@ static JacobOverlay* jacob_overlay_create() {
         return NULL;
     }
     XStoreName(d, win, "JACoB HUD");
+    if (parent_window != 0) {
+        XSetTransientForHint(d, win, (Window)parent_window);
+    }
 
     // Gamescope's external-overlay slot is owned by Mangoapp on Steam Deck.
     // Tag this as a secondary Elite window instead; embedded Gamescope stacks
@@ -92,6 +95,24 @@ static JacobOverlay* jacob_overlay_create() {
         XFree(wmh);
     }
 
+    Atom type_atom = XInternAtom(d, "_NET_WM_WINDOW_TYPE", False);
+    Atom type_notification = XInternAtom(d, "_NET_WM_WINDOW_TYPE_NOTIFICATION", False);
+    XChangeProperty(d, win, type_atom, XA_ATOM, 32, PropModeReplace,
+        (unsigned char*)&type_notification, 1);
+
+    Atom state_atom = XInternAtom(d, "_NET_WM_STATE", False);
+    Atom states[3];
+    states[0] = XInternAtom(d, "_NET_WM_STATE_ABOVE", False);
+    states[1] = XInternAtom(d, "_NET_WM_STATE_SKIP_TASKBAR", False);
+    states[2] = XInternAtom(d, "_NET_WM_STATE_SKIP_PAGER", False);
+    XChangeProperty(d, win, state_atom, XA_ATOM, 32, PropModeReplace,
+        (unsigned char*)states, 3);
+
+    Atom no_focus = XInternAtom(d, "GAMESCOPE_NO_FOCUS", False);
+    unsigned long one_no_focus = 1;
+    XChangeProperty(d, win, no_focus, XA_CARDINAL, 32, PropModeReplace,
+        (unsigned char*)&one_no_focus, 1);
+
     // Keep the old Gamescope external-overlay path available for non-Deck
     // experiments, but never request it by default on SteamOS.
     const char *external = getenv("JACOB_GAMESCOPE_EXTERNAL_OVERLAY");
@@ -116,6 +137,11 @@ static JacobOverlay* jacob_overlay_create() {
     XFlush(d);
     return o;
 }
+static void jacob_overlay_attach(JacobOverlay *o, unsigned long parent_window) {
+    if (!o || parent_window == 0) return;
+    XSetTransientForHint(o->dpy, o->win, (Window)parent_window);
+    XFlush(o->dpy);
+}
 static void jacob_overlay_destroy(JacobOverlay *o) {
     if (!o) return;
     if (o->gc) XFreeGC(o->dpy,o->gc);
@@ -126,11 +152,15 @@ static void jacob_overlay_destroy(JacobOverlay *o) {
 }
 static int jacob_overlay_width(JacobOverlay *o){ return o?o->width:0; }
 static int jacob_overlay_height(JacobOverlay *o){ return o?o->height:0; }
+static int jacob_overlay_mapped(JacobOverlay *o){ return o?o->mapped:0; }
 static void jacob_overlay_refresh_size(JacobOverlay *o){ if(!o)return; int w=DisplayWidth(o->dpy,o->screen),h=DisplayHeight(o->dpy,o->screen); if(w!=o->width||h!=o->height){o->width=w;o->height=h;XMoveResizeWindow(o->dpy,o->win,0,0,w,h);} }
 static void jacob_overlay_show(JacobOverlay *o, int show) {
     if(!o) return;
-    if(show && !o->mapped){ XMapRaised(o->dpy,o->win); o->mapped=1; }
-    if(!show && o->mapped){ XUnmapWindow(o->dpy,o->win); o->mapped=0; }
+    if(show && !o->mapped){ XMapWindow(o->dpy,o->win); o->mapped=1; }
+    if(!show && o->mapped){
+        XSetForeground(o->dpy,o->gc,0x00000000UL);
+        XFillRectangle(o->dpy,o->win,o->gc,0,0,o->width,o->height);
+    }
     XFlush(o->dpy);
 }
 static void jacob_overlay_begin(JacobOverlay *o) {
@@ -169,26 +199,52 @@ import (
 )
 
 type linuxOverlay struct {
-	state  *overlayState
-	mu     sync.Mutex
-	native *C.JacobOverlay
-	err    error
+	state   *overlayState
+	mu      sync.Mutex
+	native  *C.JacobOverlay
+	display string
+	err     error
 }
 
 func newOverlayDriver() OverlayDriver {
 	o := &linuxOverlay{state: newOverlayState()}
-	if os.Getenv("DISPLAY") == "" {
-		o.err = fmt.Errorf("DISPLAY is not set; Gamescope/XWayland overlay is unavailable")
-		return o
-	}
-	o.native = C.jacob_overlay_create()
-	if o.native == nil {
-		o.err = fmt.Errorf("could not create a 32-bit X11 overlay window")
+	if os.Getenv("DISPLAY") == "" && len(linuxX11Displays()) == 0 {
+		o.err = fmt.Errorf("X11/XWayland overlay display is unavailable")
 	}
 	return o
 }
-func (o *linuxOverlay) Name() string    { return "linux-x11-gamescope-steam-window-overlay" }
-func (o *linuxOverlay) Available() bool { return o.native != nil && o.err == nil }
+func (o *linuxOverlay) Name() string { return "linux-x11-gamescope-transient-hud" }
+func (o *linuxOverlay) Available() bool {
+	return o.err == nil && (o.native != nil || os.Getenv("DISPLAY") != "" || len(linuxX11Displays()) > 0)
+}
+
+func (o *linuxOverlay) ensureNativeLocked() error {
+	display := os.Getenv("DISPLAY")
+	parent := uintptr(0)
+	if targetDisplay, targetWindow, ok := linuxNativeEliteWindowTarget(); ok {
+		display = targetDisplay
+		parent = targetWindow
+	}
+	if display == "" {
+		return fmt.Errorf("X11/XWayland overlay display is unavailable")
+	}
+	if o.native != nil && o.display != display {
+		C.jacob_overlay_destroy(o.native)
+		o.native = nil
+	}
+	if o.native == nil {
+		cd := C.CString(display)
+		o.native = C.jacob_overlay_create(cd, C.ulong(parent))
+		C.free(unsafe.Pointer(cd))
+		if o.native == nil {
+			return fmt.Errorf("could not create a 32-bit X11 overlay window on %s", display)
+		}
+		o.display = display
+	} else if parent != 0 {
+		C.jacob_overlay_attach(o.native, C.ulong(parent))
+	}
+	return nil
+}
 func (o *linuxOverlay) SetLayer(layer string, scene OverlayScene) error {
 	if layer == "" {
 		return fmt.Errorf("overlay layer is required")
@@ -218,11 +274,15 @@ func (o *linuxOverlay) Info() OverlayInfo {
 		w = int(C.jacob_overlay_width(o.native))
 		h = int(C.jacob_overlay_height(o.native))
 	}
-	note := "X11 HUD surface created as a transparent secondary Elite Steam window. Gamescope compositor visibility cannot be confirmed from the client; JACoB reports only local surface state."
+	note := "X11 HUD surface is grouped as a no-input transient of the verified Elite client. It remains mapped after first use and clears to transparent when hidden so Gamescope does not reclassify it during calibration/debug updates."
 	if o.err != nil {
 		note = o.err.Error()
 	}
-	return OverlayInfo{Available: o.Available(), Driver: o.Name(), Visible: v, Layers: o.state.count(), Width: w, Height: h, SupportsAlpha: true, SupportsText: true, SupportsShapes: []string{"text", "line", "polyline", "polygon", "rect", "circle"}, CoordinateSpace: []string{"normalized", "pixels"}, Note: note}
+	mapped := false
+	if o.native != nil {
+		mapped = C.jacob_overlay_mapped(o.native) != 0
+	}
+	return OverlayInfo{Available: o.Available(), Driver: o.Name(), Visible: v, Layers: o.state.count(), Width: w, Height: h, SupportsAlpha: true, SupportsText: true, SupportsShapes: []string{"text", "line", "polyline", "polygon", "rect", "circle"}, CoordinateSpace: []string{"normalized", "pixels"}, TargetDisplay: o.display, SurfaceCreated: o.native != nil, Mapped: mapped, CompositionVerified: false, Note: note}
 }
 
 func (o *linuxOverlay) render() {
@@ -231,8 +291,15 @@ func (o *linuxOverlay) render() {
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if err := o.ensureNativeLocked(); err != nil {
+		o.err = err
+		return
+	}
 	layers, visible := o.state.snapshot()
 	show := visible && len(layers) > 0
+	if display, parent, ok := linuxNativeEliteWindowTarget(); ok && display == o.display {
+		C.jacob_overlay_attach(o.native, C.ulong(parent))
+	}
 	C.jacob_overlay_show(o.native, boolInt(show))
 	if !show {
 		return

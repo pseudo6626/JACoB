@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
   <title>JACoB</title>
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
@@ -16,9 +16,9 @@
   <div id="header-extra"></div>
   <a class="top-link" href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>
   <button id="quit-jacob" class="quit-button" hidden>Quit JACoB</button>
-  <div id="connection" class="status-mark offline">OFFLINE</div>
+  <div id="connection" class="status-mark offline" role="status" aria-live="polite">OFFLINE</div>
 </header>
-<nav id="main-nav">
+<nav id="main-nav" aria-label="JACoB navigation">
   <span id="nav-items" class="nav-group"></span>
   <span id="nav-extra"></span>
 </nav>

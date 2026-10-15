@@ -262,9 +262,9 @@ const hud=Object.freeze({
  ring:(x,y,r,options={})=>Object.assign({},cloneSDKValue(options),{type:'ring',x:Number(x),y:Number(y),r:Number(r)})
 });
 window.Elite=Object.freeze({
- api:Object.freeze({version:13}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
- bindings:Object.freeze({list:()=>request('bindings.list'),diagnostics:()=>request('bindings.diagnostics'),get:name=>request('bindings.get',{name}),reload:()=>request('bindings.reload'),press:action=>request('binding.press',{action}),down:action=>request('binding.down',{action}),up:action=>request('binding.up',{action}),hold:(action,durationMs=1000)=>request('binding.hold',{action,durationMs})}),
- input:Object.freeze({tap:(key,options={})=>request('input.tap',{key,delayMs:options.delayMs||0,modifiers:options.modifiers||[]}),hold:(key,durationMs=250,options={})=>request('input.hold',{key,durationMs,modifiers:options.modifiers||[]}),text:(text,options={})=>request('input.text',{text,intervalMs:options.intervalMs??15})}),
+ api:Object.freeze({version:14}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health'),performance:()=>request('system.performance'),capabilities:()=>request('system.capabilities')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
+ bindings:Object.freeze({list:()=>request('bindings.list'),diagnostics:()=>request('bindings.diagnostics'),get:name=>request('bindings.get',{name}),reload:()=>request('bindings.reload'),press:action=>request('binding.press',{action}),down:action=>request('binding.down',{action}),up:action=>request('binding.up',{action}),hold:(action,durationMs=1000)=>request('binding.hold',{action,durationMs}),releaseAll:()=>request('bindings.releaseAll')}),
+ input:Object.freeze({tap:(key,options={})=>request('input.tap',{key,delayMs:options.delayMs||0,modifiers:options.modifiers||[]}),hold:(key,durationMs=250,options={})=>request('input.hold',{key,durationMs,modifiers:options.modifiers||[]}),text:(text,options={})=>request('input.text',{text,intervalMs:options.intervalMs??15}),releaseAll:()=>request('input.releaseAll')}),
  recorder:Object.freeze({status:()=>request('recorder.status'),start:()=>request('recorder.start'),stop:()=>request('recorder.stop'),subscribe:cb=>onEvent('recorder.input',cb)}),
  macros:Object.freeze({list:()=>request('macros.list'),get:name=>request('macros.get',{name}),run:(name,args={})=>request('macros.run',{name,args}),exitMenus:()=>request('macros.run',{name:'exit_menus'}),openGalaxyMap:()=>request('macros.run',{name:'open_galaxy_map'}),openSystemMap:()=>request('macros.run',{name:'open_system_map'}),openNavigationPanel:()=>request('macros.run',{name:'open_navigation_panel'}),openCommsPanel:()=>request('macros.run',{name:'open_comms_panel'}),openRolePanel:()=>request('macros.run',{name:'open_role_panel'}),openInternalPanel:()=>request('macros.run',{name:'open_internal_panel'}),openQuickComms:()=>request('macros.run',{name:'open_quick_comms'}),openCodexDiscovery:()=>request('macros.run',{name:'open_codex_discovery'}),plotRoute:system=>request('macros.run',{name:'plot_route',args:{system}})}),
  overlay:Object.freeze({info:()=>request('overlay.info'),set:scene=>request('overlay.set',{scene}),clear:()=>request('overlay.clear'),hud}),
@@ -836,10 +836,19 @@ Allow this capability on this browser?`);
   function sdkTabList(){const hidden=hiddenNavigation();return navigationOrder().map(id=>{const custom=id.startsWith('custom-'),tab=custom?tabForNavID(id):null;return{id:custom?tab?.id||id.slice(7):id,navId:id,name:navLabel(id),type:custom?'custom':'default',hidden:hidden.has(id),active:state.activeTab===id,loaded:custom?savedTabFrame(tab?.id||'')?.dataset?.sdkReady==='1':true}})}
   async function activateSDKTab(target){const id=resolveSDKTabTarget(target);if(!id)throw actionError('TAB_NOT_FOUND','requested JACoB tab was not found');if(id.startsWith('custom-'))await ensureSavedTabLoaded(id.slice(7));switchTab(id);return{id,name:navLabel(id),hidden:hiddenNavigation().has(id)}}
 
+  function keepActiveNavVisible(){
+    if(!window.matchMedia?.('(max-width:900px)').matches)return;
+    const active=[...document.querySelectorAll('.nav')].find(x=>x.classList.contains('active'));
+    if(active)requestAnimationFrame(()=>active.scrollIntoView({block:'nearest',inline:'center'}));
+  }
+  function markActiveNav(tabName){
+    document.querySelectorAll('.nav').forEach(x=>{const active=x.dataset.tab===tabName;x.classList.toggle('active',active);if(active)x.setAttribute('aria-current','page');else x.removeAttribute('aria-current')});
+    keepActiveNavVisible();
+  }
   function switchTab(tabName){
     state.activeTab=tabName;
     if(tabName==='settings')dismissSettingsUpdateBadge();
-    document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.tab===tabName));
+    markActiveNav(tabName);
     document.querySelectorAll('.panel-page').forEach(x=>x.classList.toggle('active',x.id===tabName));
     if(tabName.startsWith('custom-'))ensureSavedTabLoaded(tabName.slice(7)).catch(e=>showSavedTabLoadError(tabName.slice(7),e));
   }
@@ -863,7 +872,7 @@ Allow this capability on this browser?`);
       if(hidden.has(id)&&id!=='tabmanager')continue;
       const btn=document.createElement('button');btn.className='nav';btn.dataset.tab=id;btn.textContent=navLabel(id);btn.title=navLabel(id);if(id==='settings')decorateSettingsUpdateBadge(btn);wireNavButton(btn);nav.appendChild(btn);
     }
-    document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.tab===state.activeTab));
+    markActiveNav(state.activeTab);
   }
   async function persistNavigation(order,hidden){
     try{state.navLayout=await request('tabs.layout.save',{order,hiddenDefaults:hidden});renderNavigation();renderNavigationManager();if(hidden.includes(state.activeTab)&&state.activeTab!=='tabmanager')switchTab('tabmanager');$('#navigation-result').textContent=tr('Navigation manifest saved.')}
@@ -1071,7 +1080,7 @@ Allow this capability on this browser?`);
   function ensureVisionCalibrationUI(){
     let root=$('#jacob-vision-calibration');if(root)return root;
     const style=document.createElement('style');
-    style.textContent=`#jacob-vision-calibration{position:fixed;inset:0;z-index:2147483000;background:#050708f2;color:#e9eef1;font:14px system-ui;display:flex;flex-direction:column}#jacob-vision-calibration[hidden]{display:none}.vision-cal-head{display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid #543014;background:#0a0d0f}.vision-cal-head strong{font-size:16px}.vision-cal-head .spacer{flex:1}.vision-cal-stage{position:relative;flex:1;min-height:0;display:grid;place-items:center;overflow:hidden;background:#000}.vision-cal-stage canvas{max-width:100%;max-height:100%;cursor:crosshair;image-rendering:auto}.vision-cal-foot{padding:10px 14px;border-top:1px solid #543014;background:#0a0d0f;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.vision-cal-foot button,.vision-cal-head button,.vision-cal-foot select{background:#111416;color:#eee;border:1px solid #8a430e;border-radius:0;padding:7px 10px}.vision-cal-foot button.primary{background:#9a4a11}.vision-cal-status{font:12px ui-monospace,Consolas,monospace;color:#aeb6bb;min-width:320px}.vision-cal-mode.active{outline:1px solid #00d7ff}.vision-cal-help{color:#b8b1a8}`;
+    style.textContent=`#jacob-vision-calibration{position:fixed;inset:0;z-index:2147483000;background:#050708f2;color:#e9eef1;font:14px system-ui;display:flex;flex-direction:column}#jacob-vision-calibration[hidden]{display:none}.vision-cal-head{display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid #543014;background:#0a0d0f}.vision-cal-head strong{font-size:16px}.vision-cal-head .spacer{flex:1}.vision-cal-stage{position:relative;flex:1;min-height:0;display:grid;place-items:center;overflow:hidden;background:#000}.vision-cal-stage canvas{max-width:100%;max-height:100%;cursor:crosshair;image-rendering:auto;touch-action:none;user-select:none;-webkit-user-select:none}.vision-cal-foot{padding:10px 14px;border-top:1px solid #543014;background:#0a0d0f;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.vision-cal-foot button,.vision-cal-head button,.vision-cal-foot select{background:#111416;color:#eee;border:1px solid #8a430e;border-radius:0;padding:7px 10px}.vision-cal-foot button.primary{background:#9a4a11}.vision-cal-status{font:12px ui-monospace,Consolas,monospace;color:#aeb6bb;min-width:320px}.vision-cal-mode.active{outline:1px solid #00d7ff}.vision-cal-help{color:#b8b1a8}`;
     document.head.appendChild(style);
     root=document.createElement('div');root.id='jacob-vision-calibration';root.hidden=true;
     root.innerHTML=`<div class="vision-cal-head"><strong>JACoB Vision calibration</strong><span id="vision-cal-title" class="vision-cal-help"></span><span class="spacer"></span><button id="vision-cal-cancel">Cancel</button></div><div class="vision-cal-stage"><canvas id="vision-cal-canvas"></canvas></div><div class="vision-cal-foot"><button id="vision-cal-region" class="vision-cal-mode active">Drag region</button><button id="vision-cal-color" class="vision-cal-mode">Pick color</button><label>Average <select id="vision-cal-average"><option>1</option><option>5</option><option selected>11</option><option>21</option></select></label><button id="vision-cal-preview">Preview saved bounds in Elite</button><span id="vision-cal-status" class="vision-cal-status">Waiting for Elite frame…</span><span class="spacer"></span><button id="vision-cal-use" class="primary">Use calibration</button></div>`;
@@ -1118,9 +1127,10 @@ Allow this capability on this browser?`);
       canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;sourceCanvas.width=img.naturalWidth;sourceCanvas.height=img.naturalHeight;sourceCtx.drawImage(img,0,0,img.naturalWidth,img.naturalHeight);draw();
       status.textContent='Frozen Elite snapshot. Drag the area to inspect'+(pickColor?' or choose Pick color and click the target color.':'.');
       if(pickColor)setMode(options.startMode==='color'?'color':'region');
-      canvas.onpointerdown=ev=>{if(mode==='region'){drag=cssPoint(ev);canvas.setPointerCapture?.(ev.pointerId)}};
-      canvas.onpointermove=ev=>{if(mode==='region'&&drag){region=normRect(drag,cssPoint(ev));draw()}};
-      canvas.onpointerup=ev=>{const p=cssPoint(ev);if(mode==='region'&&drag){region=normRect(drag,p);drag=null;draw()}else if(mode==='color')sampleColorAt(p)};
+      canvas.onpointerdown=ev=>{if(ev.cancelable)ev.preventDefault();if(mode==='region'){drag=cssPoint(ev);try{canvas.setPointerCapture?.(ev.pointerId)}catch{}}};
+      canvas.onpointermove=ev=>{if(mode==='region'&&drag){if(ev.cancelable)ev.preventDefault();region=normRect(drag,cssPoint(ev));draw()}};
+      canvas.onpointerup=ev=>{if(ev.cancelable)ev.preventDefault();const p=cssPoint(ev);if(mode==='region'&&drag){region=normRect(drag,p);drag=null;draw()}else if(mode==='color')sampleColorAt(p)};
+      canvas.onpointercancel=ev=>{if(ev.cancelable)ev.preventDefault();drag=null;draw()};
       $('#vision-cal-region').onclick=()=>setMode('region');$('#vision-cal-color').onclick=()=>setMode('color');
       avgSelect.onchange=()=>{if(sample)sampleColorAt({x:sample.x*canvas.width,y:sample.y*canvas.height})};
       $('#vision-cal-preview').onclick=async()=>{try{await showVisionDebug(frame,{region,label:options.label||options.id||'VISION'});status.textContent+='  ·  bounds sent to Elite overlay'}catch(e){status.textContent=e.message||String(e)}};
@@ -1129,7 +1139,7 @@ Allow this capability on this browser?`);
         $('#vision-cal-cancel').onclick=()=>reject(actionError('VISION_CALIBRATION_CANCELLED','Vision calibration was cancelled'));
       });
     }finally{
-      root.hidden=true;canvas.onpointerdown=canvas.onpointermove=canvas.onpointerup=null;visionCalibrationState.active=null;request('vision.calibration.clear').catch(()=>{});
+      root.hidden=true;canvas.onpointerdown=canvas.onpointermove=canvas.onpointerup=canvas.onpointercancel=null;visionCalibrationState.active=null;request('vision.calibration.clear').catch(()=>{});
     }
   }
   function overlayLayerForFrame(frame){if(frame?.dataset?.savedTabId)return `tab:${frame.dataset.savedTabId}`;return frame?.dataset?.overlayLayer||'preview'}

@@ -81,7 +81,7 @@ start_jacob() {
   if [[ ! -x "$JACOB_BIN" ]]; then
     return 0
   fi
-  JACOB_STEAM_APP_ID=359320 "$JACOB_BIN" >/dev/null 2>&1 &
+  JACOB_TESSERACT="$HOME/.local/share/JACoB/ocr/tesseract/AppRun" JACOB_STEAM_APP_ID=359320 "$JACOB_BIN" >/dev/null 2>&1 &
   JACOB_PID=$!
   JACOB_OWNED=1
 }

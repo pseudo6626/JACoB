@@ -7,8 +7,11 @@ HOST_DIR="$HOST_HOME/.local/share/JACoB"
 HOST_BIN="$HOST_DIR/JACoB"
 STAMP="$HOST_DIR/.flatpak-payload-version"
 HASH_STAMP="$HOST_DIR/.flatpak-payload-sha256"
+OCR_DIR="$HOST_DIR/ocr/tesseract"
+OCR_STAMP="$HOST_DIR/.flatpak-ocr-sha256"
 PACKAGED_VERSION="$(cat /app/share/jacob/VERSION 2>/dev/null || echo unknown)"
 PACKAGED_HASH="$(sha256sum /app/libexec/JACoB | awk '{print $1}')"
+PACKAGED_OCR_HASH="$(sha256sum /app/libexec/tesseract/AppRun | awk '{print $1}')"
 LOG_DIR="$HOST_HOME/.config/JACoB"
 LOG_FILE="$LOG_DIR/deck-install.log"
 
@@ -30,8 +33,36 @@ fi
 printf '%s\n' "$PACKAGED_VERSION" > "$STAMP"
 printf '%s\n' "$PACKAGED_HASH" > "$HASH_STAMP"
 
+HOST_OCR_HASH="$(cat "$OCR_STAMP" 2>/dev/null || true)"
+if [[ ! -x "$OCR_DIR/AppRun" || "$HOST_OCR_HASH" != "$PACKAGED_OCR_HASH" ]]; then
+  rm -rf "$OCR_DIR.new"
+  mkdir -p "$OCR_DIR.new"
+  cp -a /app/libexec/tesseract/. "$OCR_DIR.new/"
+  rm -rf "$OCR_DIR"
+  mv "$OCR_DIR.new" "$OCR_DIR"
+  chmod +x "$OCR_DIR/AppRun"
+  printf '%s\n' "$PACKAGED_OCR_HASH" > "$OCR_STAMP"
+  printf '[%s] Installed bundled OCR runtime sha256=%s\n' "$(date -Is)" "$PACKAGED_OCR_HASH" >> "$LOG_FILE"
+fi
+
 if [[ "${1:-}" != "--service-only" ]]; then
+  RULE_MARKER='JACoB Steam Deck input access'
+  if ! flatpak-spawn --host sh -lc 'grep -Fq "JACoB Steam Deck input access" /etc/udev/rules.d/70-jacob-input.rules 2>/dev/null'; then
+    printf '[%s] Requesting one-time input-device permission setup.\n' "$(date -Is)" >> "$LOG_FILE"
+    if flatpak-spawn --host pkexec sh -c 'cat > /etc/udev/rules.d/70-jacob-input.rules <<"EOF"
+# JACoB Steam Deck input access
+KERNEL=="uinput", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_KEYBOARD}=="1", MODE="0660", TAG+="uaccess"
+EOF
+udevadm control --reload-rules
+udevadm trigger --subsystem-match=input --action=change
+'; then
+      printf '[%s] Input-device permissions installed.\n' "$(date -Is)" >> "$LOG_FILE"
+    else
+      printf '[%s] WARNING: input-device permission setup was declined or failed; Action Recorder may remain unavailable.\n' "$(date -Is)" >> "$LOG_FILE"
+    fi
+  fi
   JACOB_HOST_HOME="$HOST_HOME" /app/bin/jacob-steam-integrate || true
 fi
 
-exec flatpak-spawn --host sh -lc 'export JACOB_OPEN_BROWSER=1; exec "$HOME/.local/share/JACoB/JACoB"'
+exec flatpak-spawn --host sh -lc 'export JACOB_OPEN_BROWSER=1; export JACOB_TESSERACT="$HOME/.local/share/JACoB/ocr/tesseract/AppRun"; exec "$HOME/.local/share/JACoB/JACoB"'

@@ -36,6 +36,26 @@ static int jacob_focus_read_u32(Display *d, Window w, const char *name, unsigned
     return 1;
 }
 
+static void jacob_focus_classify(Display *d, Window win, int *class_elite, int *class_jacob) {
+    if (!class_elite || !class_jacob) return;
+    *class_elite = 0;
+    *class_jacob = 0;
+    XClassHint hint;
+    memset(&hint, 0, sizeof(hint));
+    if (!XGetClassHint(d, win, &hint)) return;
+    const char *elite = "steam_app_359320";
+    if ((hint.res_name && strstr(hint.res_name, elite)) ||
+        (hint.res_class && strstr(hint.res_class, elite))) {
+        *class_elite = 1;
+    }
+    if ((hint.res_name && strstr(hint.res_name, "jacob-hud")) ||
+        (hint.res_class && strstr(hint.res_class, "JACoB"))) {
+        *class_jacob = 1;
+    }
+    if (hint.res_name) XFree(hint.res_name);
+    if (hint.res_class) XFree(hint.res_class);
+}
+
 static int jacob_focus_probe_display(const char *display_name,
     unsigned long *focused_app,
     unsigned long *focused_gfx,
@@ -77,11 +97,15 @@ static int jacob_focus_inspect_window(const char *display_name,
     unsigned long window_id,
     unsigned long *steam_game,
     unsigned long *pid,
-    int *class_elite) {
-    if (!display_name || !window_id || !steam_game || !pid || !class_elite) return 0;
+    int *class_elite,
+    int *class_jacob,
+    int *viewable) {
+    if (!display_name || !window_id || !steam_game || !pid || !class_elite || !class_jacob || !viewable) return 0;
     *steam_game = 0;
     *pid = 0;
     *class_elite = 0;
+    *class_jacob = 0;
+    *viewable = 0;
 
     Display *d = XOpenDisplay(display_name);
     if (!d) return 0;
@@ -97,23 +121,60 @@ static int jacob_focus_inspect_window(const char *display_name,
         return 0;
     }
 
+    *viewable = attr.map_state == IsViewable ? 1 : 0;
     jacob_focus_read_u32(d, win, "STEAM_GAME", steam_game);
     jacob_focus_read_u32(d, win, "_NET_WM_PID", pid);
-
-    XClassHint hint;
-    memset(&hint, 0, sizeof(hint));
-    if (XGetClassHint(d, win, &hint)) {
-        const char *needle = "steam_app_359320";
-        if ((hint.res_name && strstr(hint.res_name, needle)) ||
-            (hint.res_class && strstr(hint.res_class, needle))) {
-            *class_elite = 1;
-        }
-        if (hint.res_name) XFree(hint.res_name);
-        if (hint.res_class) XFree(hint.res_class);
-    }
+    jacob_focus_classify(d, win, class_elite, class_jacob);
 
     XCloseDisplay(d);
     return 1;
+}
+
+static int jacob_focus_find_elite_class_window(const char *display_name,
+    unsigned long self_pid,
+    unsigned long *window_id,
+    unsigned long *pid) {
+    if (!display_name || !window_id || !pid) return 0;
+    *window_id = 0;
+    *pid = 0;
+
+    Display *d = XOpenDisplay(display_name);
+    if (!d) return 0;
+    Window root = DefaultRootWindow(d), rr = 0, parent = 0, *children = NULL;
+    unsigned int nchildren = 0;
+    if (!XQueryTree(d, root, &rr, &parent, &children, &nchildren)) {
+        XCloseDisplay(d);
+        return 0;
+    }
+
+    for (int i = (int)nchildren - 1; i >= 0; i--) {
+        Window win = children[i];
+        XWindowAttributes attr;
+        jacob_focus_last_x_error = 0;
+        int (*old_handler)(Display*, XErrorEvent*) = XSetErrorHandler(jacob_focus_x_error_handler);
+        int got_attr = XGetWindowAttributes(d, win, &attr);
+        XSync(d, False);
+        XSetErrorHandler(old_handler);
+        if (!got_attr || jacob_focus_last_x_error || attr.map_state != IsViewable) continue;
+
+        unsigned long wp = 0;
+        jacob_focus_read_u32(d, win, "_NET_WM_PID", &wp);
+        if (self_pid && wp == self_pid) continue;
+
+        int class_elite = 0, class_jacob = 0;
+        jacob_focus_classify(d, win, &class_elite, &class_jacob);
+        if (class_elite && !class_jacob) {
+            *window_id = (unsigned long)win;
+            *pid = wp;
+            if (children) XFree(children);
+            XCloseDisplay(d);
+            return 1;
+        }
+    }
+
+    if (children) XFree(children);
+    XCloseDisplay(d);
+    return 0;
 }
 */
 import "C"
@@ -133,6 +194,16 @@ type linuxFocusEvidence struct {
 	window     uintptr
 }
 
+type linuxWindowEvidence struct {
+	display    string
+	window     uintptr
+	steamGame  uint64
+	pid        int
+	classElite bool
+	classJACoB bool
+	viewable   bool
+}
+
 func linuxX11Displays() []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, 4)
@@ -145,9 +216,6 @@ func linuxX11Displays() []string {
 		out = append(out, v)
 	}
 
-	// Keep JACoB's inherited game display first, then inspect every local
-	// Gamescope XWayland socket. Steam Deck Gaming Mode currently uses separate
-	// control and game XWayland servers, commonly :0 and :1.
 	add(os.Getenv("DISPLAY"))
 	matches, _ := filepath.Glob("/tmp/.X11-unix/X*")
 	sort.Strings(matches)
@@ -175,36 +243,120 @@ func probeLinuxX11Display(display string) (linuxFocusEvidence, bool) {
 	}, true
 }
 
-func inspectLinuxX11Window(display string, window uintptr) (exists bool, elite bool) {
+func inspectLinuxX11WindowEvidence(display string, window uintptr) (linuxWindowEvidence, bool) {
 	if window == 0 {
-		return false, false
+		return linuxWindowEvidence{}, false
 	}
 	cd := C.CString(display)
 	defer C.free(unsafe.Pointer(cd))
 	var steamGame, pid C.ulong
-	var classElite C.int
-	if C.jacob_focus_inspect_window(cd, C.ulong(window), &steamGame, &pid, &classElite) == 0 {
-		return false, false
+	var classElite, classJACoB, viewable C.int
+	if C.jacob_focus_inspect_window(cd, C.ulong(window), &steamGame, &pid, &classElite, &classJACoB, &viewable) == 0 {
+		return linuxWindowEvidence{}, false
 	}
-	if uint64(steamGame) == 359320 || classElite != 0 {
-		return true, true
-	}
-	if pid != 0 && linuxPIDTreeIsElite(int(pid)) {
-		return true, true
-	}
-	return true, false
+	return linuxWindowEvidence{
+		display: display, window: window, steamGame: uint64(steamGame), pid: int(pid),
+		classElite: classElite != 0, classJACoB: classJACoB != 0, viewable: viewable != 0,
+	}, true
 }
 
-func findEliteFocusedWindow(window uintptr, displays []string) (uintptr, bool) {
+func linuxWindowIsElite(ev linuxWindowEvidence) bool {
+	if !ev.viewable || ev.window == 0 {
+		return false
+	}
+	if ev.pid == os.Getpid() || ev.classJACoB {
+		return false
+	}
+	if ev.classElite {
+		return true
+	}
+	return ev.steamGame == 359320 && ev.pid > 0 && linuxPIDTreeIsElite(ev.pid)
+}
+
+func inspectLinuxX11Window(display string, window uintptr) (exists bool, elite bool) {
+	ev, ok := inspectLinuxX11WindowEvidence(display, window)
+	return ok, ok && linuxWindowIsElite(ev)
+}
+
+func findEliteFocusedWindowTarget(window uintptr, displays []string) (string, uintptr, bool) {
 	if window == 0 {
-		return 0, false
+		return "", 0, false
 	}
 	for _, display := range displays {
-		if exists, elite := inspectLinuxX11Window(display, window); exists && elite {
-			return window, true
+		if ev, ok := inspectLinuxX11WindowEvidence(display, window); ok && linuxWindowIsElite(ev) {
+			return display, window, true
 		}
 	}
-	return 0, false
+	return "", 0, false
+}
+
+func findEliteClassWindowTarget(displays []string) (string, uintptr, bool) {
+	for _, display := range displays {
+		cd := C.CString(display)
+		var win, pid C.ulong
+		ok := C.jacob_focus_find_elite_class_window(cd, C.ulong(os.Getpid()), &win, &pid) != 0
+		C.free(unsafe.Pointer(cd))
+		if !ok || win == 0 {
+			continue
+		}
+		ev, exists := inspectLinuxX11WindowEvidence(display, uintptr(win))
+		if exists && linuxWindowIsElite(ev) {
+			return display, uintptr(win), true
+		}
+	}
+	return "", 0, false
+}
+
+func linuxFocusSnapshot() ([]string, []linuxFocusEvidence) {
+	displays := linuxX11Displays()
+	probes := make([]linuxFocusEvidence, 0, len(displays))
+	for _, display := range displays {
+		if probe, ok := probeLinuxX11Display(display); ok {
+			probes = append(probes, probe)
+		}
+	}
+	return displays, probes
+}
+
+// linuxNativeEliteWindowTarget returns only a real, viewable Elite client X11
+// window. JACoB's own HUD deliberately carries STEAM_GAME=359320 so Gamescope
+// composites it with Elite; that property alone is never enough to identify
+// the game window here.
+func linuxNativeEliteWindowTarget() (display string, window uintptr, ok bool) {
+	displays, probes := linuxFocusSnapshot()
+	if len(probes) == 0 {
+		return "", 0, false
+	}
+
+	for _, probe := range probes {
+		if probe.focusedGFX == 359320 {
+			if d, w, found := findEliteFocusedWindowTarget(probe.window, displays); found {
+				return d, w, true
+			}
+			return findEliteClassWindowTarget(displays)
+		}
+	}
+	for _, probe := range probes {
+		if probe.focusedGFX != 0 && probe.focusedGFX != 359320 {
+			return "", 0, false
+		}
+	}
+
+	for _, probe := range probes {
+		if probe.focusedApp == 359320 {
+			if d, w, found := findEliteFocusedWindowTarget(probe.window, displays); found {
+				return d, w, true
+			}
+			return findEliteClassWindowTarget(displays)
+		}
+	}
+
+	for _, probe := range probes {
+		if d, w, found := findEliteFocusedWindowTarget(probe.window, displays); found {
+			return d, w, true
+		}
+	}
+	return "", 0, false
 }
 
 func linuxNativeFocusAvailable() bool {
@@ -216,65 +368,42 @@ func linuxNativeFocusAvailable() bool {
 	return false
 }
 
-// linuxNativeFocusProbe correlates Gamescope's control XWayland server with
-// the game XWayland server. On Steam Deck, GAMESCOPE_FOCUSED_* is normally
-// published on :0 while Elite's actual 1280x800 window lives on :1.
+// linuxNativeFocusProbe answers the input-safety question. A positive Gamescope
+// GFX app id is sufficient to allow input even during a short window transition,
+// but capture callers separately require linuxNativeEliteWindowTarget so they
+// can never capture JACoB's own HUD.
 func linuxNativeFocusProbe() (resolved bool, elite bool, window uintptr) {
-	displays := linuxX11Displays()
-	if len(displays) == 0 {
-		return false, false, 0
-	}
-
-	probes := make([]linuxFocusEvidence, 0, len(displays))
-	for _, display := range displays {
-		if probe, ok := probeLinuxX11Display(display); ok {
-			probes = append(probes, probe)
-		}
-	}
+	displays, probes := linuxFocusSnapshot()
 	if len(probes) == 0 {
 		return false, false, 0
 	}
 
-	// GAMESCOPE_FOCUSED_APP_GFX is the best signal for the game currently being
-	// presented. Steam's own UI can temporarily occupy GAMESCOPE_FOCUSED_APP
-	// while the GFX app remains Elite, so never let that UI id veto GFX=359320.
 	for _, probe := range probes {
 		if probe.focusedGFX == 359320 {
-			if win, ok := findEliteFocusedWindow(probe.window, displays); ok {
-				return true, true, win
+			if _, w, ok := linuxNativeEliteWindowTarget(); ok {
+				return true, true, w
 			}
-			// Gamescope itself has positively identified Elite as the presented GFX
-			// app. Keep the XID so capture can resolve it on the inherited game display.
-			return true, true, probe.window
+			return true, true, 0
 		}
 	}
-
-	// If Gamescope positively identifies some other non-zero GFX app, that is
-	// strong negative evidence and input must remain blocked.
 	for _, probe := range probes {
 		if probe.focusedGFX != 0 && probe.focusedGFX != 359320 {
 			return true, false, probe.window
 		}
 	}
-
-	// Older Gamescope builds may expose only GAMESCOPE_FOCUSED_APP.
 	for _, probe := range probes {
 		if probe.focusedApp == 359320 {
-			if win, ok := findEliteFocusedWindow(probe.window, displays); ok {
-				return true, true, win
+			if _, w, ok := linuxNativeEliteWindowTarget(); ok {
+				return true, true, w
 			}
-			return true, true, probe.window
+			return true, true, 0
 		}
 	}
-
-	// Finally, verify any focused-window XID across all XWayland servers. A
-	// Steam/Game Mode UI app id alone is not treated as a negative result.
 	for _, probe := range probes {
-		if win, ok := findEliteFocusedWindow(probe.window, displays); ok {
-			return true, true, win
+		if _, w, found := findEliteFocusedWindowTarget(probe.window, displays); found {
+			return true, true, w
 		}
 	}
-
 	return false, false, 0
 }
 
@@ -284,6 +413,6 @@ func linuxNativeEliteFocus() (bool, bool) {
 }
 
 func linuxNativeEliteWindow() (uintptr, bool) {
-	resolved, elite, window := linuxNativeFocusProbe()
-	return window, resolved && elite && window != 0
+	_, window, ok := linuxNativeEliteWindowTarget()
+	return window, ok
 }

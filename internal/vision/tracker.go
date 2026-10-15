@@ -87,6 +87,7 @@ func (t *Tracker) Info() map[string]any {
 		"rawFramesExposed":  false,
 		"derived":           []string{"features", "frame-motion", "luma", "contrast", "region-color", "region-color-fill", "region-statistics", "text", "text-lines"},
 		"inspectOperations": []string{"colorPresent", "colorCoverage", "colorVerticalFill", "luma", "contrast", "edgeDensity", "text", "textLines"},
+		"ocr":               ocrInfo(),
 	}
 }
 

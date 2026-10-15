@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package vision
 
@@ -14,10 +14,14 @@ type ocrResult struct {
 
 func ocrText(img image.Image) (string, error) {
 	_ = img
-	return "", errors.New("OCR is only available in the Windows Vision build")
+	return "", errors.New("OCR is unavailable on this platform")
 }
 
 func ocrTextLines(img image.Image) (ocrResult, error) {
 	_ = img
-	return ocrResult{}, errors.New("OCR is only available in the Windows Vision build")
+	return ocrResult{}, errors.New("OCR is unavailable on this platform")
+}
+
+func ocrInfo() map[string]any {
+	return map[string]any{"available": false, "engine": "unavailable"}
 }
