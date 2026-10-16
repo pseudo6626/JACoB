@@ -1,0 +1,1245 @@
+name: Hotfix JACoB 0.2.18 Vulkan HUD v9
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  vulkan-hud:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build libvulkan-dev \
+            libx11-dev libxfixes-dev \
+            libpipewire-0.3-dev libwayland-dev \
+            flatpak flatpak-builder
+
+      - name: Add Vulkan HUD layer source
+        run: |
+          set -euo pipefail
+          mkdir -p native/vulkan-hud
+
+          cat > native/vulkan-hud/jacob_vk_layer.cpp <<'CPP'
+          #define VK_NO_PROTOTYPES
+          #include <vulkan/vulkan.h>
+          #include <vulkan/vk_layer.h>
+          
+          #include <algorithm>
+          #include <cstdint>
+          #include <cstdio>
+          #include <cstdlib>
+          #include <cstring>
+          #include <memory>
+          #include <mutex>
+          #include <string>
+          #include <unordered_map>
+          #include <vector>
+          
+          #include <sys/stat.h>
+          #include <unistd.h>
+          
+          #define JACOB_EXPORT __attribute__((visibility("default")))
+          
+          namespace {
+          
+          struct InstanceState {
+              VkInstance instance = VK_NULL_HANDLE;
+              PFN_vkGetInstanceProcAddr nextGIPA = nullptr;
+              PFN_GetPhysicalDeviceProcAddr nextGPDPA = nullptr;
+              PFN_vkDestroyInstance DestroyInstance = nullptr;
+              PFN_vkCreateDevice CreateDevice = nullptr;
+              PFN_vkGetPhysicalDeviceMemoryProperties GetPhysicalDeviceMemoryProperties = nullptr;
+          };
+          
+          struct DeviceState {
+              VkPhysicalDevice physical = VK_NULL_HANDLE;
+              VkDevice device = VK_NULL_HANDLE;
+              PFN_vkGetDeviceProcAddr nextGDPA = nullptr;
+          
+              PFN_vkDestroyDevice DestroyDevice = nullptr;
+              PFN_vkGetDeviceQueue GetDeviceQueue = nullptr;
+              PFN_vkGetDeviceQueue2 GetDeviceQueue2 = nullptr;
+              PFN_vkQueueSubmit QueueSubmit = nullptr;
+              PFN_vkDeviceWaitIdle DeviceWaitIdle = nullptr;
+          
+              PFN_vkCreateSwapchainKHR CreateSwapchainKHR = nullptr;
+              PFN_vkDestroySwapchainKHR DestroySwapchainKHR = nullptr;
+              PFN_vkGetSwapchainImagesKHR GetSwapchainImagesKHR = nullptr;
+              PFN_vkQueuePresentKHR QueuePresentKHR = nullptr;
+          
+              PFN_vkCreateCommandPool CreateCommandPool = nullptr;
+              PFN_vkDestroyCommandPool DestroyCommandPool = nullptr;
+              PFN_vkAllocateCommandBuffers AllocateCommandBuffers = nullptr;
+              PFN_vkFreeCommandBuffers FreeCommandBuffers = nullptr;
+              PFN_vkResetCommandBuffer ResetCommandBuffer = nullptr;
+              PFN_vkBeginCommandBuffer BeginCommandBuffer = nullptr;
+              PFN_vkEndCommandBuffer EndCommandBuffer = nullptr;
+          
+              PFN_vkCreateSemaphore CreateSemaphore = nullptr;
+              PFN_vkDestroySemaphore DestroySemaphore = nullptr;
+          
+              PFN_vkCreateBuffer CreateBuffer = nullptr;
+              PFN_vkDestroyBuffer DestroyBuffer = nullptr;
+              PFN_vkGetBufferMemoryRequirements GetBufferMemoryRequirements = nullptr;
+              PFN_vkAllocateMemory AllocateMemory = nullptr;
+              PFN_vkFreeMemory FreeMemory = nullptr;
+              PFN_vkBindBufferMemory BindBufferMemory = nullptr;
+              PFN_vkMapMemory MapMemory = nullptr;
+              PFN_vkUnmapMemory UnmapMemory = nullptr;
+          
+              PFN_vkCmdPipelineBarrier CmdPipelineBarrier = nullptr;
+              PFN_vkCmdCopyBufferToImage CmdCopyBufferToImage = nullptr;
+          };
+          
+          struct SwapState {
+              VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+              VkFormat format = VK_FORMAT_UNDEFINED;
+              VkExtent2D extent{};
+              bool transferDst = false;
+          
+              std::vector<VkImage> images;
+              uint32_t queueFamily = UINT32_MAX;
+          
+              VkCommandPool commandPool = VK_NULL_HANDLE;
+              std::vector<VkCommandBuffer> commandBuffers;
+              std::vector<VkSemaphore> renderDone;
+          
+              VkBuffer staging = VK_NULL_HANDLE;
+              VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+              VkDeviceSize stagingSize = 0;
+              std::vector<VkBufferImageCopy> regions;
+              bool ready = false;
+          };
+          
+          InstanceState g_instance;
+          DeviceState g_device;
+          std::unordered_map<uintptr_t, uint32_t> g_queueFamilies;
+          std::unordered_map<uintptr_t, std::unique_ptr<SwapState>> g_swaps;
+          std::mutex g_mu;
+          
+          uintptr_t key(VkQueue v) { return reinterpret_cast<uintptr_t>(v); }
+          uintptr_t key(VkSwapchainKHR v) { return reinterpret_cast<uintptr_t>(v); }
+          
+          void ensure_log_dir() {
+              const char* home = std::getenv("HOME");
+              if (!home || !*home) return;
+              std::string p1 = std::string(home) + "/.local";
+              std::string p2 = p1 + "/state";
+              std::string p3 = p2 + "/JACoB";
+              mkdir(p1.c_str(), 0755);
+              mkdir(p2.c_str(), 0755);
+              mkdir(p3.c_str(), 0755);
+          }
+          
+          void log_line(const char* msg) {
+              ensure_log_dir();
+              const char* home = std::getenv("HOME");
+              if (!home || !*home) return;
+              std::string path = std::string(home) + "/.local/state/JACoB/vulkan-hud.log";
+              FILE* f = std::fopen(path.c_str(), "a");
+              if (!f) return;
+              std::fprintf(f, "[pid=%d] %s\n", static_cast<int>(getpid()), msg);
+              std::fclose(f);
+          }
+          
+          template <typename T>
+          T load_dev(const char* name) {
+              return reinterpret_cast<T>(g_device.nextGDPA(g_device.device, name));
+          }
+          
+          VkLayerInstanceCreateInfo* instance_chain(const VkInstanceCreateInfo* ci, VkLayerFunction fn) {
+              struct Header { VkStructureType sType; const void* pNext; };
+              auto* h = reinterpret_cast<const Header*>(ci ? ci->pNext : nullptr);
+              while (h) {
+                  if (h->sType == VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO) {
+                      auto* li = reinterpret_cast<VkLayerInstanceCreateInfo*>(const_cast<Header*>(h));
+                      if (li->function == fn) return li;
+                  }
+                  h = reinterpret_cast<const Header*>(h->pNext);
+              }
+              return nullptr;
+          }
+          
+          VkLayerDeviceCreateInfo* device_chain(const VkDeviceCreateInfo* ci, VkLayerFunction fn) {
+              struct Header { VkStructureType sType; const void* pNext; };
+              auto* h = reinterpret_cast<const Header*>(ci ? ci->pNext : nullptr);
+              while (h) {
+                  if (h->sType == VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO) {
+                      auto* li = reinterpret_cast<VkLayerDeviceCreateInfo*>(const_cast<Header*>(h));
+                      if (li->function == fn) return li;
+                  }
+                  h = reinterpret_cast<const Header*>(h->pNext);
+              }
+              return nullptr;
+          }
+          
+          bool probe_enabled() {
+              const char* v = std::getenv("JACOB_VK_HUD_PROBE");
+              return v && *v && std::strcmp(v, "0") != 0;
+          }
+          
+          bool supported_format(VkFormat f) {
+              return f == VK_FORMAT_B8G8R8A8_UNORM ||
+                     f == VK_FORMAT_B8G8R8A8_SRGB ||
+                     f == VK_FORMAT_R8G8B8A8_UNORM ||
+                     f == VK_FORMAT_R8G8B8A8_SRGB;
+          }
+          
+          void append_pixel(std::vector<uint8_t>& out, VkFormat f,
+                            uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+              if (f == VK_FORMAT_B8G8R8A8_UNORM || f == VK_FORMAT_B8G8R8A8_SRGB) {
+                  out.push_back(b); out.push_back(g); out.push_back(r); out.push_back(a);
+              } else {
+                  out.push_back(r); out.push_back(g); out.push_back(b); out.push_back(a);
+              }
+          }
+          
+          void add_solid_region(SwapState& s, std::vector<uint8_t>& bytes,
+                                int x, int y, uint32_t w, uint32_t h,
+                                uint8_t r, uint8_t g, uint8_t b) {
+              if (w == 0 || h == 0) return;
+              if (x < 0 || y < 0) return;
+              if (static_cast<uint32_t>(x) + w > s.extent.width) return;
+              if (static_cast<uint32_t>(y) + h > s.extent.height) return;
+          
+              while (bytes.size() & 3u) bytes.push_back(0);
+              VkDeviceSize offset = static_cast<VkDeviceSize>(bytes.size());
+          
+              for (uint64_t i = 0; i < static_cast<uint64_t>(w) * h; ++i) {
+                  append_pixel(bytes, s.format, r, g, b, 255);
+              }
+          
+              VkBufferImageCopy reg{};
+              reg.bufferOffset = offset;
+              reg.bufferRowLength = 0;
+              reg.bufferImageHeight = 0;
+              reg.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+              reg.imageSubresource.mipLevel = 0;
+              reg.imageSubresource.baseArrayLayer = 0;
+              reg.imageSubresource.layerCount = 1;
+              reg.imageOffset = {x, y, 0};
+              reg.imageExtent = {w, h, 1};
+              s.regions.push_back(reg);
+          }
+          
+          uint32_t find_memory_type(uint32_t bits, VkMemoryPropertyFlags want) {
+              if (!g_instance.GetPhysicalDeviceMemoryProperties || g_device.physical == VK_NULL_HANDLE) {
+                  return UINT32_MAX;
+              }
+              VkPhysicalDeviceMemoryProperties props{};
+              g_instance.GetPhysicalDeviceMemoryProperties(g_device.physical, &props);
+              for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+                  if ((bits & (1u << i)) && (props.memoryTypes[i].propertyFlags & want) == want) {
+                      return i;
+                  }
+              }
+              return UINT32_MAX;
+          }
+          
+          void destroy_swap_resources(SwapState& s) {
+              if (g_device.device == VK_NULL_HANDLE) return;
+          
+              if (g_device.DeviceWaitIdle) g_device.DeviceWaitIdle(g_device.device);
+          
+              for (VkSemaphore sem : s.renderDone) {
+                  if (sem && g_device.DestroySemaphore) {
+                      g_device.DestroySemaphore(g_device.device, sem, nullptr);
+                  }
+              }
+              s.renderDone.clear();
+          
+              if (s.commandPool && g_device.DestroyCommandPool) {
+                  g_device.DestroyCommandPool(g_device.device, s.commandPool, nullptr);
+                  s.commandPool = VK_NULL_HANDLE;
+              }
+              s.commandBuffers.clear();
+          
+              if (s.staging && g_device.DestroyBuffer) {
+                  g_device.DestroyBuffer(g_device.device, s.staging, nullptr);
+                  s.staging = VK_NULL_HANDLE;
+              }
+              if (s.stagingMemory && g_device.FreeMemory) {
+                  g_device.FreeMemory(g_device.device, s.stagingMemory, nullptr);
+                  s.stagingMemory = VK_NULL_HANDLE;
+              }
+          
+              s.regions.clear();
+              s.ready = false;
+              s.queueFamily = UINT32_MAX;
+          }
+          
+          bool refresh_images(SwapState& s) {
+              if (!g_device.GetSwapchainImagesKHR) return false;
+              uint32_t count = 0;
+              VkResult r = g_device.GetSwapchainImagesKHR(
+                  g_device.device, s.swapchain, &count, nullptr);
+              if (r != VK_SUCCESS || count == 0) return false;
+              s.images.resize(count);
+              r = g_device.GetSwapchainImagesKHR(
+                  g_device.device, s.swapchain, &count, s.images.data());
+              if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
+                  s.images.clear();
+                  return false;
+              }
+              s.images.resize(count);
+              return !s.images.empty();
+          }
+          
+          bool prepare_swap(SwapState& s, uint32_t queueFamily) {
+              if (!probe_enabled()) return false;
+              if (!s.transferDst || !supported_format(s.format)) return false;
+          
+              if (s.ready) {
+                  return s.queueFamily == queueFamily;
+              }
+          
+              if (s.images.empty() && !refresh_images(s)) {
+                  log_line("probe: could not enumerate swapchain images");
+                  return false;
+              }
+          
+              std::vector<uint8_t> pixels;
+              s.regions.clear();
+          
+              add_solid_region(s, pixels, 20, 20, 20, 20, 255, 0, 0);
+              add_solid_region(s, pixels, 48, 20, 20, 20, 0, 255, 0);
+              add_solid_region(s, pixels, 76, 20, 20, 20, 0, 0, 255);
+          
+              int cx = static_cast<int>(s.extent.width / 2);
+              int cy = static_cast<int>(s.extent.height / 2);
+              add_solid_region(s, pixels, cx - 12, cy - 1, 25, 3, 255, 255, 255);
+              add_solid_region(s, pixels, cx - 1, cy - 12, 3, 25, 255, 255, 255);
+          
+              if (pixels.empty() || s.regions.empty()) return false;
+          
+              VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+              bci.size = pixels.size();
+              bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+              bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+          
+              if (g_device.CreateBuffer(g_device.device, &bci, nullptr, &s.staging) != VK_SUCCESS) {
+                  log_line("probe: vkCreateBuffer failed");
+                  return false;
+              }
+          
+              VkMemoryRequirements req{};
+              g_device.GetBufferMemoryRequirements(g_device.device, s.staging, &req);
+              uint32_t type = find_memory_type(
+                  req.memoryTypeBits,
+                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+              if (type == UINT32_MAX) {
+                  log_line("probe: no HOST_VISIBLE|HOST_COHERENT memory type");
+                  destroy_swap_resources(s);
+                  return false;
+              }
+          
+              VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+              mai.allocationSize = req.size;
+              mai.memoryTypeIndex = type;
+              if (g_device.AllocateMemory(g_device.device, &mai, nullptr, &s.stagingMemory) != VK_SUCCESS) {
+                  log_line("probe: vkAllocateMemory failed");
+                  destroy_swap_resources(s);
+                  return false;
+              }
+          
+              if (g_device.BindBufferMemory(g_device.device, s.staging, s.stagingMemory, 0) != VK_SUCCESS) {
+                  log_line("probe: vkBindBufferMemory failed");
+                  destroy_swap_resources(s);
+                  return false;
+              }
+          
+              void* mapped = nullptr;
+              if (g_device.MapMemory(
+                      g_device.device, s.stagingMemory, 0, pixels.size(), 0, &mapped) != VK_SUCCESS) {
+                  log_line("probe: vkMapMemory failed");
+                  destroy_swap_resources(s);
+                  return false;
+              }
+              std::memcpy(mapped, pixels.data(), pixels.size());
+              g_device.UnmapMemory(g_device.device, s.stagingMemory);
+              s.stagingSize = pixels.size();
+          
+              VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+              pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+              pci.queueFamilyIndex = queueFamily;
+              if (g_device.CreateCommandPool(
+                      g_device.device, &pci, nullptr, &s.commandPool) != VK_SUCCESS) {
+                  log_line("probe: vkCreateCommandPool failed");
+                  destroy_swap_resources(s);
+                  return false;
+              }
+          
+              s.commandBuffers.resize(s.images.size());
+              VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+              cai.commandPool = s.commandPool;
+              cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+              cai.commandBufferCount = static_cast<uint32_t>(s.commandBuffers.size());
+              if (g_device.AllocateCommandBuffers(
+                      g_device.device, &cai, s.commandBuffers.data()) != VK_SUCCESS) {
+                  log_line("probe: vkAllocateCommandBuffers failed");
+                  destroy_swap_resources(s);
+                  return false;
+              }
+          
+              s.renderDone.resize(s.images.size(), VK_NULL_HANDLE);
+              VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+              for (VkSemaphore& sem : s.renderDone) {
+                  if (g_device.CreateSemaphore(g_device.device, &sci, nullptr, &sem) != VK_SUCCESS) {
+                      log_line("probe: vkCreateSemaphore failed");
+                      destroy_swap_resources(s);
+                      return false;
+                  }
+              }
+          
+              s.queueFamily = queueFamily;
+              s.ready = true;
+          
+              char buf[256];
+              std::snprintf(buf, sizeof(buf),
+                            "probe ready: extent=%ux%u images=%zu format=%d queueFamily=%u",
+                            s.extent.width, s.extent.height, s.images.size(),
+                            static_cast<int>(s.format), queueFamily);
+              log_line(buf);
+              return true;
+          }
+          
+          bool submit_probe(VkQueue queue, SwapState& s, uint32_t imageIndex,
+                            const VkPresentInfoKHR* present, VkSemaphore* outWait) {
+              if (imageIndex >= s.images.size() ||
+                  imageIndex >= s.commandBuffers.size() ||
+                  imageIndex >= s.renderDone.size()) {
+                  return false;
+              }
+          
+              VkCommandBuffer cb = s.commandBuffers[imageIndex];
+              if (g_device.ResetCommandBuffer(cb, 0) != VK_SUCCESS) return false;
+          
+              VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+              bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+              if (g_device.BeginCommandBuffer(cb, &bi) != VK_SUCCESS) return false;
+          
+              VkImageMemoryBarrier toCopy{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+              toCopy.srcAccessMask = 0;
+              toCopy.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+              toCopy.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+              toCopy.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+              toCopy.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+              toCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+              toCopy.image = s.images[imageIndex];
+              toCopy.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+              toCopy.subresourceRange.baseMipLevel = 0;
+              toCopy.subresourceRange.levelCount = 1;
+              toCopy.subresourceRange.baseArrayLayer = 0;
+              toCopy.subresourceRange.layerCount = 1;
+          
+              g_device.CmdPipelineBarrier(
+                  cb,
+                  VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                  VK_PIPELINE_STAGE_TRANSFER_BIT,
+                  0, 0, nullptr, 0, nullptr, 1, &toCopy);
+          
+              g_device.CmdCopyBufferToImage(
+                  cb, s.staging, s.images[imageIndex],
+                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                  static_cast<uint32_t>(s.regions.size()), s.regions.data());
+          
+              VkImageMemoryBarrier toPresent = toCopy;
+              toPresent.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+              toPresent.dstAccessMask = 0;
+              toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+              toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+          
+              g_device.CmdPipelineBarrier(
+                  cb,
+                  VK_PIPELINE_STAGE_TRANSFER_BIT,
+                  VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                  0, 0, nullptr, 0, nullptr, 1, &toPresent);
+          
+              if (g_device.EndCommandBuffer(cb) != VK_SUCCESS) return false;
+          
+              std::vector<VkPipelineStageFlags> waitStages(
+                  present->waitSemaphoreCount, VK_PIPELINE_STAGE_TRANSFER_BIT);
+          
+              VkSemaphore signal = s.renderDone[imageIndex];
+          
+              VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+              si.waitSemaphoreCount = present->waitSemaphoreCount;
+              si.pWaitSemaphores = present->pWaitSemaphores;
+              si.pWaitDstStageMask = waitStages.empty() ? nullptr : waitStages.data();
+              si.commandBufferCount = 1;
+              si.pCommandBuffers = &cb;
+              si.signalSemaphoreCount = 1;
+              si.pSignalSemaphores = &signal;
+          
+              VkResult r = g_device.QueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+              if (r != VK_SUCCESS) {
+                  log_line("probe: vkQueueSubmit failed");
+                  return false;
+              }
+          
+              *outWait = signal;
+              return true;
+          }
+          
+          PFN_vkVoidFunction VKAPI_CALL jacobGetInstanceProcAddr(VkInstance, const char*);
+          PFN_vkVoidFunction VKAPI_CALL jacobGetDeviceProcAddr(VkDevice, const char*);
+          
+          VkResult VKAPI_CALL layerCreateInstance(
+              const VkInstanceCreateInfo* ci,
+              const VkAllocationCallbacks* allocator,
+              VkInstance* out) {
+          
+              VkLayerInstanceCreateInfo* chain = instance_chain(ci, VK_LAYER_LINK_INFO);
+              if (!chain || !chain->u.pLayerInfo) return VK_ERROR_INITIALIZATION_FAILED;
+          
+              PFN_vkGetInstanceProcAddr nextGIPA =
+                  chain->u.pLayerInfo->pfnNextGetInstanceProcAddr;
+              PFN_GetPhysicalDeviceProcAddr nextGPDPA =
+                  chain->u.pLayerInfo->pfnNextGetPhysicalDeviceProcAddr;
+              chain->u.pLayerInfo = chain->u.pLayerInfo->pNext;
+          
+              auto nextCreate = reinterpret_cast<PFN_vkCreateInstance>(
+                  nextGIPA(VK_NULL_HANDLE, "vkCreateInstance"));
+              if (!nextCreate) return VK_ERROR_INITIALIZATION_FAILED;
+          
+              VkResult r = nextCreate(ci, allocator, out);
+              if (r != VK_SUCCESS) return r;
+          
+              std::lock_guard<std::mutex> lock(g_mu);
+              g_instance.instance = *out;
+              g_instance.nextGIPA = nextGIPA;
+              g_instance.nextGPDPA = nextGPDPA;
+              g_instance.DestroyInstance = reinterpret_cast<PFN_vkDestroyInstance>(
+                  nextGIPA(*out, "vkDestroyInstance"));
+              g_instance.CreateDevice = reinterpret_cast<PFN_vkCreateDevice>(
+                  nextGIPA(*out, "vkCreateDevice"));
+              g_instance.GetPhysicalDeviceMemoryProperties =
+                  reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(
+                      nextGIPA(*out, "vkGetPhysicalDeviceMemoryProperties"));
+          
+              log_line("VK_LAYER_JACOB_hud active");
+              return r;
+          }
+          
+          void VKAPI_CALL layerDestroyInstance(
+              VkInstance instance, const VkAllocationCallbacks* allocator) {
+              PFN_vkDestroyInstance next = nullptr;
+              {
+                  std::lock_guard<std::mutex> lock(g_mu);
+                  next = g_instance.DestroyInstance;
+                  g_instance = {};
+              }
+              if (next) next(instance, allocator);
+          }
+          
+          VkResult VKAPI_CALL layerCreateDevice(
+              VkPhysicalDevice physical,
+              const VkDeviceCreateInfo* ci,
+              const VkAllocationCallbacks* allocator,
+              VkDevice* out) {
+          
+              VkLayerDeviceCreateInfo* chain = device_chain(ci, VK_LAYER_LINK_INFO);
+              if (!chain || !chain->u.pLayerInfo) return VK_ERROR_INITIALIZATION_FAILED;
+          
+              PFN_vkGetInstanceProcAddr nextGIPA =
+                  chain->u.pLayerInfo->pfnNextGetInstanceProcAddr;
+              PFN_vkGetDeviceProcAddr nextGDPA =
+                  chain->u.pLayerInfo->pfnNextGetDeviceProcAddr;
+              chain->u.pLayerInfo = chain->u.pLayerInfo->pNext;
+          
+              PFN_vkCreateDevice nextCreate = nullptr;
+              {
+                  std::lock_guard<std::mutex> lock(g_mu);
+                  if (g_instance.instance != VK_NULL_HANDLE) {
+                      nextCreate = reinterpret_cast<PFN_vkCreateDevice>(
+                          nextGIPA(g_instance.instance, "vkCreateDevice"));
+                  }
+              }
+              if (!nextCreate) return VK_ERROR_INITIALIZATION_FAILED;
+          
+              VkResult r = nextCreate(physical, ci, allocator, out);
+              if (r != VK_SUCCESS) return r;
+          
+              std::lock_guard<std::mutex> lock(g_mu);
+              g_device = {};
+              g_device.physical = physical;
+              g_device.device = *out;
+              g_device.nextGDPA = nextGDPA;
+          
+              g_device.DestroyDevice = load_dev<PFN_vkDestroyDevice>("vkDestroyDevice");
+              g_device.GetDeviceQueue = load_dev<PFN_vkGetDeviceQueue>("vkGetDeviceQueue");
+              g_device.GetDeviceQueue2 = load_dev<PFN_vkGetDeviceQueue2>("vkGetDeviceQueue2");
+              g_device.QueueSubmit = load_dev<PFN_vkQueueSubmit>("vkQueueSubmit");
+              g_device.DeviceWaitIdle = load_dev<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle");
+          
+              g_device.CreateSwapchainKHR = load_dev<PFN_vkCreateSwapchainKHR>("vkCreateSwapchainKHR");
+              g_device.DestroySwapchainKHR = load_dev<PFN_vkDestroySwapchainKHR>("vkDestroySwapchainKHR");
+              g_device.GetSwapchainImagesKHR = load_dev<PFN_vkGetSwapchainImagesKHR>("vkGetSwapchainImagesKHR");
+              g_device.QueuePresentKHR = load_dev<PFN_vkQueuePresentKHR>("vkQueuePresentKHR");
+          
+              g_device.CreateCommandPool = load_dev<PFN_vkCreateCommandPool>("vkCreateCommandPool");
+              g_device.DestroyCommandPool = load_dev<PFN_vkDestroyCommandPool>("vkDestroyCommandPool");
+              g_device.AllocateCommandBuffers = load_dev<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers");
+              g_device.FreeCommandBuffers = load_dev<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers");
+              g_device.ResetCommandBuffer = load_dev<PFN_vkResetCommandBuffer>("vkResetCommandBuffer");
+              g_device.BeginCommandBuffer = load_dev<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer");
+              g_device.EndCommandBuffer = load_dev<PFN_vkEndCommandBuffer>("vkEndCommandBuffer");
+          
+              g_device.CreateSemaphore = load_dev<PFN_vkCreateSemaphore>("vkCreateSemaphore");
+              g_device.DestroySemaphore = load_dev<PFN_vkDestroySemaphore>("vkDestroySemaphore");
+          
+              g_device.CreateBuffer = load_dev<PFN_vkCreateBuffer>("vkCreateBuffer");
+              g_device.DestroyBuffer = load_dev<PFN_vkDestroyBuffer>("vkDestroyBuffer");
+              g_device.GetBufferMemoryRequirements =
+                  load_dev<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements");
+              g_device.AllocateMemory = load_dev<PFN_vkAllocateMemory>("vkAllocateMemory");
+              g_device.FreeMemory = load_dev<PFN_vkFreeMemory>("vkFreeMemory");
+              g_device.BindBufferMemory = load_dev<PFN_vkBindBufferMemory>("vkBindBufferMemory");
+              g_device.MapMemory = load_dev<PFN_vkMapMemory>("vkMapMemory");
+              g_device.UnmapMemory = load_dev<PFN_vkUnmapMemory>("vkUnmapMemory");
+          
+              g_device.CmdPipelineBarrier =
+                  load_dev<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+              g_device.CmdCopyBufferToImage =
+                  load_dev<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage");
+          
+              log_line("probe: Vulkan device chained");
+              return r;
+          }
+          
+          void VKAPI_CALL layerDestroyDevice(
+              VkDevice device, const VkAllocationCallbacks* allocator) {
+              PFN_vkDestroyDevice next = nullptr;
+              {
+                  std::lock_guard<std::mutex> lock(g_mu);
+                  if (g_device.DeviceWaitIdle) g_device.DeviceWaitIdle(device);
+                  for (auto& it : g_swaps) destroy_swap_resources(*it.second);
+                  g_swaps.clear();
+                  g_queueFamilies.clear();
+                  next = g_device.DestroyDevice;
+                  g_device = {};
+              }
+              if (next) next(device, allocator);
+          }
+          
+          void VKAPI_CALL layerGetDeviceQueue(
+              VkDevice device, uint32_t family, uint32_t index, VkQueue* out) {
+              PFN_vkGetDeviceQueue next = nullptr;
+              {
+                  std::lock_guard<std::mutex> lock(g_mu);
+                  next = g_device.GetDeviceQueue;
+              }
+              next(device, family, index, out);
+              if (out && *out) {
+                  std::lock_guard<std::mutex> lock(g_mu);
+                  g_queueFamilies[key(*out)] = family;
+              }
+          }
+          
+          void VKAPI_CALL layerGetDeviceQueue2(
+              VkDevice device, const VkDeviceQueueInfo2* info, VkQueue* out) {
+              PFN_vkGetDeviceQueue2 next = nullptr;
+              {
+                  std::lock_guard<std::mutex> lock(g_mu);
+                  next = g_device.GetDeviceQueue2;
+              }
+              next(device, info, out);
+              if (info && out && *out) {
+                  std::lock_guard<std::mutex> lock(g_mu);
+                  g_queueFamilies[key(*out)] = info->queueFamilyIndex;
+              }
+          }
+          
+          VkResult VKAPI_CALL layerCreateSwapchainKHR(
+              VkDevice device,
+              const VkSwapchainCreateInfoKHR* ci,
+              const VkAllocationCallbacks* allocator,
+              VkSwapchainKHR* out) {
+          
+              PFN_vkCreateSwapchainKHR next = nullptr;
+              {
+                  std::lock_guard<std::mutex> lock(g_mu);
+                  next = g_device.CreateSwapchainKHR;
+              }
+              if (!next) return VK_ERROR_INITIALIZATION_FAILED;
+          
+              VkSwapchainCreateInfoKHR modified = *ci;
+              bool requestedTransfer = (ci->imageUsage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) != 0;
+              modified.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+          
+              VkResult r = next(device, &modified, allocator, out);
+              bool transfer = (r == VK_SUCCESS);
+          
+              if (r != VK_SUCCESS && !requestedTransfer) {
+                  r = next(device, ci, allocator, out);
+                  transfer = false;
+              }
+              if (r != VK_SUCCESS) return r;
+          
+              auto state = std::make_unique<SwapState>();
+              state->swapchain = *out;
+              state->format = ci->imageFormat;
+              state->extent = ci->imageExtent;
+              state->transferDst = transfer || requestedTransfer;
+          
+              {
+                  std::lock_guard<std::mutex> lock(g_mu);
+                  g_swaps[key(*out)] = std::move(state);
+              }
+          
+              log_line("probe: swapchain tracked");
+              return r;
+          }
+          
+          void VKAPI_CALL layerDestroySwapchainKHR(
+              VkDevice device, VkSwapchainKHR swapchain,
+              const VkAllocationCallbacks* allocator) {
+          
+              PFN_vkDestroySwapchainKHR next = nullptr;
+              {
+                  std::lock_guard<std::mutex> lock(g_mu);
+                  auto it = g_swaps.find(key(swapchain));
+                  if (it != g_swaps.end()) {
+                      destroy_swap_resources(*it->second);
+                      g_swaps.erase(it);
+                  }
+                  next = g_device.DestroySwapchainKHR;
+              }
+              if (next) next(device, swapchain, allocator);
+          }
+          
+          VkResult VKAPI_CALL layerGetSwapchainImagesKHR(
+              VkDevice device, VkSwapchainKHR swapchain,
+              uint32_t* count, VkImage* images) {
+          
+              PFN_vkGetSwapchainImagesKHR next = nullptr;
+              {
+                  std::lock_guard<std::mutex> lock(g_mu);
+                  next = g_device.GetSwapchainImagesKHR;
+              }
+              if (!next) return VK_ERROR_INITIALIZATION_FAILED;
+          
+              VkResult r = next(device, swapchain, count, images);
+              if (images && count && (r == VK_SUCCESS || r == VK_INCOMPLETE)) {
+                  std::lock_guard<std::mutex> lock(g_mu);
+                  auto it = g_swaps.find(key(swapchain));
+                  if (it != g_swaps.end()) {
+                      it->second->images.assign(images, images + *count);
+                  }
+              }
+              return r;
+          }
+          
+          VkResult VKAPI_CALL layerQueuePresentKHR(
+              VkQueue queue, const VkPresentInfoKHR* present) {
+          
+              PFN_vkQueuePresentKHR nextPresent = nullptr;
+              VkSemaphore overlayWait = VK_NULL_HANDLE;
+              bool patched = false;
+          
+              {
+                  std::unique_lock<std::mutex> lock(g_mu);
+                  nextPresent = g_device.QueuePresentKHR;
+                  if (!nextPresent || !present || present->swapchainCount == 0 ||
+                      !present->pSwapchains || !present->pImageIndices) {
+                      lock.unlock();
+                      return nextPresent ? nextPresent(queue, present) : VK_ERROR_INITIALIZATION_FAILED;
+                  }
+          
+                  auto qit = g_queueFamilies.find(key(queue));
+                  auto sit = g_swaps.find(key(present->pSwapchains[0]));
+          
+                  if (qit != g_queueFamilies.end() && sit != g_swaps.end()) {
+                      SwapState& s = *sit->second;
+                      if (prepare_swap(s, qit->second)) {
+                          patched = submit_probe(
+                              queue, s, present->pImageIndices[0], present, &overlayWait);
+                      }
+                  }
+              }
+          
+              if (!patched) return nextPresent(queue, present);
+          
+              VkPresentInfoKHR p = *present;
+              p.waitSemaphoreCount = 1;
+              p.pWaitSemaphores = &overlayWait;
+              return nextPresent(queue, &p);
+          }
+          
+          } // namespace
+          
+          extern "C" {
+          
+          VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
+          jacobGetDeviceProcAddr(VkDevice device, const char* name) {
+              if (!name) return nullptr;
+          
+              if (std::strcmp(name, "vkGetDeviceProcAddr") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(jacobGetDeviceProcAddr);
+              if (std::strcmp(name, "vkDestroyDevice") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerDestroyDevice);
+              if (std::strcmp(name, "vkGetDeviceQueue") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerGetDeviceQueue);
+              if (std::strcmp(name, "vkGetDeviceQueue2") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerGetDeviceQueue2);
+              if (std::strcmp(name, "vkCreateSwapchainKHR") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerCreateSwapchainKHR);
+              if (std::strcmp(name, "vkDestroySwapchainKHR") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerDestroySwapchainKHR);
+              if (std::strcmp(name, "vkGetSwapchainImagesKHR") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerGetSwapchainImagesKHR);
+              if (std::strcmp(name, "vkQueuePresentKHR") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerQueuePresentKHR);
+          
+              std::lock_guard<std::mutex> lock(g_mu);
+              return g_device.nextGDPA ? g_device.nextGDPA(device, name) : nullptr;
+          }
+          
+          VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
+          jacobGetInstanceProcAddr(VkInstance instance, const char* name) {
+              if (!name) return nullptr;
+          
+              if (std::strcmp(name, "vkGetInstanceProcAddr") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(jacobGetInstanceProcAddr);
+              if (std::strcmp(name, "vkGetDeviceProcAddr") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(jacobGetDeviceProcAddr);
+              if (std::strcmp(name, "vkCreateInstance") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerCreateInstance);
+              if (std::strcmp(name, "vkDestroyInstance") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerDestroyInstance);
+              if (std::strcmp(name, "vkCreateDevice") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerCreateDevice);
+          
+              // Device commands may legally be queried through vkGetInstanceProcAddr.
+              // Return our intercepts here as well so DXVK/Proton cannot bypass the layer
+              // depending on how it builds its dispatch table.
+              if (std::strcmp(name, "vkDestroyDevice") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerDestroyDevice);
+              if (std::strcmp(name, "vkGetDeviceQueue") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerGetDeviceQueue);
+              if (std::strcmp(name, "vkGetDeviceQueue2") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerGetDeviceQueue2);
+              if (std::strcmp(name, "vkCreateSwapchainKHR") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerCreateSwapchainKHR);
+              if (std::strcmp(name, "vkDestroySwapchainKHR") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerDestroySwapchainKHR);
+              if (std::strcmp(name, "vkGetSwapchainImagesKHR") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerGetSwapchainImagesKHR);
+              if (std::strcmp(name, "vkQueuePresentKHR") == 0)
+                  return reinterpret_cast<PFN_vkVoidFunction>(layerQueuePresentKHR);
+          
+              std::lock_guard<std::mutex> lock(g_mu);
+              return g_instance.nextGIPA ? g_instance.nextGIPA(instance, name) : nullptr;
+          }
+          
+          VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
+          jacobGetPhysicalDeviceProcAddr(VkInstance instance, const char* name) {
+              std::lock_guard<std::mutex> lock(g_mu);
+              if (g_instance.nextGPDPA) return g_instance.nextGPDPA(instance, name);
+              if (g_instance.nextGIPA) return g_instance.nextGIPA(instance, name);
+              return nullptr;
+          }
+          
+          JACOB_EXPORT VKAPI_ATTR VkResult VKAPI_CALL
+          vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface* iface) {
+              if (!iface) return VK_ERROR_INITIALIZATION_FAILED;
+              if (iface->loaderLayerInterfaceVersion > 2)
+                  iface->loaderLayerInterfaceVersion = 2;
+              if (iface->loaderLayerInterfaceVersion < 2)
+                  return VK_ERROR_INITIALIZATION_FAILED;
+          
+              iface->pfnGetInstanceProcAddr = jacobGetInstanceProcAddr;
+              iface->pfnGetDeviceProcAddr = jacobGetDeviceProcAddr;
+              iface->pfnGetPhysicalDeviceProcAddr = jacobGetPhysicalDeviceProcAddr;
+              return VK_SUCCESS;
+          }
+          
+          } // extern "C"
+          CPP
+
+          cat > native/vulkan-hud/CMakeLists.txt <<'CMAKE'
+          cmake_minimum_required(VERSION 3.16)
+          project(jacob_vulkan_hud LANGUAGES CXX)
+          
+          set(CMAKE_CXX_STANDARD 17)
+          set(CMAKE_CXX_STANDARD_REQUIRED ON)
+          set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+          
+          find_path(VULKAN_INCLUDE_DIR vulkan/vulkan.h REQUIRED)
+          
+          add_library(VK_LAYER_JACOB_hud SHARED jacob_vk_layer.cpp)
+          target_include_directories(VK_LAYER_JACOB_hud PRIVATE "${VULKAN_INCLUDE_DIR}")
+          target_compile_options(VK_LAYER_JACOB_hud PRIVATE
+            -Wall -Wextra -Wpedantic -fvisibility=hidden
+          )
+          set_target_properties(VK_LAYER_JACOB_hud PROPERTIES
+            OUTPUT_NAME "VK_LAYER_JACOB_hud"
+            PREFIX "lib"
+          )
+          CMAKE
+
+          git diff --check
+
+      - name: Build and inspect Vulkan HUD layer
+        run: |
+          set -euo pipefail
+          rm -rf build/vulkan-hud
+          cmake -S native/vulkan-hud -B build/vulkan-hud -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/vulkan-hud --parallel
+
+          layer="$(find build/vulkan-hud -maxdepth 2 -type f -name 'libVK_LAYER_JACOB_hud.so' -print -quit)"
+          test -n "$layer"
+          test -s "$layer"
+
+          echo "Built layer: $layer"
+          file "$layer"
+          ldd "$layer" | tee /tmp/jacob-vk-ldd.txt
+          ! grep -q 'not found' /tmp/jacob-vk-ldd.txt
+
+          readelf -Ws "$layer" | grep -F 'vkNegotiateLoaderLayerInterfaceVersion'
+          mkdir -p dist packaging/flatpak/vulkan-hud
+          cp "$layer" dist/libVK_LAYER_JACOB_hud.so
+          cp "$layer" packaging/flatpak/vulkan-hud/libVK_LAYER_JACOB_hud.so
+
+      - name: Patch Steam Deck packaging for Vulkan HUD
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          from pathlib import Path
+
+          # Flatpak manifest: carry the built layer as a generated source directory.
+          p = Path("packaging/flatpak/com.pseudosci.JACoB.yml")
+          s = p.read_text(encoding="utf-8")
+
+          build_anchor = '''      - mkdir -p /app/share/jacob/decky/JACoB-HUD
+                - cp -a JACoB-HUD/. /app/share/jacob/decky/JACoB-HUD/
+          '''
+          build_repl = build_anchor + '''      - mkdir -p /app/share/jacob/vulkan-hud
+                - cp -a vulkan-hud/. /app/share/jacob/vulkan-hud/
+          '''
+          if "/app/share/jacob/vulkan-hud" not in s:
+              if build_anchor not in s:
+                  raise SystemExit("Flatpak build-command anchor not found")
+              s = s.replace(build_anchor, build_repl, 1)
+
+          source_anchor = '''      - type: dir
+                path: JACoB-HUD
+                dest: JACoB-HUD
+          '''
+          source_repl = source_anchor + '''      - type: dir
+                path: vulkan-hud
+                dest: vulkan-hud
+          '''
+          if "path: vulkan-hud" not in s:
+              if source_anchor not in s:
+                  raise SystemExit("Flatpak source anchor not found")
+              s = s.replace(source_anchor, source_repl, 1)
+
+          p.write_text(s, encoding="utf-8")
+
+          # Flatpak launcher: install the layer into the user's home and create
+          # an environment-gated implicit-layer manifest. No root filesystem edits.
+          p = Path("packaging/flatpak/jacob-flatpak-launch")
+          s = p.read_text(encoding="utf-8")
+
+          vars_anchor = '''HOST_HELPER="$HOST_DIR/jacob-gamescope-stream"
+          HOST_DECKY_DIR="$HOST_DIR/decky/JACoB-HUD"
+          '''
+          vars_repl = '''HOST_HELPER="$HOST_DIR/jacob-gamescope-stream"
+          HOST_VK_DIR="$HOST_DIR/vulkan-hud"
+          HOST_VK_LIB="$HOST_VK_DIR/libVK_LAYER_JACOB_hud.so"
+          HOST_VK_ENABLED="$HOST_VK_DIR/enabled"
+          HOST_VK_DISABLED="$HOST_VK_DIR/disabled"
+          VK_MANIFEST_DIR="$HOST_HOME/.local/share/vulkan/implicit_layer.d"
+          VK_MANIFEST="$VK_MANIFEST_DIR/VK_LAYER_JACOB_hud.json"
+          PACKAGED_VK_LIB="/app/share/jacob/vulkan-hud/libVK_LAYER_JACOB_hud.so"
+          PACKAGED_VK_HASH="$(sha256sum "$PACKAGED_VK_LIB" | awk '{print $1}')"
+          HOST_DECKY_DIR="$HOST_DIR/decky/JACoB-HUD"
+          '''
+          if 'HOST_VK_LIB=' not in s:
+              if vars_anchor not in s:
+                  raise SystemExit("Flatpak launcher variable anchor not found")
+              s = s.replace(vars_anchor, vars_repl, 1)
+
+          helper_block = '''HOST_HELPER_HASH="$(sha256sum "$HOST_HELPER" 2>/dev/null | awk '{print $1}' || true)"
+          if [[ ! -x "$HOST_HELPER" || "$HOST_HELPER_HASH" != "$PACKAGED_HELPER_HASH" ]]; then
+            install -m 0755 /app/libexec/jacob-gamescope-stream "$HOST_HELPER.new"
+            mv -f "$HOST_HELPER.new" "$HOST_HELPER"
+            printf '[%s] Installed Gamescope PipeWire helper sha256=%s\\n' "$(date -Is)" "$PACKAGED_HELPER_HASH" >> "$LOG_FILE"
+          fi
+          '''
+          vk_block = helper_block + '''
+          mkdir -p "$HOST_VK_DIR" "$VK_MANIFEST_DIR"
+          HOST_VK_HASH="$(sha256sum "$HOST_VK_LIB" 2>/dev/null | awk '{print $1}' || true)"
+          if [[ ! -f "$HOST_VK_LIB" || "$HOST_VK_HASH" != "$PACKAGED_VK_HASH" ]]; then
+            install -m 0755 "$PACKAGED_VK_LIB" "$HOST_VK_LIB.new"
+            mv -f "$HOST_VK_LIB.new" "$HOST_VK_LIB"
+            printf '[%s] Installed JACoB Vulkan HUD layer sha256=%s\\n' "$(date -Is)" "$PACKAGED_VK_HASH" >> "$LOG_FILE"
+          fi
+
+          cat > "$VK_MANIFEST.new" <<EOF
+          {
+            "file_format_version": "1.1.0",
+            "layer": {
+              "name": "VK_LAYER_JACOB_hud",
+              "type": "GLOBAL",
+              "library_path": "$HOST_VK_LIB",
+              "api_version": "1.3.0",
+              "implementation_version": "1",
+              "description": "JACoB in-process HUD renderer",
+              "enable_environment": { "JACOB_VK_HUD": "1" },
+              "disable_environment": { "JACOB_VK_HUD_DISABLE": "1" }
+            }
+          }
+          EOF
+          mv -f "$VK_MANIFEST.new" "$VK_MANIFEST"
+
+          # First install enables the probe. Once a user explicitly disables the
+          # layer, subsequent installer runs preserve that choice.
+          if [[ ! -e "$HOST_VK_ENABLED" && ! -e "$HOST_VK_DISABLED" ]]; then
+            printf '%s\\n' "probe-v9" > "$HOST_VK_ENABLED"
+          fi
+          '''
+          if 'Installed JACoB Vulkan HUD layer' not in s:
+              if helper_block not in s:
+                  raise SystemExit("Gamescope helper install block not found")
+              s = s.replace(helper_block, vk_block, 1)
+
+          p.write_text(s, encoding="utf-8")
+
+          # Steam integration: enable only when the user-level JACoB HUD flag is on.
+          p = Path("packaging/flatpak/jacob-steam-integrate")
+          s = p.read_text(encoding="utf-8")
+          old = '''"$@" &
+          GAME_PID=$!
+          '''
+          new = '''if [[ -f "$HOME/.local/share/JACoB/vulkan-hud/enabled" ]]; then
+            JACOB_VK_HUD=1 JACOB_VK_HUD_PROBE=1 "$@" &
+          else
+            "$@" &
+          fi
+          GAME_PID=$!
+          '''
+          if 'JACOB_VK_HUD_PROBE=1 "$@" &' not in s:
+              if old not in s:
+                  raise SystemExit("Steam launcher game-exec anchor not found")
+              s = s.replace(old, new, 1)
+
+          p.write_text(s, encoding="utf-8")
+          PY
+
+          bash -n packaging/flatpak/jacob-flatpak-launch
+          bash -n packaging/flatpak/jacob-steam-integrate
+          python - <<'PY'
+          import yaml
+          from pathlib import Path
+          yaml.safe_load(Path("packaging/flatpak/com.pseudosci.JACoB.yml").read_text())
+          print("Flatpak manifest parses")
+          PY
+          git diff --check
+
+      - name: Patch normal release workflow to build the layer
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path(".github/workflows/build-releases.yml")
+          s = p.read_text(encoding="utf-8")
+
+          deps_old = '''            build-essential libx11-dev libxfixes-dev \\
+                      flatpak flatpak-builder
+          '''
+          deps_new = '''            build-essential cmake ninja-build libvulkan-dev \\
+                      libx11-dev libxfixes-dev \\
+                      flatpak flatpak-builder
+          '''
+          if "ninja-build libvulkan-dev" not in s:
+              if deps_old not in s:
+                  raise SystemExit("Release dependency block not found")
+              s = s.replace(deps_old, deps_new, 1)
+
+          anchor = '''      - name: Build Steam Deck Flatpak installer
+                run: |
+          '''
+          step = '''      - name: Build Steam Deck Vulkan HUD layer
+                run: |
+                  set -euo pipefail
+                  rm -rf build/vulkan-hud packaging/flatpak/vulkan-hud
+                  cmake -S native/vulkan-hud -B build/vulkan-hud -G Ninja -DCMAKE_BUILD_TYPE=Release
+                  cmake --build build/vulkan-hud --parallel
+                  layer="$(find build/vulkan-hud -maxdepth 2 -type f -name 'libVK_LAYER_JACOB_hud.so' -print -quit)"
+                  test -n "$layer"
+                  test -s "$layer"
+                  mkdir -p packaging/flatpak/vulkan-hud
+                  cp "$layer" packaging/flatpak/vulkan-hud/libVK_LAYER_JACOB_hud.so
+                  cp "$layer" dist/libVK_LAYER_JACOB_hud.so
+                  ldd "$layer" | tee dist/vulkan-hud-ldd.txt
+                  ! grep -q 'not found' dist/vulkan-hud-ldd.txt
+
+          ''' + anchor
+          if "Build Steam Deck Vulkan HUD layer" not in s:
+              if anchor not in s:
+                  raise SystemExit("Release Flatpak step anchor not found")
+              s = s.replace(anchor, step, 1)
+
+          artifact_old = '''            dist/JACoB-${{ inputs.version }}-SteamDeck.flatpak
+                      dist/linux-ldd.txt
+          '''
+          artifact_new = '''            dist/JACoB-${{ inputs.version }}-SteamDeck.flatpak
+                      dist/libVK_LAYER_JACOB_hud.so
+                      dist/linux-ldd.txt
+                      dist/vulkan-hud-ldd.txt
+          '''
+          if "dist/vulkan-hud-ldd.txt" not in s:
+              if artifact_old not in s:
+                  raise SystemExit("Release artifact block not found")
+              s = s.replace(artifact_old, artifact_new, 1)
+
+          p.write_text(s, encoding="utf-8")
+          PY
+
+          python - <<'PY'
+          import yaml
+          from pathlib import Path
+          yaml.safe_load(Path(".github/workflows/build-releases.yml").read_text())
+          print("Release workflow parses")
+          PY
+          git diff --check
+
+      - name: Test JACoB core
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          set -euo pipefail
+          go test ./internal/platform
+          go test ./...
+
+      - name: Build Linux JACoB payload
+        env:
+          CGO_ENABLED: '1'
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          v='0.2.18-alpha'
+          mkdir -p dist
+          go build -trimpath -o "dist/JACoB-$v-linux-amd64" ./cmd/jacob
+          cp "dist/JACoB-$v-linux-amd64" packaging/flatpak/JACoB
+          cp assets/jacob-icon-256.png packaging/flatpak/jacob-icon-256.png
+          printf '%s\n' "$v" > packaging/flatpak/VERSION
+
+      - name: Prepare bundled OCR runtime
+        run: |
+          set -euo pipefail
+          ocr_url='https://github.com/pkgforge-community/AlexanderP_tesseract-appimage/releases/download/v5.5.2-20260124T161609/tesseract-5.5.2_lept-1.87-x86_64.AppImage'
+          ocr_sha='177a11b5520e6e296de7aa8e2927c00c3ce7b6ffa9a9777454a2be3e87e8a391'
+
+          curl -fL --retry 3 "$ocr_url" -o /tmp/jacob-tesseract.AppImage
+          printf '%s  %s\n' "$ocr_sha" /tmp/jacob-tesseract.AppImage | sha256sum -c -
+          chmod +x /tmp/jacob-tesseract.AppImage
+
+          rm -rf packaging/flatpak/tesseract-appdir packaging/flatpak/squashfs-root
+          (
+            cd packaging/flatpak
+            /tmp/jacob-tesseract.AppImage --appimage-extract >/dev/null
+            mv squashfs-root tesseract-appdir
+          )
+          test -x packaging/flatpak/tesseract-appdir/AppRun
+
+      - name: Build Steam Deck probe Flatpak
+        run: |
+          set -euo pipefail
+          v='0.2.18-alpha'
+
+          flatpak remote-add --user --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+
+          rm -rf flatpak-build flatpak-repo
+          flatpak-builder \
+            --user \
+            --force-clean \
+            --install-deps-from=flathub \
+            --repo=flatpak-repo \
+            flatpak-build \
+            packaging/flatpak/com.pseudosci.JACoB.yml
+
+          flatpak build-bundle \
+            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+            flatpak-repo \
+            "dist/JACoB-$v-SteamDeck-vulkan-hud-v9.flatpak" \
+            com.pseudosci.JACoB \
+            stable
+
+          test -s "dist/JACoB-$v-SteamDeck-vulkan-hud-v9.flatpak"
+          sha256sum \
+            "dist/JACoB-$v-SteamDeck-vulkan-hud-v9.flatpak" \
+            dist/libVK_LAYER_JACOB_hud.so \
+            > dist/VULKAN-HUD-V9-SHA256.txt
+
+      - name: Commit Vulkan HUD architecture after successful build
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          rm -rf packaging/flatpak/tesseract-appdir
+          rm -rf packaging/flatpak/vulkan-hud
+          rm -f packaging/flatpak/JACoB
+          rm -f packaging/flatpak/jacob-icon-256.png
+          rm -f packaging/flatpak/VERSION
+
+          git add \
+            native/vulkan-hud \
+            packaging/flatpak/com.pseudosci.JACoB.yml \
+            packaging/flatpak/jacob-flatpak-launch \
+            packaging/flatpak/jacob-steam-integrate \
+            .github/workflows/build-releases.yml
+
+          if git diff --cached --quiet; then
+            echo "Vulkan HUD architecture already committed."
+          else
+            git commit -m "Add Steam Deck Vulkan HUD render path"
+            git push origin HEAD:${{ github.event.repository.default_branch }}
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jacob-0.2.18-vulkan-hud-v9
+          path: |
+            dist/JACoB-0.2.18-alpha-SteamDeck-vulkan-hud-v9.flatpak
+            dist/libVK_LAYER_JACOB_hud.so
+            dist/VULKAN-HUD-V9-SHA256.txt
+
+      - name: Upload probe Flatpak to current alpha release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='v0.2.18-alpha'
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" \
+              dist/JACoB-0.2.18-alpha-SteamDeck-vulkan-hud-v9.flatpak \
+              dist/VULKAN-HUD-V9-SHA256.txt \
+              --clobber
+          else
+            echo "Release $tag does not exist; use the Actions artifact."
+          fi
