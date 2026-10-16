@@ -161,17 +161,63 @@ function renderItem(i:Item, scene:Scene, key:string, vp:Viewport){
   return null;
 }
 
+type NamedScene = [string, Scene];
+
+function HUDSurface({scenes}:{scenes:NamedScene[]}){
+  useUIComposition(UIComposition.Notification);
+  const vp=useViewport();
+
+  return <div aria-hidden="true" style={{
+    position:"fixed",
+    left:0,
+    top:0,
+    width:"100vw",
+    height:"100vh",
+    pointerEvents:"none",
+    zIndex:2147483000,
+    overflow:"hidden",
+    background:"transparent",
+    backgroundColor:"transparent"
+  }}>
+    <svg
+      viewBox={`0 0 ${vp.w} ${vp.h}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      fill="none"
+      style={{
+        position:"absolute",
+        left:0,
+        top:0,
+        width:"100%",
+        height:"100%",
+        display:"block",
+        pointerEvents:"none",
+        overflow:"visible",
+        background:"transparent",
+        backgroundColor:"transparent"
+      }}
+    >
+      {scenes.map(([name,scene])=>
+        <g key={name} opacity={scene.opacity??1}>
+          {(scene.items||[]).map((item,idx)=>
+            renderItem(item,scene,`${name}:${idx}`,vp)
+          )}
+        </g>
+      )}
+    </svg>
+  </div>;
+}
+
 function HUDOverlay(){
   const snap=useSnapshot();
-  const vp=useViewport();
-  const scenes=useMemo(()=>Object.entries(snap.layers||{}).sort((a,b)=>(a[1].z||0)-(b[1].z||0)),[snap]);
+  const scenes=useMemo(
+    ()=>Object.entries(snap.layers||{})
+      .sort((a,b)=>(a[1].z||0)-(b[1].z||0)) as NamedScene[],
+    [snap]
+  );
   const active=!!snap.connected && !!snap.visible && scenes.length>0;
-  useUIComposition(active?UIComposition.Notification:UIComposition.Hidden);
   if(!active) return null;
-  return <svg viewBox={`0 0 ${vp.w} ${vp.h}`} preserveAspectRatio="none" aria-hidden="true"
-    style={{position:"fixed",left:0,top:0,width:"100vw",height:"100vh",pointerEvents:"none",zIndex:2147483000,overflow:"visible"}}>
-    {scenes.flatMap(([name,scene])=>(scene.items||[]).map((item,idx)=>renderItem(item,scene,`${name}:${idx}`,vp)))}
-  </svg>;
+  return <HUDSurface scenes={scenes}/>;
 }
 
 function Content(){

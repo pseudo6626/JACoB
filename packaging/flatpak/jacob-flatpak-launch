@@ -89,6 +89,25 @@ if [[ -d "$HOST_HOME/homebrew/plugins" ]]; then
   fi
 else
   printf '[%s] Decky Loader not detected; HUD bridge retained at %s.\n' "$(date -Is)" "$HOST_DECKY_DIR" >> "$LOG_FILE"
+
+  if [[ "${1:-}" != "--service-only" ]]; then
+    DECKY_GUIDE_STAMP="$HOST_DIR/.decky-install-guidance-shown"
+    DECKY_URL="https://github.com/SteamDeckHomebrew/decky-loader"
+
+    if [[ ! -f "$DECKY_GUIDE_STAMP" ]]; then
+      printf '[%s] Decky is required for JACoB in-game HUD rendering. Opening official installation guidance.\n' "$(date -Is)" >> "$LOG_FILE"
+
+      if flatpak-spawn --host sh -lc 'command -v kdialog >/dev/null 2>&1'; then
+        if flatpak-spawn --host kdialog           --title "JACoB Steam Deck Setup"           --yesno "JACoB is installed, but Decky Loader is required for JACoB HUD overlays in Gaming Mode. Open the official Decky installation page now?"; then
+          flatpak-spawn --host xdg-open "$DECKY_URL" >/dev/null 2>&1 || true
+        fi
+      else
+        flatpak-spawn --host xdg-open "$DECKY_URL" >/dev/null 2>&1 || true
+      fi
+
+      printf '%s\n' "$(date -Is)" > "$DECKY_GUIDE_STAMP"
+    fi
+  fi
 fi
 
 HOST_OCR_HASH="$(cat "$OCR_STAMP" 2>/dev/null || true)"
