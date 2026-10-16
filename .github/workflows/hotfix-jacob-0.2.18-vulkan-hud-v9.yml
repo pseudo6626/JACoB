@@ -938,8 +938,8 @@ jobs:
               s = s.replace(build_anchor, build_repl, 1)
 
           source_anchor = '''      - type: dir
-                path: JACoB-HUD
-                dest: JACoB-HUD
+                  path: JACoB-HUD
+                  dest: JACoB-HUD
           '''
           source_repl = source_anchor + '''      - type: dir
                 path: vulkan-hud
