@@ -13,3 +13,8 @@ appearance.json
 .idea/
 .DS_Store
 Thumbs.db
+
+# JACoB Decky HUD runtime is intentionally committed so Steam Deck Flatpak
+# builds remain self-contained.
+!packaging/flatpak/JACoB-HUD/dist/
+!packaging/flatpak/JACoB-HUD/dist/index.js

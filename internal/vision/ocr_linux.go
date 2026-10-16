@@ -258,9 +258,12 @@ func parseTesseractTSV(data []byte, width, height int) ocrResult {
 		if wordText == "" {
 			continue
 		}
-		vals := make([]int, 10)
+		vals := make([]int, 9)
 		ok := true
-		for i := 1; i <= 10; i++ {
+		// TSV columns 1..9 (page_num through height) are integers.
+		// Column 10 is confidence and is normally a decimal, e.g. 96.437.
+		// We do not need confidence for the current structured OCR result.
+		for i := 1; i <= 9; i++ {
 			v, err := strconv.Atoi(fields[i])
 			if err != nil {
 				ok = false

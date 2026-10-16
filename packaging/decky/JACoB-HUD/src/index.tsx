@@ -1,5 +1,5 @@
 import { findModuleChild, PanelSection, PanelSectionRow, staticClasses } from "@decky/ui";
-import { addEventListener, removeEventListener, definePlugin, routerHook } from "@decky/api";
+import { definePlugin, routerHook } from "@decky/api";
 import { useEffect, useMemo, useState } from "react";
 import { FaCrosshairs } from "react-icons/fa";
 
@@ -51,6 +51,36 @@ const useUIComposition: (composition:UIComposition)=>void =
 let current:Snapshot = {hudVersion:2,version:0,visible:false,layers:{},connected:false};
 const subscribers = new Set<(s:Snapshot)=>void>();
 function publish(s:Snapshot){ current=s; subscribers.forEach(fn=>fn(s)); }
+
+
+const HUD_URL="http://127.0.0.1:6626/api/deck/hud/state";
+let transportStopped=false;
+let transportVersion=0;
+
+function sleep(ms:number){ return new Promise(resolve=>setTimeout(resolve,ms)); }
+
+async function hudTransportLoop(){
+  transportStopped=false;
+  while(!transportStopped){
+    try{
+      const url=`${HUD_URL}?since=${transportVersion}&wait=1000`;
+      const res=await fetch(url,{method:"GET",cache:"no-store",mode:"cors"});
+      if(!res.ok) throw new Error(`HUD state HTTP ${res.status}`);
+      const snap=await res.json() as Snapshot;
+      transportVersion=Number(snap.version||transportVersion);
+      publish({...snap,connected:true});
+    }catch(_err){
+      publish({
+        hudVersion:current.hudVersion||2,
+        version:transportVersion,
+        visible:false,
+        layers:{},
+        connected:false
+      });
+      await sleep(500);
+    }
+  }
+}
 
 function useSnapshot(){
   const [snap,setSnap] = useState<Snapshot>(current);
@@ -159,8 +189,9 @@ function Content(){
 }
 
 export default definePlugin(()=>{
-  const listener=addEventListener<[Snapshot]>("jacob_hud_snapshot",(snap)=>publish(snap));
   const name="JACoBHUDOverlay";
+  transportStopped=false;
+  void hudTransportLoop();
   routerHook.addGlobalComponent(name,HUDOverlay);
   return {
     name:"JACoB HUD",
@@ -169,9 +200,9 @@ export default definePlugin(()=>{
     icon:<FaCrosshairs/>,
     alwaysRender:true,
     onDismount(){
-      removeEventListener("jacob_hud_snapshot",listener);
+      transportStopped=true;
       routerHook.removeGlobalComponent(name);
-      publish({hudVersion:2,version:0,visible:false,layers:{},connected:false});
+      publish({hudVersion:2,version:transportVersion,visible:false,layers:{},connected:false});
     }
   };
 });
