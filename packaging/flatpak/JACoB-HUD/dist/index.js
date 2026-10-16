@@ -82,6 +82,8 @@ function FaCrosshairs (props) {
   return GenIcon({"attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M500 224h-30.364C455.724 130.325 381.675 56.276 288 42.364V12c0-6.627-5.373-12-12-12h-40c-6.627 0-12 5.373-12 12v30.364C130.325 56.276 56.276 130.325 42.364 224H12c-6.627 0-12 5.373-12 12v40c0 6.627 5.373 12 12 12h30.364C56.276 381.675 130.325 455.724 224 469.636V500c0 6.627 5.373 12 12 12h40c6.627 0 12-5.373 12-12v-30.364C381.675 455.724 455.724 381.675 469.636 288H500c6.627 0 12-5.373 12-12v-40c0-6.627-5.373-12-12-12zM288 404.634V364c0-6.627-5.373-12-12-12h-40c-6.627 0-12 5.373-12 12v40.634C165.826 392.232 119.783 346.243 107.366 288H148c6.627 0 12-5.373 12-12v-40c0-6.627-5.373-12-12-12h-40.634C119.768 165.826 165.757 119.783 224 107.366V148c0 6.627 5.373 12 12 12h40c6.627 0 12-5.373 12-12v-40.634C346.174 119.768 392.217 165.757 404.634 224H364c-6.627 0-12 5.373-12 12v40c0 6.627 5.373 12 12 12h40.634C392.232 346.174 346.243 392.217 288 404.634zM288 256c0 17.673-14.327 32-32 32s-32-14.327-32-32c0-17.673 14.327-32 32-32s32 14.327 32 32z"},"child":[]}]})(props);
 }
 
+const CANVAS_W = 1280;
+const CANVAS_H = 800;
 var UIComposition;
 (function (UIComposition) {
     UIComposition[UIComposition["Hidden"] = 0] = "Hidden";
@@ -110,13 +112,24 @@ const discoveredUIComposition = DFL.findModuleChild((m) => {
     return undefined;
 });
 const useUIComposition = (typeof discoveredUIComposition === "function" ? discoveredUIComposition : (() => { }));
-let current = { hudVersion: 2, version: 0, visible: false, layers: {}, connected: false };
+let current = {
+    hudVersion: 2,
+    version: 0,
+    visible: false,
+    layers: {},
+    connected: false
+};
 const subscribers = new Set();
-function publish(s) { current = s; subscribers.forEach(fn => fn(s)); }
+function publish(s) {
+    current = s;
+    subscribers.forEach(fn => fn(s));
+}
 const HUD_URL = "http://127.0.0.1:6626/api/deck/hud/state";
 let transportStopped = false;
 let transportVersion = 0;
-function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 async function hudTransportLoop() {
     transportStopped = false;
     while (!transportStopped) {
@@ -143,30 +156,48 @@ async function hudTransportLoop() {
 }
 function useSnapshot() {
     const [snap, setSnap] = SP_REACT.useState(current);
-    SP_REACT.useEffect(() => { subscribers.add(setSnap); return () => { subscribers.delete(setSnap); }; }, []);
+    SP_REACT.useEffect(() => {
+        subscribers.add(setSnap);
+        return () => { subscribers.delete(setSnap); };
+    }, []);
     return snap;
 }
-function useViewport() {
-    const read = () => ({ w: Math.max(1, window.innerWidth || 1280), h: Math.max(1, window.innerHeight || 800) });
-    const [vp, setVp] = SP_REACT.useState(read);
-    SP_REACT.useEffect(() => { const fn = () => setVp(read()); window.addEventListener("resize", fn); return () => window.removeEventListener("resize", fn); }, []);
-    return vp;
+function pixelScaleX(scene) {
+    if (scene.space !== "pixels")
+        return 1;
+    const ref = (scene.width || 0) > 0 ? Number(scene.width) : CANVAS_W;
+    return CANVAS_W / ref;
 }
-function sx(v, scene, vp) {
+function pixelScaleY(scene) {
+    if (scene.space !== "pixels")
+        return 1;
+    const ref = (scene.height || 0) > 0 ? Number(scene.height) : CANVAS_H;
+    return CANVAS_H / ref;
+}
+function metricScale(scene) {
+    if (scene.space !== "pixels")
+        return 1;
+    return Math.min(pixelScaleX(scene), pixelScaleY(scene));
+}
+function sx(v, scene) {
     const n = v || 0;
-    return scene.space === "pixels" ? n : n * vp.w;
+    return scene.space === "pixels" ? n * pixelScaleX(scene) : n * CANVAS_W;
 }
-function sy(v, scene, vp) {
+function sy(v, scene) {
     const n = v || 0;
-    return scene.space === "pixels" ? n : n * vp.h;
+    return scene.space === "pixels" ? n * pixelScaleY(scene) : n * CANVAS_H;
 }
-function sw(v, scene, vp) { return sx(v, scene, vp); }
-function sh(v, scene, vp) { return sy(v, scene, vp); }
-function sr(v, scene, vp) {
+function sw(v, scene) {
+    return sx(v, scene);
+}
+function sh(v, scene) {
+    return sy(v, scene);
+}
+function sr(v, scene) {
     const n = v || 0;
-    return scene.space === "pixels" ? n : n * Math.min(vp.w, vp.h);
+    return scene.space === "pixels" ? n * metricScale(scene) : n * Math.min(CANVAS_W, CANVAS_H);
 }
-function dash(v, width = 1) {
+function dash(v, width) {
     switch (v) {
         case "dash": return `${6 * width} ${4 * width}`;
         case "dot": return `${width} ${3 * width}`;
@@ -174,50 +205,58 @@ function dash(v, width = 1) {
         default: return undefined;
     }
 }
-function fx(i) {
+function fx(i, scene) {
     const f = [];
-    if ((i.shadowX || i.shadowY) && i.shadowColor)
-        f.push(`drop-shadow(${i.shadowX || 0}px ${i.shadowY || 0}px 0px ${i.shadowColor})`);
-    if ((i.glow || 0) > 0)
-        f.push(`drop-shadow(0 0 ${i.glow}px ${i.glowColor || i.stroke || i.color || "#ffffff"})`);
+    const ms = metricScale(scene);
+    if ((i.shadowX || i.shadowY) && i.shadowColor) {
+        f.push(`drop-shadow(${(i.shadowX || 0) * ms}px ${(i.shadowY || 0) * ms}px 0px ${i.shadowColor})`);
+    }
+    if ((i.glow || 0) > 0) {
+        f.push(`drop-shadow(0 0 ${(i.glow || 0) * ms}px ${i.glowColor || i.stroke || i.color || "#ffffff"})`);
+    }
     return f.length ? f.join(" ") : undefined;
 }
-function common(i) {
+function common(i, scene) {
     return {
         opacity: i.opacity ?? 1,
-        filter: fx(i),
+        filter: fx(i, scene),
         strokeLinecap: "round",
         strokeLinejoin: "round",
     };
 }
-function renderItem(i, scene, key, vp) {
-    const lw = i.lineWidth || 1;
+function renderItem(i, scene, key) {
+    const ms = metricScale(scene);
+    const lw = (i.lineWidth || 1) * ms;
     const stroke = i.stroke || i.color || "none";
     const fill = i.fill || "none";
-    const c = common(i);
-    if (i.type === "line")
-        return SP_JSX.jsx("line", { x1: sx(i.x, scene, vp), y1: sy(i.y, scene, vp), x2: sx(i.x2, scene, vp), y2: sy(i.y2, scene, vp), stroke: stroke, strokeWidth: lw, strokeDasharray: dash(i.dash, lw), style: c }, key);
+    const c = common(i, scene);
+    if (i.type === "line") {
+        return SP_JSX.jsx("line", { x1: sx(i.x, scene), y1: sy(i.y, scene), x2: sx(i.x2, scene), y2: sy(i.y2, scene), stroke: stroke, strokeWidth: lw, strokeDasharray: dash(i.dash, lw), style: c }, key);
+    }
     if (i.type === "polyline" || i.type === "polygon") {
-        const pts = (i.points || []).map(p => `${sx(p.x, scene, vp)},${sy(p.y, scene, vp)}`).join(" ");
+        const pts = (i.points || [])
+            .map(p => `${sx(p.x, scene)},${sy(p.y, scene)}`)
+            .join(" ");
         return i.type === "polygon"
             ? SP_JSX.jsx("polygon", { points: pts, stroke: stroke, fill: fill, strokeWidth: lw, strokeDasharray: dash(i.dash, lw), style: c }, key)
             : SP_JSX.jsx("polyline", { points: pts, stroke: stroke, fill: "none", strokeWidth: lw, strokeDasharray: dash(i.dash, lw), style: c }, key);
     }
-    if (i.type === "rect")
-        return SP_JSX.jsx("rect", { x: sx(i.x, scene, vp), y: sy(i.y, scene, vp), width: sw(i.w, scene, vp), height: sh(i.h, scene, vp), rx: sr(i.cornerRadius, scene, vp), stroke: stroke, fill: fill, strokeWidth: lw, strokeDasharray: dash(i.dash, lw), style: c }, key);
-    if (i.type === "circle")
-        return SP_JSX.jsx("circle", { cx: sx(i.x, scene, vp), cy: sy(i.y, scene, vp), r: sr(i.r, scene, vp), stroke: stroke, fill: fill, strokeWidth: lw, strokeDasharray: dash(i.dash, lw), style: c }, key);
+    if (i.type === "rect") {
+        return SP_JSX.jsx("rect", { x: sx(i.x, scene), y: sy(i.y, scene), width: sw(i.w, scene), height: sh(i.h, scene), rx: sr(i.cornerRadius, scene), stroke: stroke, fill: fill, strokeWidth: lw, strokeDasharray: dash(i.dash, lw), style: c }, key);
+    }
+    if (i.type === "circle") {
+        return SP_JSX.jsx("circle", { cx: sx(i.x, scene), cy: sy(i.y, scene), r: sr(i.r, scene), stroke: stroke, fill: fill, strokeWidth: lw, strokeDasharray: dash(i.dash, lw), style: c }, key);
+    }
     if (i.type === "text") {
         const anchor = i.align === "center" ? "middle" : i.align === "right" ? "end" : "start";
         const color = i.color || i.fill || "#fff";
-        const outline = i.outlineWidth || 0;
-        return SP_JSX.jsx("text", { x: sx(i.x, scene, vp), y: sy(i.y, scene, vp), fill: color, fontSize: i.fontSize || 18, fontFamily: `${i.fontFamily || "sans-serif"}, "Noto Sans", sans-serif`, fontWeight: i.fontWeight || 400, fontStyle: i.italic ? "italic" : "normal", textAnchor: anchor, dominantBaseline: "text-before-edge", stroke: outline > 0 ? (i.outlineColor || "#000000") : "none", strokeWidth: outline * 2, paintOrder: "stroke fill", style: c, children: i.text || "" }, key);
+        const outline = (i.outlineWidth || 0) * ms;
+        return SP_JSX.jsx("text", { x: sx(i.x, scene), y: sy(i.y, scene), fill: color, fontSize: (i.fontSize || 18) * ms, fontFamily: `${i.fontFamily || "sans-serif"}, "Noto Sans", sans-serif`, fontWeight: i.fontWeight || 400, fontStyle: i.italic ? "italic" : "normal", textAnchor: anchor, dominantBaseline: "text-before-edge", stroke: outline > 0 ? (i.outlineColor || "#000000") : "none", strokeWidth: outline * 2, paintOrder: "stroke fill", style: c, children: i.text || "" }, key);
     }
     return null;
 }
 function HUDSurface({ scenes }) {
     useUIComposition(UIComposition.Notification);
-    const vp = useViewport();
     return SP_JSX.jsx("div", { "aria-hidden": "true", style: {
             position: "fixed",
             left: 0,
@@ -229,7 +268,7 @@ function HUDSurface({ scenes }) {
             overflow: "hidden",
             background: "transparent",
             backgroundColor: "transparent"
-        }, children: SP_JSX.jsx("svg", { viewBox: `0 0 ${vp.w} ${vp.h}`, preserveAspectRatio: "none", "aria-hidden": "true", fill: "none", style: {
+        }, children: SP_JSX.jsx("svg", { viewBox: `0 0 ${CANVAS_W} ${CANVAS_H}`, preserveAspectRatio: "none", "aria-hidden": "true", fill: "none", style: {
                 position: "absolute",
                 left: 0,
                 top: 0,
@@ -240,7 +279,7 @@ function HUDSurface({ scenes }) {
                 overflow: "visible",
                 background: "transparent",
                 backgroundColor: "transparent"
-            }, children: scenes.map(([name, scene]) => SP_JSX.jsx("g", { opacity: scene.opacity ?? 1, children: (scene.items || []).map((item, idx) => renderItem(item, scene, `${name}:${idx}`, vp)) }, name)) }) });
+            }, children: scenes.flatMap(([name, scene]) => (scene.items || []).map((item, idx) => renderItem(item, scene, `${name}:${idx}`))) }) });
 }
 function HUDOverlay() {
     const snap = useSnapshot();
@@ -253,7 +292,7 @@ function HUDOverlay() {
 }
 function Content() {
     const snap = useSnapshot();
-    return SP_JSX.jsx(DFL.PanelSection, { title: "HUD Renderer", children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsxs("div", { style: { padding: "8px 0", fontSize: 13 }, children: [SP_JSX.jsxs("div", { children: ["Core: ", snap.connected ? "connected" : "waiting"] }), SP_JSX.jsxs("div", { children: ["HUD2: v", snap.hudVersion || 2] }), SP_JSX.jsxs("div", { children: ["Layers: ", Object.keys(snap.layers || {}).length] }), SP_JSX.jsxs("div", { children: ["Scene version: ", snap.version || 0] })] }) }) });
+    return SP_JSX.jsx(DFL.PanelSection, { title: "HUD Renderer", children: SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsxs("div", { style: { padding: "8px 0", fontSize: 13 }, children: [SP_JSX.jsxs("div", { children: ["Core: ", snap.connected ? "connected" : "waiting"] }), SP_JSX.jsxs("div", { children: ["HUD2: v", snap.hudVersion || 2] }), SP_JSX.jsx("div", { children: "Renderer: Deck canonical canvas 1280\u00D7800" }), SP_JSX.jsxs("div", { children: ["Layers: ", Object.keys(snap.layers || {}).length] }), SP_JSX.jsxs("div", { children: ["Scene version: ", snap.version || 0] })] }) }) });
 }
 var index = definePlugin(() => {
     const name = "JACoBHUDOverlay";
@@ -269,7 +308,13 @@ var index = definePlugin(() => {
         onDismount() {
             transportStopped = true;
             routerHook.removeGlobalComponent(name);
-            publish({ hudVersion: 2, version: transportVersion, visible: false, layers: {}, connected: false });
+            publish({
+                hudVersion: 2,
+                version: transportVersion,
+                visible: false,
+                layers: {},
+                connected: false
+            });
         }
     };
 });
