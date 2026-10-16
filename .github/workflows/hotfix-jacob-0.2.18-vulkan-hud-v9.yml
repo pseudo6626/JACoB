@@ -496,9 +496,7 @@ jobs:
               return true;
           }
           
-          PFN_vkVoidFunction VKAPI_CALL jacobGetInstanceProcAddr(VkInstance, const char*);
-          PFN_vkVoidFunction VKAPI_CALL jacobGetDeviceProcAddr(VkDevice, const char*);
-          
+        
           VkResult VKAPI_CALL layerCreateInstance(
               const VkInstanceCreateInfo* ci,
               const VkAllocationCallbacks* allocator,
