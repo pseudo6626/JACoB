@@ -1,0 +1,347 @@
+name: Hotfix JACoB 0.2.18 Deck HUD Package + OCR v3
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libxfixes-dev libxcomposite-dev \
+            libpipewire-0.3-dev libwayland-dev \
+            flatpak flatpak-builder
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+
+      - name: Apply HUD package and OCR hotfix
+        run: |
+          set -euo pipefail
+          base64 -d > /tmp/jacob-hotfix-v3.py <<'JACOB_PATCH'
+          ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCBqc29uCgpkZWYgcmVwbGFjZV9vbmNlKHRl
+          eHQsIG9sZCwgbmV3LCBsYWJlbCk6CiAgICBpZiBvbGQgbm90IGluIHRleHQ6CiAgICAgICAgaWYg
+          bmV3IGluIHRleHQ6CiAgICAgICAgICAgIHJldHVybiB0ZXh0CiAgICAgICAgcmFpc2UgU3lzdGVt
+          RXhpdChmIntsYWJlbH06IGV4cGVjdGVkIHNvdXJjZSBhbmNob3Igbm90IGZvdW5kIikKICAgIHJl
+          dHVybiB0ZXh0LnJlcGxhY2Uob2xkLCBuZXcsIDEpCgojIExpbnV4IE9DUiBhZGFwdGl2ZSBmYWxs
+          YmFjay4KcCA9IFBhdGgoImludGVybmFsL3Zpc2lvbi9vY3JfbGludXguZ28iKQpzID0gcC5yZWFk
+          X3RleHQoZW5jb2Rpbmc9InV0Zi04IikKCnMgPSByZXBsYWNlX29uY2UoCiAgICBzLAogICAgJycn
+          CSJpbWFnZSIKCSJpbWFnZS9wbmciCicnJywKICAgICcnJwkiaW1hZ2UiCgkiaW1hZ2UvY29sb3Ii
+          CgkiaW1hZ2UvcG5nIgonJycsCiAgICAiT0NSIGNvbG9yIGltcG9ydCIsCikKCnN0YXJ0ID0gcy5m
+          aW5kKCJmdW5jIG9jclRleHRMaW5lcyhpbWcgaW1hZ2UuSW1hZ2UpIChvY3JSZXN1bHQsIGVycm9y
+          KSB7IikKZW5kID0gcy5maW5kKCJcbmZ1bmMgbGludXhPQ1JMYW5ndWFnZSgpIiwgc3RhcnQpCmlm
+          IHN0YXJ0IDwgMCBvciBlbmQgPCAwOgogICAgcmFpc2UgU3lzdGVtRXhpdCgib2NyVGV4dExpbmVz
+          IGZ1bmN0aW9uIGFuY2hvcnMgbm90IGZvdW5kIikKCm5ld19vY3IgPSByJycnZnVuYyBvY3JUZXh0
+          TGluZXMoaW1nIGltYWdlLkltYWdlKSAob2NyUmVzdWx0LCBlcnJvcikgewoJaWYgaW1nID09IG5p
+          bCB7CgkJcmV0dXJuIG9jclJlc3VsdHt9LCBmbXQuRXJyb3JmKCJPQ1IgaW1hZ2UgaXMgbmlsIikK
+          CX0KCWIgOj0gaW1nLkJvdW5kcygpCglpZiBiLkR4KCkgPCAyIHx8IGIuRHkoKSA8IDIgewoJCXJl
+          dHVybiBvY3JSZXN1bHR7fSwgZm10LkVycm9yZigiT0NSIGltYWdlIGlzIGVtcHR5IikKCX0KCgli
+          aW4sIGVyciA6PSBsaW51eFRlc3NlcmFjdFBhdGgoKQoJaWYgZXJyICE9IG5pbCB7CgkJcmV0dXJu
+          IG9jclJlc3VsdHt9LCBlcnIKCX0KCglhdHRlbXB0cyA6PSBbXXN0cnVjdCB7CgkJaW1nIGltYWdl
+          LkltYWdlCgkJcHNtIHN0cmluZwoJfXsKCQl7aW1nOiBpbWcsIHBzbTogIjYifSwKCQl7aW1nOiBp
+          bWcsIHBzbTogIjExIn0sCgkJe2ltZzogbGludXhPQ1JMaWdodFRleHRWYXJpYW50KGltZyksIHBz
+          bTogIjExIn0sCgl9CgoJdmFyIGxhc3RFcnIgZXJyb3IKCWhhZFN1Y2Nlc3NmdWxSdW4gOj0gZmFs
+          c2UKCWZvciBfLCBhdHRlbXB0IDo9IHJhbmdlIGF0dGVtcHRzIHsKCQlvdXQsIHJ1bkVyciA6PSBy
+          dW5MaW51eFRlc3NlcmFjdChiaW4sIGF0dGVtcHQuaW1nLCBhdHRlbXB0LnBzbSkKCQlpZiBydW5F
+          cnIgIT0gbmlsIHsKCQkJbGFzdEVyciA9IHJ1bkVycgoJCQljb250aW51ZQoJCX0KCQloYWRTdWNj
+          ZXNzZnVsUnVuID0gdHJ1ZQoJCWlmIHN0cmluZ3MuVHJpbVNwYWNlKG91dC5UZXh0KSAhPSAiIiB8
+          fCBsZW4ob3V0LkxpbmVzKSA+IDAgewoJCQlyZXR1cm4gb3V0LCBuaWwKCQl9Cgl9CgoJaWYgaGFk
+          U3VjY2Vzc2Z1bFJ1biB7CgkJcmV0dXJuIG9jclJlc3VsdHt9LCBuaWwKCX0KCWlmIGxhc3RFcnIg
+          IT0gbmlsIHsKCQlyZXR1cm4gb2NyUmVzdWx0e30sIGxhc3RFcnIKCX0KCXJldHVybiBvY3JSZXN1
+          bHR7fSwgbmlsCn0KCmZ1bmMgcnVuTGludXhUZXNzZXJhY3QoYmluIHN0cmluZywgaW1nIGltYWdl
+          LkltYWdlLCBwc20gc3RyaW5nKSAob2NyUmVzdWx0LCBlcnJvcikgewoJaWYgaW1nID09IG5pbCB7
+          CgkJcmV0dXJuIG9jclJlc3VsdHt9LCBmbXQuRXJyb3JmKCJPQ1IgaW1hZ2UgaXMgbmlsIikKCX0K
+          CWIgOj0gaW1nLkJvdW5kcygpCglpZiBiLkR4KCkgPCAyIHx8IGIuRHkoKSA8IDIgewoJCXJldHVy
+          biBvY3JSZXN1bHR7fSwgZm10LkVycm9yZigiT0NSIGltYWdlIGlzIGVtcHR5IikKCX0KCglmLCBl
+          cnIgOj0gb3MuQ3JlYXRlVGVtcCgiIiwgImphY29iLW9jci0qLnBuZyIpCglpZiBlcnIgIT0gbmls
+          IHsKCQlyZXR1cm4gb2NyUmVzdWx0e30sIGZtdC5FcnJvcmYoImNyZWF0ZSBPQ1IgdGVtcCBpbWFn
+          ZTogJXciLCBlcnIpCgl9CgluYW1lIDo9IGYuTmFtZSgpCglkZWZlciBvcy5SZW1vdmUobmFtZSkK
+          CglpZiBlcnIgOj0gcG5nLkVuY29kZShmLCBpbWcpOyBlcnIgIT0gbmlsIHsKCQlfID0gZi5DbG9z
+          ZSgpCgkJcmV0dXJuIG9jclJlc3VsdHt9LCBmbXQuRXJyb3JmKCJlbmNvZGUgT0NSIHRlbXAgaW1h
+          Z2U6ICV3IiwgZXJyKQoJfQoJaWYgZXJyIDo9IGYuQ2xvc2UoKTsgZXJyICE9IG5pbCB7CgkJcmV0
+          dXJuIG9jclJlc3VsdHt9LCBmbXQuRXJyb3JmKCJjbG9zZSBPQ1IgdGVtcCBpbWFnZTogJXciLCBl
+          cnIpCgl9CgoJY3R4LCBjYW5jZWwgOj0gY29udGV4dC5XaXRoVGltZW91dChjb250ZXh0LkJhY2tn
+          cm91bmQoKSwgNSp0aW1lLlNlY29uZCkKCWRlZmVyIGNhbmNlbCgpCgoJY21kIDo9IGV4ZWMuQ29t
+          bWFuZENvbnRleHQoCgkJY3R4LAoJCWJpbiwKCQluYW1lLAoJCSJzdGRvdXQiLAoJCSItbCIsIGxp
+          bnV4T0NSTGFuZ3VhZ2UoKSwKCQkiLS1vZW0iLCAiMSIsCgkJIi0tcHNtIiwgcHNtLAoJCSJ0c3Yi
+          LAoJKQoJY21kLkVudiA9IGFwcGVuZChvcy5FbnZpcm9uKCksICJPTVBfVEhSRUFEX0xJTUlUPTIi
+          KQoKCXZhciBzdGRvdXQsIHN0ZGVyciBieXRlcy5CdWZmZXIKCWNtZC5TdGRvdXQgPSAmc3Rkb3V0
+          CgljbWQuU3RkZXJyID0gJnN0ZGVycgoKCWlmIGVyciA6PSBjbWQuUnVuKCk7IGVyciAhPSBuaWwg
+          ewoJCWlmIGN0eC5FcnIoKSAhPSBuaWwgewoJCQlyZXR1cm4gb2NyUmVzdWx0e30sIGZtdC5FcnJv
+          cmYoIkxpbnV4IE9DUiB0aW1lZCBvdXQiKQoJCX0KCQltc2cgOj0gc3RyaW5ncy5UcmltU3BhY2Uo
+          c3RkZXJyLlN0cmluZygpKQoJCWlmIGxlbihtc2cpID4gMjQwIHsKCQkJbXNnID0gbXNnWzoyNDBd
+          CgkJfQoJCWlmIG1zZyAhPSAiIiB7CgkJCXJldHVybiBvY3JSZXN1bHR7fSwgZm10LkVycm9yZigi
+          TGludXggT0NSIGZhaWxlZDogJXMiLCBtc2cpCgkJfQoJCXJldHVybiBvY3JSZXN1bHR7fSwgZm10
+          LkVycm9yZigiTGludXggT0NSIGZhaWxlZDogJXciLCBlcnIpCgl9CgoJcmV0dXJuIHBhcnNlVGVz
+          c2VyYWN0VFNWKHN0ZG91dC5CeXRlcygpLCBiLkR4KCksIGIuRHkoKSksIG5pbAp9CgpmdW5jIGxp
+          bnV4T0NSTGlnaHRUZXh0VmFyaWFudChzcmMgaW1hZ2UuSW1hZ2UpIGltYWdlLkltYWdlIHsKCWIg
+          Oj0gc3JjLkJvdW5kcygpCglncmF5IDo9IGltYWdlLk5ld0dyYXkoaW1hZ2UuUmVjdCgwLCAwLCBi
+          LkR4KCksIGIuRHkoKSkpCgoJZm9yIHkgOj0gYi5NaW4uWTsgeSA8IGIuTWF4Llk7IHkrKyB7CgkJ
+          Zm9yIHggOj0gYi5NaW4uWDsgeCA8IGIuTWF4Llg7IHgrKyB7CgkJCXIsIGcsIGJsLCBfIDo9IHNy
+          Yy5BdCh4LCB5KS5SR0JBKCkKCQkJcjggOj0gdWludDMyKHIgPj4gOCkKCQkJZzggOj0gdWludDMy
+          KGcgPj4gOCkKCQkJYjggOj0gdWludDMyKGJsID4+IDgpCgkJCXYgOj0gdWludDgoKDI5OSpyOCAr
+          IDU4NypnOCArIDExNCpiOCArIDUwMCkgLyAxMDAwKQoJCQlncmF5LlNldEdyYXkoeC1iLk1pbi5Y
+          LCB5LWIuTWluLlksIGNvbG9yLkdyYXl7WTogdn0pCgkJfQoJfQoKCXRocmVzaG9sZCA6PSBvdHN1
+          VGhyZXNob2xkKGdyYXkpCglpZiB0aHJlc2hvbGQgPCA0OCB7CgkJdGhyZXNob2xkID0gNDgKCX0K
+          Cglmb3IgaSwgdiA6PSByYW5nZSBncmF5LlBpeCB7CgkJaWYgdiA+PSB0aHJlc2hvbGQgewoJCQln
+          cmF5LlBpeFtpXSA9IDAKCQl9IGVsc2UgewoJCQlncmF5LlBpeFtpXSA9IDI1NQoJCX0KCX0KCXJl
+          dHVybiBncmF5Cn0KJycnCgpzID0gc1s6c3RhcnRdICsgbmV3X29jciArIHNbZW5kOl0KCnMgPSBy
+          ZXBsYWNlX29uY2UoCiAgICBzLAogICAgJycnCQkiZW5naW5lIjogICAgICAgICAidGVzc2VyYWN0
+          IiwKCQkiYWN0aXZlTGFuZ3VhZ2UiOiBsaW51eE9DUkxhbmd1YWdlKCksCicnJywKICAgICcnJwkJ
+          ImVuZ2luZSI6ICAgICAgICAgInRlc3NlcmFjdCIsCgkJInN0cmF0ZWd5IjogICAgICAgInBzbTYg
+          LT4gcHNtMTEgLT4gbGlnaHQtdGV4dC1iaW5hcnkvcHNtMTEiLAoJCSJhY3RpdmVMYW5ndWFnZSI6
+          IGxpbnV4T0NSTGFuZ3VhZ2UoKSwKJycnLAogICAgIk9DUiBzdHJhdGVneSBpbmZvIiwKKQpwLndy
+          aXRlX3RleHQocywgZW5jb2Rpbmc9InV0Zi04IikKCiMgRGVja3kgbWV0YWRhdGE6IHZlcnNpb24g
+          YmVsb25ncyBpbiBwYWNrYWdlLmpzb24uCnBrZyA9IFBhdGgoInBhY2thZ2luZy9kZWNreS9KQUNv
+          Qi1IVUQvcGFja2FnZS5qc29uIikKcGtnX2RhdGEgPSBqc29uLmxvYWRzKHBrZy5yZWFkX3RleHQo
+          ZW5jb2Rpbmc9InV0Zi04IikpCnBrZ19kYXRhWyJ2ZXJzaW9uIl0gPSAiMC4xLjIiCnBrZy53cml0
+          ZV90ZXh0KGpzb24uZHVtcHMocGtnX2RhdGEsIGluZGVudD0yKSArICJcbiIsIGVuY29kaW5nPSJ1
+          dGYtOCIpCgpwbHVnaW4gPSBQYXRoKCJwYWNrYWdpbmcvZGVja3kvSkFDb0ItSFVEL3BsdWdpbi5q
+          c29uIikKcGx1Z2luX2RhdGEgPSBqc29uLmxvYWRzKHBsdWdpbi5yZWFkX3RleHQoZW5jb2Rpbmc9
+          InV0Zi04IikpCnBsdWdpbl9kYXRhLnBvcCgidmVyc2lvbiIsIE5vbmUpCnBsdWdpbi53cml0ZV90
+          ZXh0KGpzb24uZHVtcHMocGx1Z2luX2RhdGEsIGluZGVudD0yKSArICJcbiIsIGVuY29kaW5nPSJ1
+          dGYtOCIpCgpmbGF0X3BrZyA9IFBhdGgoInBhY2thZ2luZy9mbGF0cGFrL0pBQ29CLUhVRC9wYWNr
+          YWdlLmpzb24iKQppZiBmbGF0X3BrZy5leGlzdHMoKToKICAgIGZsYXRfcGtnLndyaXRlX3RleHQo
+          cGtnLnJlYWRfdGV4dChlbmNvZGluZz0idXRmLTgiKSwgZW5jb2Rpbmc9InV0Zi04IikKCmZsYXRf
+          cGx1Z2luID0gUGF0aCgicGFja2FnaW5nL2ZsYXRwYWsvSkFDb0ItSFVEL3BsdWdpbi5qc29uIikK
+          aWYgZmxhdF9wbHVnaW4uZXhpc3RzKCk6CiAgICBmbGF0X3BsdWdpbi53cml0ZV90ZXh0KHBsdWdp
+          bi5yZWFkX3RleHQoZW5jb2Rpbmc9InV0Zi04IiksIGVuY29kaW5nPSJ1dGYtOCIpCg==
+          JACOB_PATCH
+
+          python /tmp/jacob-hotfix-v3.py
+          gofmt -w internal/vision/ocr_linux.go
+
+      - name: Rebuild complete Decky plugin payload
+        working-directory: packaging/decky/JACoB-HUD
+        run: |
+          set -euo pipefail
+          pnpm install --no-frozen-lockfile
+          pnpm build
+
+          test -s plugin.json
+          test -s package.json
+          test -s main.py
+          test -s dist/index.js
+          python -m py_compile main.py
+
+          rm -rf ../../flatpak/JACoB-HUD
+          mkdir -p ../../flatpak/JACoB-HUD
+          cp plugin.json package.json main.py ../../flatpak/JACoB-HUD/
+          cp -a dist ../../flatpak/JACoB-HUD/
+
+      - name: Validate Decky production layout
+        run: |
+          set -euo pipefail
+
+          test -s packaging/flatpak/JACoB-HUD/plugin.json
+          test -s packaging/flatpak/JACoB-HUD/package.json
+          test -s packaging/flatpak/JACoB-HUD/main.py
+          test -s packaging/flatpak/JACoB-HUD/dist/index.js
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          plugin = json.loads(Path("packaging/flatpak/JACoB-HUD/plugin.json").read_text())
+          package = json.loads(Path("packaging/flatpak/JACoB-HUD/package.json").read_text())
+
+          assert plugin["name"] == "JACoB HUD Bridge"
+          assert plugin["api_version"] == 1
+          assert "version" not in plugin
+          assert package["name"] == "jacob-hud-bridge"
+          assert package["version"] == "0.1.2"
+          PY
+
+      - name: Validate adaptive Linux OCR
+        run: |
+          set -euo pipefail
+          grep -Fq 'psm6 -> psm11 -> light-text-binary/psm11' internal/vision/ocr_linux.go
+          grep -Fq 'linuxOCRLightTextVariant' internal/vision/ocr_linux.go
+          grep -Fq 'otsuThreshold(gray)' internal/vision/ocr_linux.go
+          git diff --check
+
+      - name: Add OCR unit coverage
+        run: |
+          set -euo pipefail
+          cat > internal/vision/ocr_lighttext_linux_test.go <<'EOF'
+          //go:build linux
+
+          package vision
+
+          import (
+            "image"
+            "image/color"
+            "testing"
+          )
+
+          func TestLinuxOCRLightTextVariant(t *testing.T) {
+            img := image.NewRGBA(image.Rect(0, 0, 100, 50))
+            for y := 0; y < 50; y++ {
+              for x := 0; x < 100; x++ {
+                img.SetRGBA(x, y, color.RGBA{R: 8, G: 8, B: 8, A: 255})
+              }
+            }
+
+            for y := 15; y < 35; y++ {
+              for x := 25; x < 30; x++ {
+                img.SetRGBA(x, y, color.RGBA{R: 240, G: 240, B: 240, A: 255})
+              }
+            }
+
+            out := linuxOCRLightTextVariant(img)
+            g, ok := out.(*image.Gray)
+            if !ok {
+              t.Fatalf("expected *image.Gray, got %T", out)
+            }
+            if got := g.GrayAt(27, 25).Y; got > 32 {
+              t.Fatalf("bright text should become dark ink, got %d", got)
+            }
+            if got := g.GrayAt(5, 5).Y; got < 223 {
+              t.Fatalf("dark background should become white, got %d", got)
+            }
+          }
+          EOF
+          gofmt -w internal/vision/ocr_lighttext_linux_test.go
+
+      - name: Test Linux repository
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          set -euo pipefail
+          go test ./internal/vision
+          go test ./internal/platform
+          go test ./internal/spatial
+          go test ./...
+
+      - name: Windows regression compile gate
+        env:
+          CGO_ENABLED: '0'
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          go test -exec=true ./...
+          go build -trimpath -o /tmp/JACoB-hotfix-v3-windows.exe ./cmd/jacob
+          go build -trimpath -o /tmp/JACoB-Setup-hotfix-v3-windows.exe ./cmd/installer
+
+      - name: Build Linux core
+        env:
+          CGO_ENABLED: '1'
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          v='0.2.18-alpha'
+          go build -trimpath -o "dist/JACoB-$v-linux-amd64" ./cmd/jacob
+          ldd "dist/JACoB-$v-linux-amd64" | tee /tmp/core-ldd.txt
+          ! grep -q 'not found' /tmp/core-ldd.txt
+
+      - name: Prepare OCR runtime
+        run: |
+          set -euo pipefail
+          ocr_url='https://github.com/pkgforge-community/AlexanderP_tesseract-appimage/releases/download/v5.5.2-20260124T161609/tesseract-5.5.2_lept-1.87-x86_64.AppImage'
+          ocr_sha='177a11b5520e6e296de7aa8e2927c00c3ce7b6ffa9a9777454a2be3e87e8a391'
+
+          curl -fL --retry 3 "$ocr_url" -o /tmp/jacob-tesseract.AppImage
+          printf '%s  %s\n' "$ocr_sha" /tmp/jacob-tesseract.AppImage | sha256sum -c -
+          chmod +x /tmp/jacob-tesseract.AppImage
+
+          rm -rf packaging/flatpak/tesseract-appdir packaging/flatpak/squashfs-root
+          (
+            cd packaging/flatpak
+            /tmp/jacob-tesseract.AppImage --appimage-extract >/dev/null
+            mv squashfs-root tesseract-appdir
+          )
+
+      - name: Build Deck Flatpak before commit
+        run: |
+          set -euo pipefail
+          v='0.2.18-alpha'
+
+          cp "dist/JACoB-$v-linux-amd64" packaging/flatpak/JACoB
+          cp assets/jacob-icon-256.png packaging/flatpak/jacob-icon-256.png
+          printf '%s\n' "$v" > packaging/flatpak/VERSION
+
+          test -s packaging/flatpak/JACoB-HUD/package.json
+
+          flatpak remote-add --user --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+          rm -rf flatpak-build flatpak-repo
+          flatpak-builder --user --force-clean --install-deps-from=flathub \
+            --repo=flatpak-repo flatpak-build packaging/flatpak/com.pseudosci.JACoB.yml
+
+          flatpak build-bundle \
+            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+            flatpak-repo "dist/JACoB-$v-SteamDeck.flatpak" com.pseudosci.JACoB stable
+
+          test -s "dist/JACoB-$v-SteamDeck.flatpak"
+          sha256sum "dist/JACoB-$v-SteamDeck.flatpak" \
+            > dist/STEAMDECK-HUD-OCR-V3-SHA256.txt
+
+      - name: Commit tested hotfix
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          rm -rf packaging/decky/JACoB-HUD/node_modules
+          rm -rf packaging/decky/JACoB-HUD/dist
+          rm -f packaging/decky/JACoB-HUD/pnpm-lock.yaml
+
+          git add \
+            internal/vision/ocr_linux.go \
+            internal/vision/ocr_lighttext_linux_test.go \
+            packaging/decky/JACoB-HUD/plugin.json \
+            packaging/decky/JACoB-HUD/package.json \
+            packaging/flatpak/JACoB-HUD
+
+          if git diff --cached --quiet; then
+            echo "HUD/OCR v3 hotfix already present."
+          else
+            git commit -m "Fix Deck HUD package and white-text OCR"
+            git push origin HEAD:${{ github.event.repository.default_branch }}
+          fi
+
+      - name: Upload replacement Deck release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v='0.2.18-alpha'
+          tag="v$v"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" \
+              "dist/JACoB-$v-SteamDeck.flatpak" \
+              "dist/STEAMDECK-HUD-OCR-V3-SHA256.txt" \
+              --clobber
+          else
+            gh release create "$tag" \
+              "dist/JACoB-$v-SteamDeck.flatpak" \
+              "dist/STEAMDECK-HUD-OCR-V3-SHA256.txt" \
+              --target "$(git rev-parse HEAD)" \
+              --draft --prerelease \
+              --title "JACoB $v" \
+              --notes "Steam Deck Decky package + adaptive white-text OCR hotfix."
+          fi
