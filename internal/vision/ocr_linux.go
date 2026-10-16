@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"os"
 	"os/exec"
@@ -50,14 +51,56 @@ func ocrTextLines(img image.Image) (ocrResult, error) {
 		return ocrResult{}, err
 	}
 
+	attempts := []struct {
+		img image.Image
+		psm string
+	}{
+		{img: img, psm: "6"},
+		{img: img, psm: "11"},
+		{img: linuxOCRLightTextVariant(img), psm: "11"},
+	}
+
+	var lastErr error
+	hadSuccessfulRun := false
+	for _, attempt := range attempts {
+		out, runErr := runLinuxTesseract(bin, attempt.img, attempt.psm)
+		if runErr != nil {
+			lastErr = runErr
+			continue
+		}
+		hadSuccessfulRun = true
+		if strings.TrimSpace(out.Text) != "" || len(out.Lines) > 0 {
+			return out, nil
+		}
+	}
+
+	if hadSuccessfulRun {
+		return ocrResult{}, nil
+	}
+	if lastErr != nil {
+		return ocrResult{}, lastErr
+	}
+	return ocrResult{}, nil
+}
+
+func runLinuxTesseract(bin string, img image.Image, psm string) (ocrResult, error) {
+	if img == nil {
+		return ocrResult{}, fmt.Errorf("OCR image is nil")
+	}
+	b := img.Bounds()
+	if b.Dx() < 2 || b.Dy() < 2 {
+		return ocrResult{}, fmt.Errorf("OCR image is empty")
+	}
+
 	f, err := os.CreateTemp("", "jacob-ocr-*.png")
 	if err != nil {
 		return ocrResult{}, fmt.Errorf("create OCR temp image: %w", err)
 	}
 	name := f.Name()
 	defer os.Remove(name)
+
 	if err := png.Encode(f, img); err != nil {
-		f.Close()
+		_ = f.Close()
 		return ocrResult{}, fmt.Errorf("encode OCR temp image: %w", err)
 	}
 	if err := f.Close(); err != nil {
@@ -66,11 +109,23 @@ func ocrTextLines(img image.Image) (ocrResult, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, name, "stdout", "-l", linuxOCRLanguage(), "--oem", "1", "--psm", "6", "tsv")
+
+	cmd := exec.CommandContext(
+		ctx,
+		bin,
+		name,
+		"stdout",
+		"-l", linuxOCRLanguage(),
+		"--oem", "1",
+		"--psm", psm,
+		"tsv",
+	)
 	cmd.Env = append(os.Environ(), "OMP_THREAD_LIMIT=2")
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			return ocrResult{}, fmt.Errorf("Linux OCR timed out")
@@ -84,7 +139,38 @@ func ocrTextLines(img image.Image) (ocrResult, error) {
 		}
 		return ocrResult{}, fmt.Errorf("Linux OCR failed: %w", err)
 	}
+
 	return parseTesseractTSV(stdout.Bytes(), b.Dx(), b.Dy()), nil
+}
+
+func linuxOCRLightTextVariant(src image.Image) image.Image {
+	b := src.Bounds()
+	gray := image.NewGray(image.Rect(0, 0, b.Dx(), b.Dy()))
+
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, _ := src.At(x, y).RGBA()
+			r8 := uint32(r >> 8)
+			g8 := uint32(g >> 8)
+			b8 := uint32(bl >> 8)
+			v := uint8((299*r8 + 587*g8 + 114*b8 + 500) / 1000)
+			gray.SetGray(x-b.Min.X, y-b.Min.Y, color.Gray{Y: v})
+		}
+	}
+
+	threshold := otsuThreshold(gray)
+	if threshold < 48 {
+		threshold = 48
+	}
+
+	for i, v := range gray.Pix {
+		if v >= threshold {
+			gray.Pix[i] = 0
+		} else {
+			gray.Pix[i] = 255
+		}
+	}
+	return gray
 }
 
 func linuxOCRLanguage() string {
@@ -105,6 +191,7 @@ func ocrInfo() map[string]any {
 	return map[string]any{
 		"available":      err == nil,
 		"engine":         "tesseract",
+		"strategy":       "psm6 -> psm11 -> light-text-binary/psm11",
 		"activeLanguage": linuxOCRLanguage(),
 		"binary": func() string {
 			if err == nil {

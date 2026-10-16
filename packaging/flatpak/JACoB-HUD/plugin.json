@@ -1,7 +1,6 @@
 {
   "name": "JACoB HUD Bridge",
   "author": "Pseudo Science Inc.",
-  "version": "0.1.1",
   "flags": [],
   "api_version": 1,
   "publish": {
