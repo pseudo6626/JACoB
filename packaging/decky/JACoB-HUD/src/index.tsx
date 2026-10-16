@@ -1,6 +1,6 @@
 import { findModuleChild, PanelSection, PanelSectionRow, staticClasses } from "@decky/ui";
 import { definePlugin, routerHook } from "@decky/api";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FaCrosshairs } from "react-icons/fa";
 
 type Point = { x:number; y:number };
@@ -12,13 +12,20 @@ type Item = {
   outlineColor?:string; shadowX?:number; shadowY?:number; shadowColor?:string;
   cornerRadius?:number; dash?:string;
 };
+
 type Scene = {
   z?:number; space?:string; width?:number; height?:number; opacity?:number; items:Item[];
 };
+
 type Snapshot = {
-  hudVersion:number; version:number; visible:boolean; layers:Record<string,Scene>;
-  connected?:boolean; rendererConnected?:boolean;
+  hudVersion:number;
+  version:number;
+  visible:boolean;
+  layers:Record<string,Scene>;
+  connected?:boolean;
+  rendererConnected?:boolean;
 };
+
 type NamedScene = [string, Scene];
 
 const CANVAS_W = 1280;
@@ -41,10 +48,12 @@ const discoveredUIComposition =
       const fn = m[prop];
       if (typeof fn === "function") {
         const s = fn.toString();
-        if (s.includes("AddMinimumCompositionStateRequest") &&
-            s.includes("ChangeMinimumCompositionStateRequest") &&
-            s.includes("RemoveMinimumCompositionStateRequest") &&
-            !s.includes("m_mapCompositionStateRequests")) {
+        if (
+          s.includes("AddMinimumCompositionStateRequest") &&
+          s.includes("ChangeMinimumCompositionStateRequest") &&
+          s.includes("RemoveMinimumCompositionStateRequest") &&
+          !s.includes("m_mapCompositionStateRequests")
+        ) {
           return fn;
         }
       }
@@ -80,11 +89,13 @@ function sleep(ms:number){
 
 async function hudTransportLoop(){
   transportStopped=false;
+
   while(!transportStopped){
     try{
       const url=`${HUD_URL}?since=${transportVersion}&wait=1000`;
       const res=await fetch(url,{method:"GET",cache:"no-store",mode:"cors"});
       if(!res.ok) throw new Error(`HUD state HTTP ${res.status}`);
+
       const snap=await res.json() as Snapshot;
       transportVersion=Number(snap.version||transportVersion);
       publish({...snap,connected:true});
@@ -102,11 +113,13 @@ async function hudTransportLoop(){
 }
 
 function useSnapshot(){
-  const [snap,setSnap] = useState<Snapshot>(current);
+  const [snap,setSnap]=useState<Snapshot>(current);
+
   useEffect(()=>{
     subscribers.add(setSnap);
-    return ()=>{subscribers.delete(setSnap)};
+    return ()=>{ subscribers.delete(setSnap); };
   },[]);
+
   return snap;
 }
 
@@ -127,168 +140,242 @@ function metricScale(scene:Scene){
   return Math.min(pixelScaleX(scene),pixelScaleY(scene));
 }
 
-function sx(v:number|undefined, scene:Scene){
-  const n=v||0;
+function sx(v:number|undefined,scene:Scene){
+  const n=Number(v||0);
   return scene.space==="pixels" ? n*pixelScaleX(scene) : n*CANVAS_W;
 }
 
-function sy(v:number|undefined, scene:Scene){
-  const n=v||0;
+function sy(v:number|undefined,scene:Scene){
+  const n=Number(v||0);
   return scene.space==="pixels" ? n*pixelScaleY(scene) : n*CANVAS_H;
 }
 
-function sw(v:number|undefined, scene:Scene){
+function sw(v:number|undefined,scene:Scene){
   return sx(v,scene);
 }
 
-function sh(v:number|undefined, scene:Scene){
+function sh(v:number|undefined,scene:Scene){
   return sy(v,scene);
 }
 
-function sr(v:number|undefined, scene:Scene){
-  const n=v||0;
-  return scene.space==="pixels" ? n*metricScale(scene) : n*Math.min(CANVAS_W,CANVAS_H);
+function sr(v:number|undefined,scene:Scene){
+  const n=Number(v||0);
+  return scene.space==="pixels"
+    ? n*metricScale(scene)
+    : n*Math.min(CANVAS_W,CANVAS_H);
 }
 
-function dash(v:string|undefined, width:number){
-  switch(v){
-    case "dash": return `${6*width} ${4*width}`;
-    case "dot": return `${width} ${3*width}`;
-    case "dashdot": return `${6*width} ${3*width} ${width} ${3*width}`;
-    default: return undefined;
+function setDash(ctx:CanvasRenderingContext2D,dash:string|undefined,width:number){
+  switch(dash){
+    case "dash":
+      ctx.setLineDash([6*width,4*width]);
+      break;
+    case "dot":
+      ctx.setLineDash([width,3*width]);
+      break;
+    case "dashdot":
+      ctx.setLineDash([6*width,3*width,width,3*width]);
+      break;
+    default:
+      ctx.setLineDash([]);
+      break;
   }
 }
 
-function fx(i:Item, scene:Scene){
-  const f:string[]=[];
+function hasPaint(v:string|undefined){
+  return !!v && v!=="none" && v!=="transparent";
+}
+
+function roundedRectPath(
+  ctx:CanvasRenderingContext2D,
+  x:number,
+  y:number,
+  w:number,
+  h:number,
+  radius:number
+){
+  let r=Math.max(0,Math.min(radius,Math.abs(w)/2,Math.abs(h)/2));
+
+  ctx.beginPath();
+
+  if(r<=0){
+    ctx.rect(x,y,w,h);
+    return;
+  }
+
+  ctx.moveTo(x+r,y);
+  ctx.lineTo(x+w-r,y);
+  ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r);
+  ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h);
+  ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r);
+  ctx.quadraticCurveTo(x,y,x+r,y);
+  ctx.closePath();
+}
+
+function beginItem(ctx:CanvasRenderingContext2D,item:Item,scene:Scene){
   const ms=metricScale(scene);
-  if((i.shadowX||i.shadowY) && i.shadowColor){
-    f.push(`drop-shadow(${(i.shadowX||0)*ms}px ${(i.shadowY||0)*ms}px 0px ${i.shadowColor})`);
+
+  ctx.save();
+  ctx.globalAlpha=item.opacity??1;
+  ctx.lineWidth=Math.max(.5,(item.lineWidth||1)*ms);
+  ctx.lineCap="round";
+  ctx.lineJoin="round";
+  setDash(ctx,item.dash,ctx.lineWidth);
+
+  ctx.shadowBlur=0;
+  ctx.shadowOffsetX=0;
+  ctx.shadowOffsetY=0;
+  ctx.shadowColor="transparent";
+
+  if((item.glow||0)>0){
+    ctx.shadowBlur=(item.glow||0)*ms;
+    ctx.shadowColor=item.glowColor||item.stroke||item.color||"#ffffff";
+  }else if((item.shadowX||0)!==0 || (item.shadowY||0)!==0){
+    ctx.shadowOffsetX=(item.shadowX||0)*ms;
+    ctx.shadowOffsetY=(item.shadowY||0)*ms;
+    ctx.shadowColor=item.shadowColor||"#000000AA";
   }
-  if((i.glow||0)>0){
-    f.push(`drop-shadow(0 0 ${(i.glow||0)*ms}px ${i.glowColor||i.stroke||i.color||"#ffffff"})`);
-  }
-  return f.length?f.join(" "):undefined;
 }
 
-function common(i:Item, scene:Scene){
-  return {
-    opacity:i.opacity??1,
-    filter:fx(i,scene),
-    strokeLinecap:"round" as const,
-    strokeLinejoin:"round" as const,
-  };
+function strokeAndFill(
+  ctx:CanvasRenderingContext2D,
+  item:Item,
+  defaultStroke="none"
+){
+  const fill=item.fill||"none";
+  const stroke=item.stroke||item.color||defaultStroke;
+
+  if(hasPaint(fill)){
+    ctx.fillStyle=fill;
+    ctx.fill();
+  }
+
+  if(hasPaint(stroke)){
+    ctx.strokeStyle=stroke;
+    ctx.stroke();
+  }
 }
 
-function renderItem(i:Item, scene:Scene, key:string){
-  const ms=metricScale(scene);
-  const lw=(i.lineWidth||1)*ms;
-  const stroke=i.stroke||i.color||"none";
-  const fill=i.fill||"none";
-  const c=common(i,scene);
+function drawItem(ctx:CanvasRenderingContext2D,item:Item,scene:Scene){
+  beginItem(ctx,item,scene);
 
-  if(i.type==="line"){
-    return <line
-      key={key}
-      x1={sx(i.x,scene)}
-      y1={sy(i.y,scene)}
-      x2={sx(i.x2,scene)}
-      y2={sy(i.y2,scene)}
-      stroke={stroke}
-      strokeWidth={lw}
-      strokeDasharray={dash(i.dash,lw)}
-      style={c}
-    />;
+  try{
+    if(item.type==="line"){
+      ctx.beginPath();
+      ctx.moveTo(sx(item.x,scene),sy(item.y,scene));
+      ctx.lineTo(sx(item.x2,scene),sy(item.y2,scene));
+
+      const stroke=item.stroke||item.color||"#ffffff";
+      if(hasPaint(stroke)){
+        ctx.strokeStyle=stroke;
+        ctx.stroke();
+      }
+      return;
+    }
+
+    if(item.type==="polyline" || item.type==="polygon"){
+      const points=item.points||[];
+      if(points.length<2) return;
+
+      ctx.beginPath();
+      ctx.moveTo(sx(points[0].x,scene),sy(points[0].y,scene));
+
+      for(let n=1;n<points.length;n++){
+        ctx.lineTo(sx(points[n].x,scene),sy(points[n].y,scene));
+      }
+
+      if(item.type==="polygon") ctx.closePath();
+      strokeAndFill(ctx,item,item.type==="polyline"?"#ffffff":"none");
+      return;
+    }
+
+    if(item.type==="rect"){
+      roundedRectPath(
+        ctx,
+        sx(item.x,scene),
+        sy(item.y,scene),
+        sw(item.w,scene),
+        sh(item.h,scene),
+        sr(item.cornerRadius,scene)
+      );
+      strokeAndFill(ctx,item);
+      return;
+    }
+
+    if(item.type==="circle"){
+      const r=sr(item.r,scene);
+      if(r<=0) return;
+
+      ctx.beginPath();
+      ctx.arc(sx(item.x,scene),sy(item.y,scene),r,0,Math.PI*2);
+      strokeAndFill(ctx,item);
+      return;
+    }
+
+    if(item.type==="text"){
+      const ms=metricScale(scene);
+      const size=Math.max(1,(item.fontSize||18)*ms);
+      const family=item.fontFamily||"sans-serif";
+      const weight=item.fontWeight||400;
+      const italic=item.italic?"italic ":"";
+
+      ctx.font=`${italic}${weight} ${size}px ${family}, "Noto Sans", sans-serif`;
+      ctx.textBaseline="top";
+      ctx.textAlign=
+        item.align==="center" ? "center" :
+        item.align==="right" ? "right" :
+        "left";
+
+      const x=sx(item.x,scene);
+      const y=sy(item.y,scene);
+      const text=item.text||"";
+      const color=item.color||item.fill||"#ffffff";
+      const outline=(item.outlineWidth||0)*ms;
+
+      if(outline>0){
+        ctx.lineWidth=Math.max(.5,outline*2);
+        ctx.strokeStyle=item.outlineColor||"#000000";
+        ctx.strokeText(text,x,y);
+      }
+
+      ctx.fillStyle=color;
+      ctx.fillText(text,x,y);
+      return;
+    }
+  }finally{
+    ctx.restore();
   }
-
-  if(i.type==="polyline"||i.type==="polygon"){
-    const pts=(i.points||[])
-      .map(p=>`${sx(p.x,scene)},${sy(p.y,scene)}`)
-      .join(" ");
-
-    return i.type==="polygon"
-      ? <polygon
-          key={key}
-          points={pts}
-          stroke={stroke}
-          fill={fill}
-          strokeWidth={lw}
-          strokeDasharray={dash(i.dash,lw)}
-          style={c}
-        />
-      : <polyline
-          key={key}
-          points={pts}
-          stroke={stroke}
-          fill="none"
-          strokeWidth={lw}
-          strokeDasharray={dash(i.dash,lw)}
-          style={c}
-        />;
-  }
-
-  if(i.type==="rect"){
-    return <rect
-      key={key}
-      x={sx(i.x,scene)}
-      y={sy(i.y,scene)}
-      width={sw(i.w,scene)}
-      height={sh(i.h,scene)}
-      rx={sr(i.cornerRadius,scene)}
-      stroke={stroke}
-      fill={fill}
-      strokeWidth={lw}
-      strokeDasharray={dash(i.dash,lw)}
-      style={c}
-    />;
-  }
-
-  if(i.type==="circle"){
-    return <circle
-      key={key}
-      cx={sx(i.x,scene)}
-      cy={sy(i.y,scene)}
-      r={sr(i.r,scene)}
-      stroke={stroke}
-      fill={fill}
-      strokeWidth={lw}
-      strokeDasharray={dash(i.dash,lw)}
-      style={c}
-    />;
-  }
-
-  if(i.type==="text"){
-    const anchor=i.align==="center"?"middle":i.align==="right"?"end":"start";
-    const color=i.color||i.fill||"#fff";
-    const outline=(i.outlineWidth||0)*ms;
-
-    return <text
-      key={key}
-      x={sx(i.x,scene)}
-      y={sy(i.y,scene)}
-      fill={color}
-      fontSize={(i.fontSize||18)*ms}
-      fontFamily={`${i.fontFamily||"sans-serif"}, "Noto Sans", sans-serif`}
-      fontWeight={i.fontWeight||400}
-      fontStyle={i.italic?"italic":"normal"}
-      textAnchor={anchor}
-      dominantBaseline="text-before-edge"
-      stroke={outline>0?(i.outlineColor||"#000000"):"none"}
-      strokeWidth={outline*2}
-      paintOrder="stroke fill"
-      style={c}
-    >
-      {i.text||""}
-    </text>;
-  }
-
-  return null;
 }
 
 function HUDSurface({scenes}:{scenes:NamedScene[]}){
   useUIComposition(UIComposition.Notification);
+  const canvasRef=useRef<HTMLCanvasElement>(null);
 
-  return <div
+  useEffect(()=>{
+    const canvas=canvasRef.current;
+    if(!canvas) return;
+
+    const ctx=canvas.getContext("2d",{alpha:true});
+    if(!ctx) return;
+
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.globalCompositeOperation="source-over";
+    ctx.clearRect(0,0,CANVAS_W,CANVAS_H);
+
+    for(const [,scene] of scenes){
+      for(const item of scene.items||[]){
+        drawItem(ctx,item,scene);
+      }
+    }
+  },[scenes]);
+
+  return <canvas
+    ref={canvasRef}
+    width={CANVAS_W}
+    height={CANVAS_H}
     aria-hidden="true"
     style={{
       position:"fixed",
@@ -296,42 +383,18 @@ function HUDSurface({scenes}:{scenes:NamedScene[]}){
       top:0,
       width:"100vw",
       height:"100vh",
+      display:"block",
       pointerEvents:"none",
       zIndex:2147483000,
-      overflow:"hidden",
       background:"transparent",
       backgroundColor:"transparent"
     }}
-  >
-    <svg
-      viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
-      preserveAspectRatio="none"
-      aria-hidden="true"
-      fill="none"
-      style={{
-        position:"absolute",
-        left:0,
-        top:0,
-        width:"100%",
-        height:"100%",
-        display:"block",
-        pointerEvents:"none",
-        overflow:"visible",
-        background:"transparent",
-        backgroundColor:"transparent"
-      }}
-    >
-      {scenes.flatMap(([name,scene])=>
-        (scene.items||[]).map((item,idx)=>
-          renderItem(item,scene,`${name}:${idx}`)
-        )
-      )}
-    </svg>
-  </div>;
+  />;
 }
 
 function HUDOverlay(){
   const snap=useSnapshot();
+
   const scenes=useMemo(
     ()=>Object.entries(snap.layers||{})
       .sort((a,b)=>(a[1].z||0)-(b[1].z||0)) as NamedScene[],
@@ -352,7 +415,7 @@ function Content(){
       <div style={{padding:"8px 0",fontSize:13}}>
         <div>Core: {snap.connected?"connected":"waiting"}</div>
         <div>HUD2: v{snap.hudVersion||2}</div>
-        <div>Renderer: Deck canonical canvas 1280×800</div>
+        <div>Renderer: Canvas 2D / 1280×800</div>
         <div>Layers: {Object.keys(snap.layers||{}).length}</div>
         <div>Scene version: {snap.version||0}</div>
       </div>
