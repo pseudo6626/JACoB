@@ -7,13 +7,13 @@ HOST_HOME="${JACOB_HOST_HOME:-$(flatpak-spawn --host sh -lc 'printf %s "$HOME"')
 HOST_DIR="$HOST_HOME/.local/share/JACoB"
 HOST_BIN="$HOST_DIR/JACoB"
 LAUNCHER="$HOST_DIR/jacob-elite-launch"
-HOOK_STAMP="$HOST_DIR/.steam-hook-v4"
+HOOK_STAMP="$HOST_DIR/.steam-hook-v10"
 LOG_DIR="$HOST_HOME/.config/JACoB"
 LOG_FILE="$LOG_DIR/deck-install.log"
 mkdir -p "$HOST_DIR" "$LOG_DIR"
 exec >>"$LOG_FILE" 2>&1
 
-echo "[$(date -Is)] Steam integration check"
+echo "[$(date -Is)] Steam integration v10 check"
 
 find_steam_root() {
   local p
@@ -61,6 +61,8 @@ patch_launch_options() {
   ' "$file" > "$out"
 }
 
+# Always rewrite this file, even when Steam launch options already point here.
+# This prevents an old host-side launcher surviving a Flatpak update.
 cat > "$LAUNCHER" <<'LAUNCH'
 #!/usr/bin/env bash
 set -u
@@ -69,6 +71,8 @@ JACOB_BIN="$HOME/.local/share/JACoB/JACoB"
 JACOB_PID=""
 JACOB_OWNED=0
 GAME_PID=""
+VK_DIR="$HOME/.local/share/JACoB/vulkan-hud"
+VK_RUNTIME="$HOME/.local/share/JACoB/vulkan-runtime"
 
 jacob_healthy() {
   command -v curl >/dev/null 2>&1 && curl -fsS --max-time 0.5 http://127.0.0.1:6626/api/health >/dev/null 2>&1
@@ -81,7 +85,12 @@ start_jacob() {
   if [[ ! -x "$JACOB_BIN" ]]; then
     return 0
   fi
-  JACOB_TESSERACT="$HOME/.local/share/JACoB/ocr/tesseract/AppRun" JACOB_GAMESCOPE_CAPTURE_HELPER="$HOME/.local/share/JACoB/jacob-gamescope-stream" JACOB_STEAM_APP_ID=359320 "$JACOB_BIN" >/dev/null 2>&1 &
+  JACOB_OPEN_BROWSER=0 \
+  JACOB_TESSERACT="$HOME/.local/share/JACoB/ocr/tesseract/AppRun" \
+  JACOB_GAMESCOPE_CAPTURE_HELPER="$HOME/.local/share/JACoB/jacob-gamescope-stream" \
+  JACOB_VK_RUNTIME_DIR="$VK_RUNTIME" \
+  JACOB_STEAM_APP_ID=359320 \
+  "$JACOB_BIN" >/dev/null 2>&1 &
   JACOB_PID=$!
   JACOB_OWNED=1
 }
@@ -94,9 +103,19 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Keep Elite as Steam/Gamescope's primary launch. JACoB starts headlessly just
-# after the game chain begins, so no browser window can steal Gaming Mode focus.
-"$@" &
+mkdir -p "$VK_RUNTIME"
+rm -f "$VK_RUNTIME/renderer.ready" "$VK_RUNTIME/capture.request" "$VK_RUNTIME/capture.frame" 2>/dev/null || true
+
+# Elite remains Steam/Gamescope's primary process. The Vulkan layer is enabled
+# only for Elite, while the JACoB core starts headlessly alongside it.
+if [[ -f "$VK_DIR/enabled" ]]; then
+  JACOB_VK_HUD=1 \
+  JACOB_VK_HUD_DIR="$VK_DIR" \
+  JACOB_VK_RUNTIME_DIR="$VK_RUNTIME" \
+  "$@" &
+else
+  "$@" &
+fi
 GAME_PID=$!
 sleep 0.75
 start_jacob
@@ -115,6 +134,7 @@ status=$?
 exit $status
 LAUNCH
 chmod 0755 "$LAUNCHER"
+printf '%s\n' "v10" > "$HOOK_STAMP"
 
 STEAM_ROOT="$(find_steam_root)" || { echo "Steam userdata not found; will retry later."; exit 0; }
 LOCALCONFIG="$(select_localconfig "$STEAM_ROOT")" || { echo "localconfig.vdf not found; will retry later."; exit 0; }
@@ -132,15 +152,11 @@ if [[ "$CURRENT" == *"run-elite-with-jacob.sh"* ]]; then
   fi
 fi
 
-# The launcher file above is refreshed on every run. If launch options already
-# point directly at it and no legacy wrapper surrounds it, no VDF edit is needed.
 if [[ "$CURRENT" == *"$LAUNCHER"* && "$LEGACY" == "0" ]]; then
-  printf '%s\n' "installed" > "$HOOK_STAMP"
-  echo "Steam hook already current."
+  echo "Steam hook already points at the freshly rewritten v10 launcher."
   exit 0
 fi
 
-# Avoid Steam overwriting localconfig.vdf after we edit it.
 echo "Closing Steam before editing localconfig.vdf..."
 flatpak-spawn --host sh -lc 'steam -shutdown >/dev/null 2>&1 || true' || true
 for _ in {1..60}; do
@@ -183,6 +199,5 @@ if [[ $rc -ne 0 ]]; then
   exit 1
 fi
 mv -f "$TMP" "$LOCALCONFIG"
-printf '%s\n' "installed" > "$HOOK_STAMP"
 echo "Steam hook installed. Backup: $BACKUP"
 flatpak-spawn --host sh -lc 'nohup steam -silent >/dev/null 2>&1 &' || true

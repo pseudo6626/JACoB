@@ -53,31 +53,21 @@ The setup app copies the native JACoB core into:
 
 It then finds the Steam account containing Elite Dangerous, backs up `localconfig.vdf`, preserves existing launch options, adds JACoB immediately before `%command%`, and restarts Steam. No terminal command or executable permission change is required.
 
-After setup, launch Elite Dangerous normally from Gaming Mode. JACoB starts with Elite and its browser UI can be selected as the second window through the Steam window switcher.
+After setup, launch Elite Dangerous normally from Gaming Mode. JACoB starts with Elite. In Desktop Mode, JACoB can also be launched without Elite; it opens the local browser UI so another device can be paired before starting the game.
 
-The Flatpak is only the installer/bootstrap. The actual JACoB core runs natively on the Steam Deck host so Gamescope capture, Linux input, journal/status access and the in-app updater are not trapped inside a Flatpak sandbox.
+The Flatpak is only the installer/bootstrap. The actual JACoB core runs natively on the Steam Deck host so Vulkan, Linux input, journal/status access and the in-app updater are not trapped inside a Flatpak sandbox.
 
-### Decky Loader requirement for HUD overlays
+`~/.local/share/JACoB` is installer-managed payload. Reinstalling a newer Steam Deck package stops the old host instance and replaces that payload completely. Saved tabs, pairing state and user configuration under `~/.config/JACoB` are preserved.
 
-JACoB's normal web UI, journal/status tools, input bridge, Game View, Vision and OCR do not require Decky Loader. **The in-game HUD overlay does.** JACoB ships its own Decky HUD bridge, but Decky Loader must be installed so Steam's Gaming Mode UI can load that bridge.
+### Steam Deck Vulkan HUD and clean Vision capture
 
-JACoB Steam Deck Setup checks for Decky. If Decky is missing, it offers to open the official Decky Loader page. To install Decky manually:
+The full Linux build is compiled natively on Linux with CGO enabled. When Elite is launched through JACoB's Steam integration, the bundled implicit Vulkan layer is enabled only for the Elite process.
 
-1. Switch the Steam Deck to **Desktop Mode**.
-2. Open the official [Decky Loader repository](https://github.com/SteamDeckHomebrew/decky-loader).
-3. Download the official `decky_installer.desktop` installer. If Firefox saves it as `decky_installer.desktop.download`, rename it to `decky_installer.desktop`.
-4. Move the installer to the Desktop and double-click it.
-5. Authorize the installer when prompted and choose **Latest Release**.
-6. Return to Gaming Mode.
-7. Launch **JACoB Steam Deck Setup** once more. JACoB copies its bundled HUD bridge into Decky's plugin directory and requests a Decky reload. A reboot also loads the bridge if the reload is declined.
+The Vulkan layer consumes the same validated HUD2 `OverlayScene` contract as Windows and composites JACoB geometry directly into Elite's Vulkan presentation path. It does not use Decky, Steam CEF, a second overlay window, or the Gamescope external-overlay slot.
 
-Decky is maintained by the SteamDeckHomebrew project and is separate from JACoB. JACoB does not silently pipe a remote privileged installer into a shell.
+Vision, OCR and Game View prefer the Vulkan pre-HUD capture backend while the layer is connected. The layer copies the Elite frame before JACoB draws its own HUD, so visual tools cannot detect JACoB's overlay. Gamescope/PipeWire and X11 capture remain fallback paths when the Vulkan layer is not available.
 
-### Steam Deck capture and HUD
-
-The full Linux build is compiled natively on Linux with CGO enabled. Game View, Vision and OCR use JACoB's Elite-only Gamescope/PipeWire capture path. The capture helper identifies Elite Dangerous (Steam app `359320`) and does not fall back to monitor or desktop capture.
-
-The HUD uses the bundled JACoB Decky renderer and Steam's CEF/Gamescope notification composition layer. The renderer consumes the same HUD2 `OverlayScene` contract as Windows. The HUD layer is composited after the Elite frame, so JACoB Vision does not ingest JACoB's own overlay.
+The capture boundary remains Elite-only. Custom tabs receive derived Vision/OCR results rather than raw game pixels.
 
 OCR is capability-checked separately and uses the bundled Tesseract runtime in the Steam Deck package.
 

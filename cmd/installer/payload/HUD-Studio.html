@@ -9,7 +9,7 @@
 </head>
 <body><main>
 <h1>JACoB HUD Studio</h1>
-<p>SDK13 visual test bench. It exercises themes, alpha, antialiased text, glow, outline, shadow, rounded panels, semantic metrics, progress, brackets, arcs and reticles.</p>
+<p>SDK14 visual test bench. It exercises themes, alpha, antialiased text, glow, outline, shadow, rounded panels, semantic metrics, progress, brackets, arcs and reticles.</p>
 <div class="bar">
 <button id="show" class="primary">Show HUD</button><button id="clear">Clear HUD</button><button id="info">Renderer info</button><span id="status" class="status"></span>
 </div>
@@ -20,7 +20,7 @@
 <div class="card"><label>HUD scale</label><input id="scale" type="range" min="0.7" max="1.5" step="0.05" value="1"></div>
 </div>
 <h2>What to look for</h2>
-<p class="small">Text edges should be smooth with no magenta fringe. Panel translucency should preserve the game underneath. Thin geometry should stay clean at 1080p and above. Glow should read as illumination, not fuzz. Change the sliders while Elite is foreground and compare themes.</p>
+<p class="small">Text edges should be smooth with no magenta fringe. Panel translucency should preserve the game underneath. Thin geometry should stay clean at 1080p and above. Glow should read as illumination, not fuzz. Change the sliders while Elite is foreground and compare themes. On Steam Deck, leave this HUD visible and open Game View/Vision: the capture should show Elite without these HUD elements.</p>
 <pre id="out">Ready.</pre>
 <script>
 const $=s=>document.querySelector(s),out=$('#out'),status=$('#status');
@@ -42,7 +42,7 @@ function scene(){
   {type:'text',x:.825,y:.285,text:'62.8% PLATINUM',align:'center',role:'primary',fontSize:14,shadowX:1,shadowY:1,shadowColor:'#000000BB'},
 
   {type:'panel',x:.38,y:.82,w:.24,h:.085,cornerRadius:.008,opacity:.78},
-  {type:'text',x:.5,y:.838,text:'HUD2  /  SDK13',align:'center',role:'muted',fontSize:12,fontWeight:600},
+  {type:'text',x:.5,y:.838,text:'HUD2  /  SDK14',align:'center',role:'muted',fontSize:12,fontWeight:600},
   {type:'text',x:.5,y:.866,text:'PER-PIXEL ALPHA  ·  ANTIALIASED',align:'center',role:'primary',fontSize:14,fontWeight:500}
  ]};
 }

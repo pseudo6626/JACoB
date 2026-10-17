@@ -106,7 +106,7 @@ func main() {
 	defer stop()
 	s := core.New(cfg)
 
-	if boolDefault(os.Getenv("JACOB_OPEN_BROWSER"), runtime.GOOS == "windows") {
+	if boolDefault(os.Getenv("JACOB_OPEN_BROWSER"), defaultOpenBrowser()) {
 		go func() { time.Sleep(450 * time.Millisecond); openBrowser(localURL) }()
 	}
 
@@ -188,6 +188,16 @@ func probeJACoB(url string) bool {
 }
 
 func asString(v any) string { s, _ := v.(string); return s }
+
+func defaultOpenBrowser() bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	if runtime.GOOS == "linux" {
+		return strings.TrimSpace(os.Getenv("DISPLAY")) != "" || strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) != ""
+	}
+	return false
+}
 
 func openBrowser(url string) {
 	var cmd *exec.Cmd

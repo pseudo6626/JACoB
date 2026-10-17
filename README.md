@@ -1,6 +1,6 @@
 # JACoB — Journal Aligned Control Bridge
 
-> Current field build: **0.2.13 Alpha · SDK 10**
+> Current field build: **0.2.18 Alpha · SDK 14**
 
 JACoB is a local companion bridge for **Elite Dangerous**. It reads the live journal and `Status.json`, resolves control bindings, sends game input, hosts persistent custom HTML tabs, supplies a game-view stream, renders native HUD overlays, exports tab-generated files, and provides bounded access to public web APIs.
 
@@ -10,7 +10,7 @@ The core carries the common interfaces. User tabs carry route queues, race syste
 
 Windows commanders should use the installer attached in the "assets" tab to the current [GitHub release](https://github.com/pseudo6626/JACoB/releases). It installs for the current Windows account, creates Start Menu entries, and registers an uninstaller. The installer offers either the full capture-capable build or the No Capture privacy build on first installation.
 
-Steam Deck users should install the `JACoB-<version>-SteamDeck.flatpak` release asset in Desktop Mode and launch **JACoB Steam Deck Setup** once. The setup installs the native host payload and integrates JACoB with Elite's Steam launch options. **Decky Loader is required only for JACoB's in-game HUD renderer**; if Decky is missing, setup directs the user to the official Decky installation page. Full step-by-step instructions are in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+Steam Deck users should install the `JACoB-<version>-SteamDeck.flatpak` release asset in Desktop Mode and launch **JACoB Steam Deck Setup** once. The setup installs the native host payload, Vulkan HUD layer, clean pre-HUD Vision capture path, and Elite Steam launch integration. Decky Loader is not required. Full step-by-step instructions are in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
 
 A newer setup detects the existing JACoB installation and offers an in-place update. Saved tabs, navigation settings, appearance files, and the existing capture/privacy choice is retained.
 
@@ -48,7 +48,7 @@ The full custom-tab contract is recorded in:
 
 [`docs/JACOB_CUSTOM_TAB_REFERENCE.md`](docs/JACOB_CUSTOM_TAB_REFERENCE.md)
 
-SDK / protocol version **10** includes:
+SDK / protocol version **14** includes:
 
 - OS-neutral canonical Elite frame service: capture backends may differ by platform, while Vision/calibration coordinates and the no-desktop-fallback privacy rule remain identical
 

@@ -42,10 +42,11 @@ type linuxCaptureMux struct {
 }
 
 func newLinuxCaptureDriver() CaptureDriver {
-	return &linuxCaptureMux{
+	fallback := &linuxCaptureMux{
 		pipewire: &pipewireCapture{},
 		x11:      &linuxCapture{},
 	}
+	return newVulkanPreferredCapture(fallback)
 }
 
 func (m *linuxCaptureMux) pipewireActive() bool {
