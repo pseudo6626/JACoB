@@ -1,0 +1,241 @@
+name: Build JACoB Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version from internal/buildinfo/version.go
+        required: true
+        default: 0.2.18-alpha
+      create_draft_release:
+        description: Create/update a draft GitHub release with the built assets
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Verify version
+        shell: powershell
+        run: |
+          $want = "${{ inputs.version }}"
+          $src = Get-Content internal/buildinfo/version.go -Raw
+          if ($src -notmatch ('Version\s*=\s*"' + [regex]::Escape($want) + '"')) {
+            throw "buildinfo.Version does not match requested version $want"
+          }
+
+      - name: Test Windows
+        run: go test ./...
+
+      - name: Validate browser SDK
+        shell: powershell
+        run: node --check internal/webui/assets/app.js
+
+      - name: Build Windows assets
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $v = "${{ inputs.version }}"
+          $env:CGO_ENABLED="0"
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+
+          go build -trimpath -ldflags="-H=windowsgui" -o "dist/JACoB-$v-win-x64-portable.exe" ./cmd/jacob
+          go build -trimpath -tags "norecorder,nocapture" -ldflags="-H=windowsgui" -o "dist/JACoB-$v-win-x64-no-capture.exe" ./cmd/jacob
+
+          Copy-Item "dist/JACoB-$v-win-x64-portable.exe" cmd/installer/payload/JACoB.exe
+          Copy-Item "dist/JACoB-$v-win-x64-no-capture.exe" cmd/installer/payload/JACoB-no-capture.exe
+          try {
+            go build -trimpath -ldflags="-H=windowsgui" -o "dist/JACoB-$v-win-x64.exe" ./cmd/installer
+          } finally {
+            Remove-Item cmd/installer/payload/JACoB.exe,cmd/installer/payload/JACoB-no-capture.exe -Force -ErrorAction SilentlyContinue
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jacob-windows
+          path: |
+            dist/JACoB-${{ inputs.version }}-win-x64.exe
+            dist/JACoB-${{ inputs.version }}-win-x64-portable.exe
+            dist/JACoB-${{ inputs.version }}-win-x64-no-capture.exe
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build binutils curl \
+            libvulkan-dev glslang-tools \
+            libx11-dev libxfixes-dev libxcomposite-dev \
+            libpipewire-0.3-dev libwayland-dev \
+            flatpak flatpak-builder
+
+      - name: Verify version
+        run: |
+          want='${{ inputs.version }}'
+          grep -Fq "Version    = \"$want\"" internal/buildinfo/version.go
+
+      - name: Test Linux
+        env:
+          CGO_ENABLED: '1'
+        run: go test ./...
+
+      - name: Build Linux assets with HUD support
+        env:
+          CGO_ENABLED: '1'
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          v='${{ inputs.version }}'
+          go build -trimpath -o "dist/JACoB-$v-linux-amd64" ./cmd/jacob
+          go build -trimpath -tags "norecorder,nocapture" -o "dist/JACoB-$v-linux-amd64-no-capture" ./cmd/jacob
+          ldd "dist/JACoB-$v-linux-amd64" | tee dist/linux-ldd.txt
+          ! grep -q 'not found' dist/linux-ldd.txt
+
+      - name: Build Vulkan HUD layer
+        run: |
+          set -euo pipefail
+          rm -rf build/vulkan-hud packaging/flatpak/vulkan-hud
+          mkdir -p build/vulkan-hud packaging/flatpak/vulkan-hud
+
+          glslangValidator -V native/vulkan-hud/overlay.vert -o build/vulkan-hud/overlay.vert.spv
+          glslangValidator -V native/vulkan-hud/overlay.frag -o build/vulkan-hud/overlay.frag.spv
+
+          cmake -S native/vulkan-hud -B build/vulkan-hud/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/vulkan-hud/cmake --verbose
+
+          layer="$(find build/vulkan-hud/cmake -type f -name 'libVK_LAYER_JACOB_hud.so' -print -quit)"
+          test -n "$layer"
+          test -s "$layer"
+
+          ldd "$layer" | tee dist/vulkan-layer-ldd.txt
+          ! grep -q 'not found' dist/vulkan-layer-ldd.txt
+          readelf -Ws "$layer" | grep -F 'vkNegotiateLoaderLayerInterfaceVersion'
+
+          cp "$layer" packaging/flatpak/vulkan-hud/libVK_LAYER_JACOB_hud.so
+          cp build/vulkan-hud/overlay.vert.spv packaging/flatpak/vulkan-hud/overlay.vert.spv
+          cp build/vulkan-hud/overlay.frag.spv packaging/flatpak/vulkan-hud/overlay.frag.spv
+
+      - name: Prepare bundled OCR runtime
+        run: |
+          set -euo pipefail
+          ocr_url='https://github.com/pkgforge-community/AlexanderP_tesseract-appimage/releases/download/v5.5.2-20260124T161609/tesseract-5.5.2_lept-1.87-x86_64.AppImage'
+          ocr_sha='177a11b5520e6e296de7aa8e2927c00c3ce7b6ffa9a9777454a2be3e87e8a391'
+
+          curl -fL --retry 3 "$ocr_url" -o /tmp/jacob-tesseract.AppImage
+          printf '%s  %s\n' "$ocr_sha" /tmp/jacob-tesseract.AppImage | sha256sum -c -
+          chmod +x /tmp/jacob-tesseract.AppImage
+
+          rm -rf packaging/flatpak/tesseract-appdir packaging/flatpak/squashfs-root
+          (
+            cd packaging/flatpak
+            /tmp/jacob-tesseract.AppImage --appimage-extract >/dev/null
+            mv squashfs-root tesseract-appdir
+          )
+          test -x packaging/flatpak/tesseract-appdir/AppRun
+
+      - name: Build Steam Deck Flatpak installer
+        run: |
+          set -euo pipefail
+          v='${{ inputs.version }}'
+          cp "dist/JACoB-$v-linux-amd64" packaging/flatpak/JACoB
+          cp assets/jacob-icon-256.png packaging/flatpak/jacob-icon-256.png
+          printf '%s\n' "$v" > packaging/flatpak/VERSION
+
+          test -s packaging/flatpak/vulkan-hud/libVK_LAYER_JACOB_hud.so
+          test -s packaging/flatpak/vulkan-hud/overlay.vert.spv
+          test -s packaging/flatpak/vulkan-hud/overlay.frag.spv
+          test -x packaging/flatpak/tesseract-appdir/AppRun
+
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak-builder --user --force-clean --install-deps-from=flathub \
+            --repo=flatpak-repo flatpak-build packaging/flatpak/com.pseudosci.JACoB.yml
+          flatpak build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo flatpak-repo "dist/JACoB-$v-SteamDeck.flatpak" com.pseudosci.JACoB stable
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jacob-linux
+          path: |
+            dist/JACoB-${{ inputs.version }}-linux-amd64
+            dist/JACoB-${{ inputs.version }}-linux-amd64-no-capture
+            dist/JACoB-${{ inputs.version }}-SteamDeck.flatpak
+            dist/linux-ldd.txt
+            dist/vulkan-layer-ldd.txt
+
+  release:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.windows.result == 'success' && needs.linux.result == 'success' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jacob-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum \
+            JACoB-${{ inputs.version }}-win-x64.exe \
+            JACoB-${{ inputs.version }}-win-x64-portable.exe \
+            JACoB-${{ inputs.version }}-win-x64-no-capture.exe \
+            JACoB-${{ inputs.version }}-linux-amd64 \
+            JACoB-${{ inputs.version }}-linux-amd64-no-capture \
+            JACoB-${{ inputs.version }}-SteamDeck.flatpak \
+            > SHA256SUMS.txt
+
+      - name: Create or update draft release
+        if: ${{ inputs.create_draft_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v='${{ inputs.version }}'
+          tag="v$v"
+          notes="RELEASE-NOTES-$v.md"
+          assets=(
+            "dist/JACoB-$v-win-x64.exe"
+            "dist/JACoB-$v-win-x64-portable.exe"
+            "dist/JACoB-$v-win-x64-no-capture.exe"
+            "dist/JACoB-$v-linux-amd64"
+            "dist/JACoB-$v-linux-amd64-no-capture"
+            "dist/JACoB-$v-SteamDeck.flatpak"
+            "dist/SHA256SUMS.txt"
+          )
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber
+            if [[ -f "$notes" ]]; then
+              gh release edit "$tag" --draft --prerelease --title "JACoB $v" --notes-file "$notes"
+            else
+              gh release edit "$tag" --draft --prerelease --title "JACoB $v"
+            fi
+          else
+            if [[ -f "$notes" ]]; then
+              gh release create "$tag" "${assets[@]}" --target "${{ github.sha }}" --draft --prerelease --title "JACoB $v" --notes-file "$notes"
+            else
+              gh release create "$tag" "${assets[@]}" --target "${{ github.sha }}" --draft --prerelease --title "JACoB $v" --notes "Automated JACoB build. Test before publishing."
+            fi
+          fi
