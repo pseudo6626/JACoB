@@ -51,6 +51,8 @@ JACoB prefers Secondary keyboard bindings when executing commands and falls back
 
 Open **Settings → LAN access** on the computer running JACoB. The **Connect URL** is the preferred address for the home network. Scan **Open JACoB** or type that URL on the phone/tablet, then scan or copy the separate **Pair key**.
 
+At boot, once LAN access is enabled and the HUD renderer has a usable Elite surface, JACoB shows a **SCAN TO PAIR JACoB** QR in the game HUD. Scanning it is a one-step pairing flow: the link carries a random one-time token, creates a normal non-admin/non-remembered device credential, and redirects into JACoB. The token expires 30 seconds after the QR becomes visible or immediately after its first use. The reusable pair key is never encoded in this QR.
+
 If the mobile device cannot connect, run **Network Doctor**. On Windows it checks the effective listener, active network category, preferred LAN address, and the managed `JACoB Local Network` firewall rule. **Repair Windows access** requests elevation only when the firewall rule needs to be created or corrected. The managed rule allows TCP 6626 only for `LocalSubnet` on Private/Domain profiles and does not open JACoB on Public networks.
 
 If Network Doctor reports the listener and firewall as ready but the mobile device still cannot load the page, check for guest Wi-Fi/client isolation, separate VLANs, or VPN software that blocks local-network traffic.

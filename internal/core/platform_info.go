@@ -128,7 +128,13 @@ func (s *Server) capabilities() map[string]any {
 	}
 
 	return map[string]any{
-		"input":       input,
+		"input": input,
+		"clipboard": func() any {
+			if s.clipboard != nil {
+				return s.clipboard.Info()
+			}
+			return map[string]any{"available": false, "writeOnly": true, "hostOnly": true}
+		}(),
 		"capture":     capture,
 		"vision":      visionInfo,
 		"spatial":     spatialInfo,

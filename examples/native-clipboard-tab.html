@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Native clipboard check</title>
+<style>body{font:16px system-ui;background:#0a0e12;color:#e8edf0;padding:24px;max-width:760px}button,input{font:inherit;padding:10px;margin:4px}input{width:80%}pre{white-space:pre-wrap}</style>
+<h1>Native clipboard check</h1>
+<p>This writes the clipboard of the computer running JACoB. It never opens GalMap or presses keys.</p>
+<input id="text" value="Phroea Phio UK-W c18-0" aria-label="Text to copy">
+<p><button id="copy">Copy now / grant permission</button><button id="delay">Copy after 10 seconds</button><button id="cancel">Cancel delay</button></p>
+<p>First grant clipboard permission with Copy now. Then use the delay, focus Elite, wait and paste manually. The clipboard is deliberately replaced.</p>
+<pre id="out">Checking capability…</pre>
+<script>
+const out=document.querySelector('#out');let timer;
+async function copy(text){try{out.textContent=JSON.stringify(await Elite.clipboard.writeText(text),null,2)}catch(e){out.textContent=e.code+': '+e.message}}
+document.querySelector('#copy').onclick=()=>copy(document.querySelector('#text').value);
+document.querySelector('#delay').onclick=()=>{clearTimeout(timer);const text=document.querySelector('#text').value;out.textContent='Copy scheduled. Focus Elite now; no game inputs will be sent.';timer=setTimeout(()=>copy(text),10000)};
+document.querySelector('#cancel').onclick=()=>{clearTimeout(timer);out.textContent='Delay cancelled.'};
+if(!Elite.clipboard){out.textContent='This JACoB build does not include native clipboard support.';document.querySelectorAll('button').forEach(b=>b.disabled=true)}
+else Elite.clipboard.info().then(info=>out.textContent=JSON.stringify(info,null,2)).catch(e=>out.textContent=e.code+': '+e.message);
+</script></html>

@@ -366,6 +366,7 @@ func install(includeRecorder bool) error {
 	docFiles := []string{
 		"JACoB-Custom-Tab-Developer-Reference.md",
 		"JACoB-Custom-Tab-Developer-Reference.html",
+		"NATIVE_CLIPBOARD.md",
 		"JACoB-User-Guide.md",
 		"JACoB-Theming.md",
 		"JACoB-Security.md",

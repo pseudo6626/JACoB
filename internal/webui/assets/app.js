@@ -262,7 +262,8 @@ const hud=Object.freeze({
  ring:(x,y,r,options={})=>Object.assign({},cloneSDKValue(options),{type:'ring',x:Number(x),y:Number(y),r:Number(r)})
 });
 window.Elite=Object.freeze({
- api:Object.freeze({version:14}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health'),performance:()=>request('system.performance'),capabilities:()=>request('system.capabilities')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
+ clipboard:Object.freeze({info:()=>request('clipboard.info'),writeText:text=>request('clipboard.writeText',{text})}),
+ api:Object.freeze({version:15}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health'),performance:()=>request('system.performance'),capabilities:()=>request('system.capabilities')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
  bindings:Object.freeze({list:()=>request('bindings.list'),diagnostics:()=>request('bindings.diagnostics'),get:name=>request('bindings.get',{name}),reload:()=>request('bindings.reload'),press:action=>request('binding.press',{action}),down:action=>request('binding.down',{action}),up:action=>request('binding.up',{action}),hold:(action,durationMs=1000)=>request('binding.hold',{action,durationMs}),releaseAll:()=>request('bindings.releaseAll')}),
  input:Object.freeze({tap:(key,options={})=>request('input.tap',{key,delayMs:options.delayMs||0,modifiers:options.modifiers||[]}),hold:(key,durationMs=250,options={})=>request('input.hold',{key,durationMs,modifiers:options.modifiers||[]}),text:(text,options={})=>request('input.text',{text,intervalMs:options.intervalMs??15}),releaseAll:()=>request('input.releaseAll')}),
  recorder:Object.freeze({status:()=>request('recorder.status'),start:()=>request('recorder.start'),stop:()=>request('recorder.stop'),subscribe:cb=>onEvent('recorder.input',cb)}),
@@ -369,7 +370,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     const box=document.createElement('div');box.appendChild(frag);return box.innerHTML;
   }
   const defaultBrand='<strong>JACoB</strong><span>Journal Aligned Control Bridge</span>';
-  const defaultFooter='<span>JACoB Alpha 0.2.13 · SDK 10</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';
+  const defaultFooter='<span>JACoB Alpha 0.2.19 · SDK 15</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';
   function applyAppearance(html=''){
     state.themeHTML=html||'';
     $('#jacob-user-theme').textContent='';
@@ -579,6 +580,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
   function escapeHTML(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
   const TAB_CAPABILITIES={
+    clipboard:{label:'Write the host clipboard',detail:'replace text in the clipboard on the computer running JACoB, including while Elite has focus; this does not allow reading the clipboard'},
     control:{label:'Control Elite Dangerous',detail:'send keyboard actions or semantic bindings to the Elite Dangerous window'},
     network:{label:'Use JACoB network access',detail:'send requests to public internet services through JACoB. Because tabs can read Elite journal/state data, grant this only to tabs you trust not to transmit that data'},
     recorder:{label:'Record Elite keyboard input',detail:'observe keyboard input only while Elite Dangerous is the foreground window'},
@@ -599,6 +601,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
   }
   function resetTabPermissions(id){const prefix=`jacob-tab-permissions:${id}:`;for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k?.startsWith(prefix))localStorage.removeItem(k)}localStorage.removeItem(`jacob-tab-permissions:${id}`)}
   function capabilityForMethod(method){
+    if(method==='clipboard.writeText')return'clipboard';
     if(method.startsWith('net.')||method.startsWith('catalog.'))return'network';
     if(method==='video.url')return'video';
     if(method.startsWith('vision.')||method.startsWith('spatial.'))return'vision';
@@ -1171,7 +1174,7 @@ Allow this capability on this browser?`);
         if(!requireTabCapability(frame,'video')){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:'video permission was not granted'}});return}
         sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result:videoURL(m.params||{})});return
       }
-      const allowed=new Set(['core.ping','system.health','state.get','bindings.list','bindings.diagnostics','bindings.get','bindings.reload','input.tap','input.hold','input.text','binding.press','binding.down','binding.up','binding.hold','recorder.status','recorder.start','recorder.stop','macros.list','macros.get','macros.run','video.info','vision.info','vision.sample','vision.inspect','spatial.info','spatial.begin','spatial.update','spatial.observe','spatial.pose','spatial.landmarks','spatial.project','spatial.export','spatial.import','spatial.end','overlay.info','overlay.set','overlay.clear','galaxy.parseSystemName','galaxy.decodeAddress','galaxy.encodeAddress','galaxy.addressForSequence','galaxy.boxel','galaxy.boxelHierarchy','catalog.system.get','net.fetch','net.fetchQueued','net.fetchBatch','elitefiles.list','elitefiles.get','journal.files','journal.read','tabstate.get','tabstate.set','tabstate.cas','tabstate.batch','tabstate.delete','tabstate.clear','locale.get']);
+      const allowed=new Set(['clipboard.info','clipboard.writeText','core.ping','system.health','state.get','bindings.list','bindings.diagnostics','bindings.get','bindings.reload','input.tap','input.hold','input.text','binding.press','binding.down','binding.up','binding.hold','recorder.status','recorder.start','recorder.stop','macros.list','macros.get','macros.run','video.info','vision.info','vision.sample','vision.inspect','spatial.info','spatial.begin','spatial.update','spatial.observe','spatial.pose','spatial.landmarks','spatial.project','spatial.export','spatial.import','spatial.end','overlay.info','overlay.set','overlay.clear','galaxy.parseSystemName','galaxy.decodeAddress','galaxy.encodeAddress','galaxy.addressForSequence','galaxy.boxel','galaxy.boxelHierarchy','catalog.system.get','net.fetch','net.fetchQueued','net.fetchBatch','elitefiles.list','elitefiles.get','journal.files','journal.read','tabstate.get','tabstate.set','tabstate.cas','tabstate.batch','tabstate.delete','tabstate.clear','locale.get']);
       if(!allowed.has(m.method)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'SDK_DENIED',message:'method not exposed by JACoB SDK'}});return}
       const capability=capabilityForMethod(m.method);if(capability&&!requireTabCapability(frame,capability)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:`${capability} permission was not granted`}});return}
       try{let params=m.params||{};if(m.method==='overlay.set'||m.method==='overlay.clear')params={...params,layer:overlayLayerForFrame(frame)};if(m.method.startsWith('tabstate.')){const tabId=frame?.dataset?.savedTabId||'';if(!tabId)throw{code:'TAB_STATE_PREVIEW',message:'persistent state is available after the tab is saved'};params={...params,tabId}}const result=await request(m.method,params);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}

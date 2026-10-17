@@ -72,3 +72,9 @@ Current backends:
 - No Capture build: the capture backend is omitted entirely on every OS.
 
 `CaptureIntentCalibration` lets a backend temporarily focus Elite and obtain a frozen canonical frame. The calibration UI therefore uses the same 0..1 coordinate surface as live Vision.
+
+## Startup HUD quick pairing
+
+When LAN access is enabled and the HUD renderer has a usable Elite-sized surface, JACoB waits briefly for that boot surface and then shows the pairing QR for 30 seconds. The QR contains a fresh 192-bit one-time token, not the reusable session pair key. The token is accepted once, expires 30 seconds after the QR becomes visible, and creates the same non-admin, non-remembered device credential as ordinary pairing. A successful scan immediately clears the QR layer.
+
+Treat the visible startup HUD as physical-access pairing: anyone who can see and scan the QR during that short window can enroll one ordinary device. Device trust can still be revoked from the physical host. The token is not written to logs and is removed from the browser address by an immediate redirect after redemption.

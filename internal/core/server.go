@@ -28,6 +28,7 @@ import (
 	"jacob/internal/bindings"
 	"jacob/internal/buildinfo"
 	"jacob/internal/catalog"
+	"jacob/internal/clipboard"
 	"jacob/internal/control"
 	"jacob/internal/customtabs"
 	"jacob/internal/deviceauth"
@@ -79,6 +80,8 @@ type Server struct {
 	updater       *updater.Client
 	webfetch      *webfetch.Client
 	catalog       *catalog.Client
+	clipboard     clipboardWriter
+	quickPair     quickPairState
 	clientsMu     sync.RWMutex
 	recorderMu    sync.Mutex
 	pairMu        sync.Mutex
@@ -156,6 +159,7 @@ func New(cfg Config) *Server {
 		log.Printf("macros/store: ready path=%q definitions=%d", macroStore.Path(), len(macroStore.List()))
 	}
 	s.catalog = catalog.New(s.webfetch)
+	s.clipboard = clipboard.New()
 	mediaToken, mediaErr := secureRandomToken()
 	if mediaErr != nil {
 		log.Printf("JACoB local media authorization unavailable because a secure token could not be generated: %v", mediaErr)
@@ -237,6 +241,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() { _ = s.watcher.Run(ctx) }()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/pair", s.handlePair)
+	mux.HandleFunc("/q/", s.handleQuickPair)
 	mux.HandleFunc("/api/device/refresh", s.handleDeviceRefresh)
 	mux.HandleFunc("/api/device/logout", s.handleDeviceLogout)
 	mux.HandleFunc("/ws", s.handleWS)
@@ -269,6 +274,7 @@ func (s *Server) Run(ctx context.Context) error {
 		time.Sleep(750 * time.Millisecond)
 		s.logNetworkSnapshot("startup")
 	}()
+	go s.startQuickPairHUD(ctx)
 	err := httpServer.ListenAndServe()
 	log.Printf("http/stop: bind=%q err=%v", s.cfg.Bind, err)
 	return err
@@ -752,6 +758,8 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		return
 	}
 	switch req.Method {
+	case "clipboard.info", "clipboard.writeText":
+		s.handleClipboard(c, req)
 	case "core.ping":
 		s.sendResult(c, req.ID, map[string]any{"pong": true, "time": time.Now().UTC().Format(time.RFC3339Nano)})
 	case "core.shutdown":

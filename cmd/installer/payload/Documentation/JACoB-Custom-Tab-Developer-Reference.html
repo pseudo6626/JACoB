@@ -11,8 +11,8 @@
 <main class="doc">
 <h1 id="jacob-custom-tab-developer-reference">JACoB Custom Tab Developer
 Reference</h1>
-<p>Version: Alpha 0.2.12<br />
-SDK version: 10</p>
+<p>Version: Alpha 0.2.19<br />
+SDK version: 15</p>
 <p>This is the canonical reference for building JACoB custom HTML tabs.
 It describes the tab runtime, the browser SDK, the direct WebSocket
 protocol, state and event shapes, input behavior, overlays, video,
@@ -21,6 +21,11 @@ limitations.</p>
 <p>JACoB deliberately exposes primitives. Multi-step behavior, timers,
 state machines, route queues, HUD logic, and other tool-specific
 behavior belong in custom HTML tabs.</p>
+<hr />
+<h2 id="native-clipboard-sdk-15">Native clipboard (SDK 15)</h2>
+<p><code>Elite.clipboard.info()</code> reports the host clipboard backend without writing.
+<code>Elite.clipboard.writeText(text)</code> writes bounded Unicode text to the computer running JACoB after a separate per-tab <strong>Write the host clipboard</strong> permission. The API is write-only, local-host-only, and never returns existing clipboard contents.</p>
+<p>See <a href="NATIVE_CLIPBOARD.md">Native clipboard API</a> for platform behavior, errors, migration notes, and the worked test tab.</p>
 <hr />
 <h2 id="smallest-useful-tab">1. Smallest useful tab</h2>
 <p>A custom tab is ordinary self-contained HTML. JACoB injects the

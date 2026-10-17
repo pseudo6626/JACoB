@@ -1,6 +1,6 @@
 # JACoB — Journal Aligned Control Bridge
 
-> Current field build: **0.2.18 Alpha · SDK 14**
+> Current field build: **0.2.19 Alpha · SDK 15**
 
 JACoB is a local companion bridge for **Elite Dangerous**. It reads the live journal and `Status.json`, resolves control bindings, sends game input, hosts persistent custom HTML tabs, supplies a game-view stream, renders native HUD overlays, exports tab-generated files, and provides bounded access to public web APIs.
 
@@ -48,7 +48,10 @@ The full custom-tab contract is recorded in:
 
 [`docs/JACOB_CUSTOM_TAB_REFERENCE.md`](docs/JACOB_CUSTOM_TAB_REFERENCE.md)
 
-SDK / protocol version **14** includes:
+SDK / protocol version **15** includes:
+
+- `Elite.clipboard.info()` / `Elite.clipboard.writeText()` for bounded, write-only host clipboard access with per-tab permission and no clipboard reads
+- a one-time boot HUD QR that can pair a phone/tablet in one scan for 30 seconds once the boot HUD surface is usable; the QR does not expose the reusable pair key
 
 - OS-neutral canonical Elite frame service: capture backends may differ by platform, while Vision/calibration coordinates and the no-desktop-fallback privacy rule remain identical
 
@@ -75,6 +78,7 @@ The reference also covers the event model, state shapes, input calls, overlay sc
 - [`docs/INSTALLATION.md`](docs/INSTALLATION.md)
 - [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)
 - [`docs/THEMING.md`](docs/THEMING.md)
+- [`docs/NATIVE_CLIPBOARD.md`](docs/NATIVE_CLIPBOARD.md)
 - [`docs/ALPHA_TEST_PLAN.md`](docs/ALPHA_TEST_PLAN.md)
 
 ## Source layout
