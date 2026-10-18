@@ -1,0 +1,149 @@
+name: Apply JACoB 0.2.20 Steam Deck HUD orientation hotfix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/jacob-0.2.20-hud-orientation-hotfix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install Vulkan shader build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build libvulkan-dev glslang-tools
+
+      - name: Apply 0.2.20 HUD orientation hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              s = p.read_text(encoding="utf-8")
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, found {count}")
+              p.write_text(s.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "native/vulkan-hud/overlay.vert",
+              "    vec2 ndc = vec2(inPos.x * 2.0 - 1.0, 1.0 - inPos.y * 2.0);",
+              "    // JACoB HUD coordinates use a top-left origin with +Y downward.\n"
+              "    // A positive-height Vulkan viewport maps NDC -1 to framebuffer top.\n"
+              "    vec2 ndc = vec2(inPos.x * 2.0 - 1.0, inPos.y * 2.0 - 1.0);",
+          )
+
+          replace_once(
+              "internal/buildinfo/version.go",
+              'Version    = "0.2.19-alpha"',
+              'Version    = "0.2.20-alpha"',
+          )
+          replace_once(
+              "internal/buildinfo/version.go",
+              'Display    = "Alpha 0.2.19 SDK15"',
+              'Display    = "Alpha 0.2.20 SDK15"',
+          )
+
+          replace_once(
+              "README.md",
+              "> Current field build: **0.2.19 Alpha · SDK 15**",
+              "> Current field build: **0.2.20 Alpha · SDK 15**",
+          )
+
+          Path("internal/platform/vulkan_shader_source_test.go").write_text('//go:build linux\n\npackage platform\n\nimport (\n\t"os"\n\t"strings"\n\t"testing"\n)\n\nfunc TestVulkanVertexShaderUsesTopLeftHUDCoordinates(t *testing.T) {\n\tb, err := os.ReadFile("../../native/vulkan-hud/overlay.vert")\n\tif err != nil {\n\t\tt.Fatalf("read Vulkan HUD vertex shader: %v", err)\n\t}\n\tshader := string(b)\n\n\twant := "vec2 ndc = vec2(inPos.x * 2.0 - 1.0, inPos.y * 2.0 - 1.0);"\n\tif !strings.Contains(shader, want) {\n\t\tt.Fatalf("Vulkan HUD vertex shader does not map JACoB top-left coordinates correctly")\n\t}\n\n\tif strings.Contains(shader, "1.0 - inPos.y * 2.0") {\n\t\tt.Fatalf("Vulkan HUD vertex shader contains the vertically inverted Y transform")\n\t}\n}\n', encoding="utf-8")
+          Path("RELEASE-NOTES-0.2.20-alpha.md").write_text("# JACoB 0.2.20 Alpha · SDK 15\n\n## Steam Deck Vulkan HUD orientation hotfix\n\n- Corrects the Steam Deck Vulkan HUD Y-axis transform so JACoB's top-left overlay coordinate system maps to the screen correctly.\n- Fixes vertically inverted text, QR codes, and other HUD geometry on the native Steam Deck Vulkan renderer.\n- Restores the startup pairing QR to its intended upper-right position.\n- Windows HUD behavior is unchanged.\n- Adds a regression test that fails if the inverted Vulkan shader transform returns.\n\n## SDK\n\n- SDK/protocol version remains **15**.\n- No custom-tab API changes are required.\n", encoding="utf-8")
+          PY
+
+          gofmt -w internal/platform/vulkan_shader_source_test.go
+
+      - name: Validate Go tests
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          go test ./...
+
+      - name: Compile corrected Vulkan shader
+        run: |
+          set -euo pipefail
+          glslangValidator -V native/vulkan-hud/overlay.vert -o /tmp/jacob-overlay.vert.spv
+          test -s /tmp/jacob-overlay.vert.spv
+
+      - name: Build native Vulkan HUD layer
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/jacob-vulkan-hud-build
+          cmake -S native/vulkan-hud -B /tmp/jacob-vulkan-hud-build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/jacob-vulkan-hud-build --verbose
+          layer="$(find /tmp/jacob-vulkan-hud-build -type f -name 'libVK_LAYER_JACOB_hud.so' -print -quit)"
+          test -n "$layer"
+          test -s "$layer"
+
+      - name: Verify hotfix contents
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          grep -Fq 'Version    = "0.2.20-alpha"' internal/buildinfo/version.go
+          grep -Fq 'Display    = "Alpha 0.2.20 SDK15"' internal/buildinfo/version.go
+          grep -Fq 'vec2 ndc = vec2(inPos.x * 2.0 - 1.0, inPos.y * 2.0 - 1.0);' native/vulkan-hud/overlay.vert
+
+          if grep -Fq '1.0 - inPos.y * 2.0' native/vulkan-hud/overlay.vert; then
+            echo "Old inverted Vulkan Y transform is still present."
+            exit 1
+          fi
+
+          git diff --check
+
+          if git diff --name-only | grep -q '^\.github/workflows/'; then
+            echo "Refusing to commit: source hotfix unexpectedly changed a workflow file."
+            git diff --name-only
+            exit 1
+          fi
+
+      - name: Commit source hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git add \
+            native/vulkan-hud/overlay.vert \
+            internal/platform/vulkan_shader_source_test.go \
+            internal/buildinfo/version.go \
+            README.md \
+            RELEASE-NOTES-0.2.20-alpha.md
+
+          git diff --cached --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --cached --quiet; then
+            echo "No source changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Fix Steam Deck Vulkan HUD vertical orientation"
+          git push origin HEAD:main
