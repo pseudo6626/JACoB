@@ -667,7 +667,7 @@ Allow this capability on this browser?`);
   function handleEvent(kind,data){
     addStream(kind,data);
     if(kind==='core.hello'){
-      state.core=data;state.updating=false;if(data.locale)applyLocaleInfo(data.locale);state.deviceRevoked=false;if(!isLocal)refreshDeviceCookie();if(privilegedClient()){loadConnectedDevices().catch(()=>{});loadPathSettings().catch(()=>{})}if($('#quit-jacob'))$('#quit-jacob').hidden=!(data.localClient||data.privilegedClient);if($('#install-update'))$('#install-update').hidden=!(data.localClient||data.privilegedClient);$('#core-os').textContent=`${data.os}/${data.arch}`;$('#core-api').textContent=`v${data.apiVersion} (${data.product||'JACoB'} ${data.prototype})`;if($('#update-current'))$('#update-current').textContent=data.version||data.prototype||'—';queueUpdateCheckSoon();
+      state.core=data;state.updating=false;if(!communityRegistryLoadedAt)setTimeout(()=>communityLoadRegistry().catch(()=>{}),50);if(data.locale)applyLocaleInfo(data.locale);state.deviceRevoked=false;if(!isLocal)refreshDeviceCookie();if(privilegedClient()){loadConnectedDevices().catch(()=>{});loadPathSettings().catch(()=>{})}if($('#quit-jacob'))$('#quit-jacob').hidden=!(data.localClient||data.privilegedClient);if($('#install-update'))$('#install-update').hidden=!(data.localClient||data.privilegedClient);$('#core-os').textContent=`${data.os}/${data.arch}`;$('#core-api').textContent=`v${data.apiVersion} (${data.product||'JACoB'} ${data.prototype})`;if($('#update-current'))$('#update-current').textContent=data.version||data.prototype||'—';queueUpdateCheckSoon();
       $('#binding-autofill').textContent=data.autoBind?`${data.autoBind.assigned||0} added / ${data.autoBind.scannedActions||0} scanned`:'—';
       $('#input-driver').textContent=`${data.input?.driver||'—'} / ${data.input?.enabled?'enabled':'disabled'}`;$('#capture-driver').textContent=`${data.capture?.driver||'—'} / ${data.capture?.available?'available':'unavailable'}`;const gameViewBlock=$('#game-view-img')?.closest('details.settings-block');if(gameViewBlock)gameViewBlock.hidden=!data.capture?.available;if($('#overlay-driver'))$('#overlay-driver').textContent=`${data.overlay?.driver||'—'} / ${data.overlay?.available?'available':'unavailable'}`;
       $('#journal-dir').textContent=data.journalDir||tr('not detected');$('#bindings-file').textContent=data.bindingsFile||tr('not detected');if($('#home-journal-state'))$('#home-journal-state').textContent=data.journalDir?'Connected':tr('not detected');renderLAN(data.lan);if(data.health)renderHealth(data.health);refreshTutorial().catch(()=>{});
@@ -857,12 +857,12 @@ Allow this capability on this browser?`);
   }
   function wireNavButton(btn){btn.onclick=()=>switchTab(btn.dataset.tab)}
 
-  const defaultNav={dashboard:'Home',tabmanager:'Tab Manager',tutorial:'Tutorial',settings:'Settings'};
+  const defaultNav={dashboard:'Home',community:'Community',tabmanager:'Tab Manager',tutorial:'Tutorial',settings:'Settings'};
   function navIDForTab(tab){return `custom-${tab.id}`}
   function tabForNavID(id){return state.savedTabs.find(t=>navIDForTab(t)===id)}
   function navLabel(id){return defaultNav[id]?tr(defaultNav[id]):tabForNavID(id)?.name||id}
   function navigationOrder(){
-    const expected=['dashboard',...state.savedTabs.map(navIDForTab),'tabmanager','tutorial','settings'];
+    const expected=['dashboard','community',...state.savedTabs.map(navIDForTab),'tabmanager','tutorial','settings'];
     const valid=new Set(expected),out=[],seen=new Set();
     for(const id of state.navLayout?.order||[])if(valid.has(id)&&!seen.has(id)){out.push(id);seen.add(id)}
     for(const id of expected)if(!seen.has(id)){out.push(id);seen.add(id)}
@@ -919,7 +919,7 @@ Allow this capability on this browser?`);
       const cached=state.tabHTMLCache.get(tab.id);
       if(cached&&cached.updatedAt===tab.updatedAt)applySavedTabHTML({...tab,html:cached.html});else if(iframe.dataset.updatedAt&&iframe.dataset.updatedAt!==String(tab.updatedAt||'')){clearActionsForFrame(iframe);iframe.removeAttribute('srcdoc');iframe.dataset.sdkReady='';iframe.dataset.updatedAt=''}
       const size=Number(tab.sizeBytes||0);const sizeLabel=size?` · ${size>=1024*1024?(size/1024/1024).toFixed(2)+' MB':(size/1024).toFixed(1)+' KB'}`:'';
-      const row=document.createElement('div');row.className='saved-tab-row';const meta=document.createElement('div');meta.className='saved-tab-meta';meta.innerHTML=`<strong>${escapeHTML(tab.name)}</strong><span class="muted mono">${escapeHTML(tab.id)}${sizeLabel}</span>`;const actions=document.createElement('div');actions.className='row';const open=document.createElement('button');open.textContent=tr('Open');open.onclick=()=>switchTab(pageID);const edit=document.createElement('button');edit.textContent=tr('Edit');edit.className='secondary';edit.onclick=()=>editSavedTab(tab.id);const perms=document.createElement('button');perms.textContent='Reset permissions';perms.className='secondary';perms.title='Forget permissions granted to this tab on this browser';perms.onclick=()=>{if(confirm(`Reset permissions for \"${tab.name}\" on this browser?`)){resetTabPermissions(tab.id);$('#tab-manager-result').textContent=`Permissions reset for ${tab.name}. The tab will ask again when it needs sensitive access.`}};const del=document.createElement('button');del.textContent=tr('Remove');del.className='danger';del.onclick=()=>deleteSavedTab(tab.id);actions.append(open,edit,perms,del);row.append(meta,actions);list.appendChild(row);
+      const row=document.createElement('div');row.className='saved-tab-row';const meta=document.createElement('div');meta.className='saved-tab-meta';meta.innerHTML=`<strong>${escapeHTML(tab.name)}</strong><span class="muted mono">${escapeHTML(tab.id)}${sizeLabel}</span>`;const actions=document.createElement('div');actions.className='row';const open=document.createElement('button');open.textContent=tr('Open');open.onclick=()=>switchTab(pageID);const edit=document.createElement('button');edit.textContent=tr('Edit');edit.className='secondary';edit.onclick=()=>editSavedTab(tab.id);const share=document.createElement('button');share.textContent=tab.community?.packageId?(tab.community.localAuthor?'Publish update':'Community…'):'Share';share.className='secondary';share.title=tab.community?.packageId?'Publish an update or create a remix':'Prepare this tab for Community Tabs';share.onclick=()=>openCommunityShare(tab.id);const perms=document.createElement('button');perms.textContent='Reset permissions';perms.className='secondary';perms.title='Forget permissions granted to this tab on this browser';perms.onclick=()=>{if(confirm(`Reset permissions for \"${tab.name}\" on this browser?`)){resetTabPermissions(tab.id);$('#tab-manager-result').textContent=`Permissions reset for ${tab.name}. The tab will ask again when it needs sensitive access.`}};const del=document.createElement('button');del.textContent=tr('Remove');del.className='danger';del.onclick=()=>deleteSavedTab(tab.id);actions.append(open,edit,share,perms,del);row.append(meta,actions);list.appendChild(row);
     }
     if(!state.savedTabs.length)list.innerHTML=`<div class="muted empty-state">${escapeHTML(tr('No saved tabs in the manifest.'))}</div>`;
     localizeDOM(list);renderNavigation();renderNavigationManager();
@@ -937,6 +937,126 @@ Allow this capability on this browser?`);
       const tab=await request('tabs.save',{id:state.editingTabId||'',name,html});request('overlay.clear',{layer:'preview'}).catch(()=>{});state.editingTabId=tab.id;state.tabHTMLCache.set(tab.id,{updatedAt:tab.updatedAt||'',html});$('#editing-tab-label').textContent=`Editing ${tab.name}`;$('#tab-manager-result').textContent=`Saved ${tab.name}. It is now a persistent JACoB tab.`;
       await loadSavedTabs();switchTab(`custom-${tab.id}`);
     }catch(e){$('#tab-manager-result').textContent=pretty(e)}
+  }
+  const COMMUNITY_SUBMISSION_URL='https://github.com/pseudo6626/JACoB/issues/new?template=community-tab.yml';
+  function communitySlug(value){return String(value||'tab').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,48)||'tab'}
+  function communityRandomHex(bytes=3){const buf=new Uint8Array(bytes);crypto.getRandomValues(buf);return [...buf].map(x=>x.toString(16).padStart(2,'0')).join('')}
+  function communityPackageID(name){return `community.${communitySlug(name)}.${communityRandomHex(3)}`}
+  function communityVersionTuple(v){const m=String(v||'').match(/^(\d+)\.(\d+)\.(\d+)$/);return m?m.slice(1).map(Number):[1,0,0]}
+  function communityNextVersion(base,change){let [major,minor,patch]=communityVersionTuple(base);if(change==='breaking')return `${major+1}.0.0`;if(change==='feature')return `${major}.${minor+1}.0`;return `${major}.${minor}.${patch+1}`}
+  function communityDetectCapabilities(html){const rules={clipboard:/\bElite\.clipboard\b/,control:/\bElite\.(?:input|bindings|macros)\b/,network:/\bElite\.(?:net|catalog)\b/,recorder:/\bElite\.recorder\b/,overlay:/\bElite\.(?:overlay|hud)\b/,video:/\bElite\.video\b/,vision:/\bElite\.(?:vision|spatial)\b/,intertab:/\bElite\.actions\.invoke\b/};return Object.entries(rules).filter(([,re])=>re.test(html)).map(([name])=>name).sort()}
+  async function communitySHA256(bytes){const digest=await crypto.subtle.digest('SHA-256',bytes);return [...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('')}
+  function communityBytesToBase64(bytes){let binary='';const chunk=0x8000;for(let i=0;i<bytes.length;i+=chunk)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(bytes.length,i+chunk)));return btoa(binary)}
+  function communityDownload(name,text){const blob=new Blob([text],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.style.display='none';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)}
+  function communityTags(value){return [...new Set(String(value||'').split(',').map(x=>communitySlug(x)).filter(Boolean))].slice(0,12)}
+  function communityEscape(value){return escapeHTML(String(value??''))}
+  const COMMUNITY_CATEGORIES=['accessibility','bgs','combat','engineering','exploration','fleet-carrier','hud','mining','navigation','racing','trading','utility','other'];
+  function communityCategoryLabel(value){return String(value||'other').split('-').map(x=>x?x[0].toUpperCase()+x.slice(1):'').join(' ')}
+  function communityCurrentBase(meta){return meta?.publishedVersion||meta?.lastSubmittedVersion||'1.0.0'}
+  async function communityRegistryLookup(packageId){if(!packageId)return null;try{const url=`https://raw.githubusercontent.com/pseudo6626/JACoB/main/registry/tabs/${encodeURIComponent(packageId)}.json`,res=await request('net.fetch',{url,method:'GET'});if(Number(res?.status)!==200)return null;return JSON.parse(res.body||'null')}catch{return null}}
+  function communityDialog(){let dlg=document.getElementById('community-share-dialog');if(dlg)return dlg;dlg=document.createElement('dialog');dlg.id='community-share-dialog';dlg.style.cssText='width:min(720px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;background:#090d11;color:#e8edf0;border:1px solid #8a430e;padding:0;box-shadow:0 18px 70px #000a;';dlg.addEventListener('click',ev=>{if(ev.target===dlg)dlg.close()});document.body.appendChild(dlg);return dlg}
+  async function openCommunityShare(id,forcedMode=''){
+    const meta=savedTabMeta(id);if(!meta)return;let tab;
+    try{tab=await ensureSavedTabLoaded(id)}catch(e){$('#tab-manager-result').textContent=pretty(e);return}
+    const c=meta.community||null,hasCommunity=!!c?.packageId,registryEntry=hasCommunity?await communityRegistryLookup(c.packageId):null;
+    let mode=forcedMode||(hasCommunity?(c.localAuthor?'update':'remix'):'publish');
+    const dlg=communityDialog(),base=registryEntry?.version||communityCurrentBase(c);
+    const modeOptions=hasCommunity?`<option value="update" ${mode==='update'?'selected':''}>Publish update (GitHub verifies maintainer access)</option><option value="remix" ${mode==='remix'?'selected':''}>Share as a remix</option>`:`<option value="publish">Publish this tab</option>`;
+    dlg.innerHTML=`<form method="dialog" style="padding:22px;display:grid;gap:14px"><div><div class="eyebrow">Community Tabs</div><h2 style="margin:.2em 0">${hasCommunity?'Share or update':'Share this tab'}</h2><p class="muted">JACoB prepares the version, hash, package ID, capability list and registry metadata. You only describe the tab.</p></div><label>What are you doing?<select id="community-mode" style="width:100%;margin-top:6px">${modeOptions}</select></label><label>Tab<input id="community-name" value="${communityEscape(tab.name)}" readonly style="width:100%;margin-top:6px"></label><label>Your display name<input id="community-author" value="${communityEscape(c?.author||'')}" maxlength="80" placeholder="CMDR name or handle" style="width:100%;margin-top:6px"></label><label>What does it do?<textarea id="community-description" maxlength="500" rows="3" placeholder="A short description for people browsing Community Tabs." style="width:100%;margin-top:6px">${communityEscape(c?.description||'')}</textarea></label><label>Category<select id="community-category" style="width:100%;margin-top:6px">${COMMUNITY_CATEGORIES.map(x=>`<option value="${x}" ${(c?.category||'utility')===x?'selected':''}>${communityCategoryLabel(x)}</option>`).join('')}</select></label><label>Tags <span class="muted">(optional, comma separated)</span><input id="community-tags" value="${communityEscape((c?.tags||[]).join(', '))}" placeholder="mining, racing, exploration" style="width:100%;margin-top:6px"></label><label id="community-change-wrap" style="${mode==='update'?'':'display:none'}">Type of update<select id="community-change" style="width:100%;margin-top:6px"><option value="fix">Small fix</option><option value="feature">New features</option><option value="breaking">Major / breaking changes</option></select></label><label id="community-notes-wrap" style="${mode==='publish'?'display:none':''}">What changed?<textarea id="community-notes" maxlength="2000" rows="3" placeholder="A short note for users." style="width:100%;margin-top:6px"></textarea></label><div style="border:1px solid #644016;padding:10px 12px;background:#171007"><strong>Before you publish</strong><div class="muted" style="margin-top:4px">The submission contains the complete HTML for this tab and will become public. Remove passwords, private API keys, personal data, or anything else that should not be published.</div></div><div id="community-preview" class="muted"></div><div class="row" style="justify-content:flex-end"><button value="cancel" class="secondary">Cancel</button><button type="button" id="community-prepare">Prepare submission</button></div></form>`;
+    const modeEl=dlg.querySelector('#community-mode'),changeWrap=dlg.querySelector('#community-change-wrap'),notesWrap=dlg.querySelector('#community-notes-wrap'),preview=dlg.querySelector('#community-preview');
+    const updatePreview=()=>{mode=modeEl.value;changeWrap.style.display=mode==='update'?'':'none';notesWrap.style.display=mode==='publish'?'none':'';const capabilities=communityDetectCapabilities(tab.html||'');let version='1.0.0';if(mode==='update')version=communityNextVersion(base,dlg.querySelector('#community-change').value);preview.textContent=`JACoB will prepare ${version}. Detected capabilities: ${capabilities.length?capabilities.join(', '):'none of the sensitive SDK capability groups'}.`;};
+    modeEl.onchange=updatePreview;dlg.querySelector('#community-change').onchange=updatePreview;updatePreview();
+    dlg.querySelector('#community-prepare').onclick=async()=>{
+      const author=dlg.querySelector('#community-author').value.trim(),description=dlg.querySelector('#community-description').value.trim(),category=dlg.querySelector('#community-category').value,tags=communityTags(dlg.querySelector('#community-tags').value),notes=dlg.querySelector('#community-notes').value.trim();
+      if(!author){dlg.querySelector('#community-author').focus();return}if(!description){dlg.querySelector('#community-description').focus();return}
+      const bytes=new TextEncoder().encode(tab.html||'');if(!bytes.length||bytes.length>4*1024*1024){preview.textContent='This tab cannot be submitted because its HTML is empty or larger than 4 MiB.';return}
+      preview.textContent='Preparing submission…';
+      try{
+        let packageId=c?.packageId||communityPackageID(tab.name),basedOn=c?.basedOn||null,version='1.0.0';
+        if(mode==='update'){version=communityNextVersion(base,dlg.querySelector('#community-change').value)}
+        if(mode==='remix'){basedOn={packageId:c.packageId,version:communityCurrentBase(c)};packageId=communityPackageID(tab.name);version='1.0.0'}
+        const sha256=await communitySHA256(bytes),capabilities=communityDetectCapabilities(tab.html||''),sdk=Number(state.core?.apiVersion||state.core?.sdkVersion||15)||15;
+        const submission={schema:1,kind:'jacob-community-submission',action:mode,createdAt:new Date().toISOString(),tab:{packageId,name:tab.name,description,author,version,sdk,category,tags,notes,baseVersion:mode==='update'?base:'',basedOn:mode==='remix'?basedOn:null},source:{encoding:'base64',sizeBytes:bytes.length,sha256,html:communityBytesToBase64(bytes)},detectedCapabilities:capabilities};
+        const community={packageId,publishedVersion:c?.publishedVersion||'',lastSubmittedVersion:version,publishedSha256:c?.publishedSha256||'',registry:'official',author,description,category,tags,basedOn:mode==='remix'?basedOn:(c?.basedOn||null),localAuthor:true,status:'prepared'};
+        const saved=await request('tabs.community.set',{id,community});const local=state.savedTabs.find(x=>x.id===id);if(local)local.community=saved.community||community;
+        const filename=`${communitySlug(tab.name)}-${version}.jacobsubmit.json`,payload=JSON.stringify(submission,null,2)+'\n';
+        dlg.innerHTML=`<div style="padding:22px;display:grid;gap:14px"><div class="eyebrow">Ready</div><h2 style="margin:0">${communityEscape(tab.name)} ${version}</h2><p>JACoB prepared everything needed for the community registry.</p><div class="card"><div><strong>Package</strong> <span class="mono">${communityEscape(packageId)}</span></div><div><strong>Capabilities</strong> ${communityEscape(capabilities.length?capabilities.join(', '):'none')}</div><div><strong>File</strong> ${communityEscape(filename)}</div></div><ol style="margin:0;padding-left:22px"><li>Download the submission file.</li><li>Open the GitHub form.</li><li>Upload that file and click Submit.</li></ol><div class="row" style="justify-content:flex-end"><button id="community-download">Download submission</button><button id="community-open-github">Open GitHub form</button><button id="community-done" class="secondary">Done</button></div></div>`;
+        dlg.querySelector('#community-download').onclick=()=>communityDownload(filename,payload);dlg.querySelector('#community-open-github').onclick=()=>window.open(`${COMMUNITY_SUBMISSION_URL}&title=${encodeURIComponent(`[Community Tab] ${tab.name} ${version}`)}`,'_blank','noopener');dlg.querySelector('#community-done').onclick=()=>dlg.close();
+        await loadSavedTabs();
+      }catch(e){preview.textContent=e?.message||String(e)}
+    };
+    dlg.showModal();
+  }
+  const COMMUNITY_REGISTRY_INDEX='https://raw.githubusercontent.com/pseudo6626/JACoB/main/registry/index.json';
+  const COMMUNITY_REGISTRY_STATS='https://raw.githubusercontent.com/pseudo6626/JACoB/main/registry/stats.json';
+  let communityRegistryTabs=[],communityRegistryStats={downloads:{}},communityRegistryLoadedAt=0;
+  function communityVersionCompare(a,b){const aa=communityVersionTuple(a),bb=communityVersionTuple(b);for(let i=0;i<3;i++){if(aa[i]>bb[i])return 1;if(aa[i]<bb[i])return-1}return 0}
+  function communityInstalledByPackage(){const out=new Map();for(const tab of state.savedTabs){const pid=tab.community?.packageId;if(pid)out.set(pid,tab)}return out}
+  function communitySDKCompatible(entry){const need=Number(String(entry?.jacobSdk||'').replace(/^>=/,''))||0,current=Number(state.core?.apiVersion||state.core?.sdkVersion||15)||15;return !need||current>=need}
+  function communityReleaseTag(entry){return `community--${entry.id}--v${entry.version}`}
+  function communityReleaseAsset(entry){return `${entry.version}.html`}
+  function communityReleaseURL(entry){return `https://github.com/pseudo6626/JACoB/releases/download/${encodeURIComponent(communityReleaseTag(entry))}/${encodeURIComponent(communityReleaseAsset(entry))}`}
+  function communityRawArtifactURL(entry){return `https://raw.githubusercontent.com/pseudo6626/JACoB/main/${String(entry?.artifact?.path||'').split('/').map(encodeURIComponent).join('/')}`}
+  async function communityFetchText(url){const res=await request('net.fetch',{url,method:'GET',cacheTtlMs:120000});if(Number(res?.status)!==200)throw new Error(`Registry request returned HTTP ${res?.status||0}`);return String(res.body||'')}
+  async function communityFetchJSON(url){return JSON.parse(await communityFetchText(url))}
+  async function communityLoadRegistry(force=false){
+    const result=$('#community-registry-result');if(result)result.textContent=force?'Refreshing Community Tabs…':'Loading Community Tabs…';
+    try{
+      const [index,stats]=await Promise.all([communityFetchJSON(COMMUNITY_REGISTRY_INDEX),communityFetchJSON(COMMUNITY_REGISTRY_STATS).catch(()=>({schema:1,downloads:{}}))]);
+      communityRegistryTabs=Array.isArray(index?.tabs)?index.tabs:[];communityRegistryStats=stats&&typeof stats==='object'?stats:{downloads:{}};communityRegistryLoadedAt=Date.now();
+      if(result)result.textContent=`${communityRegistryTabs.length} community tab${communityRegistryTabs.length===1?'':'s'} available. Download counts are aggregate GitHub release downloads; JACoB does not identify who installed them.`;
+      communityPopulateFilters();communityRenderRegistry();
+    }catch(e){communityRegistryTabs=[];if(result)result.textContent=`Community registry unavailable: ${e?.message||e}`;communityRenderRegistry()}
+  }
+  function communityPopulateFilters(){
+    const category=$('#community-category-filter');if(category){const before=category.value||'';const cats=[...new Set(communityRegistryTabs.map(x=>x.category||'utility'))].sort();category.innerHTML='<option value="">All categories</option>'+cats.map(x=>`<option value="${communityEscape(x)}">${communityEscape(communityCategoryLabel(x))}</option>`).join('');category.value=cats.includes(before)?before:''}
+  }
+  function communityFilteredTabs(){
+    const q=String($('#community-search')?.value||'').trim().toLowerCase(),category=$('#community-category-filter')?.value||'',cap=$('#community-capability-filter')?.value||'',status=$('#community-status-filter')?.value||'',sort=$('#community-sort')?.value||'downloads',installed=communityInstalledByPackage();
+    let rows=communityRegistryTabs.filter(entry=>{
+      const local=installed.get(entry.id),hasUpdate=!!(local&&communityVersionCompare(entry.version,local.community?.publishedVersion||'0.0.0')>0);
+      if(category&&(entry.category||'utility')!==category)return false;if(cap&&(!Array.isArray(entry.capabilities)||!entry.capabilities.includes(cap)))return false;
+      if(status==='installed'&&!local)return false;if(status==='updates'&&!hasUpdate)return false;if(status==='not-installed'&&local)return false;
+      if(q){const hay=[entry.name,entry.description,entry.author,entry.id,entry.category,...(entry.tags||[]),...(entry.capabilities||[]),...(entry.maintainers||[])].join(' ').toLowerCase();if(!hay.includes(q))return false}
+      return true;
+    });
+    const downloads=id=>Number(communityRegistryStats?.downloads?.[id]||0);
+    if(sort==='newest')rows.sort((a,b)=>String(b.updatedAt||'').localeCompare(String(a.updatedAt||''))||String(a.name).localeCompare(String(b.name)));
+    else if(sort==='name')rows.sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+    else rows.sort((a,b)=>downloads(b.id)-downloads(a.id)||String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')));
+    return rows;
+  }
+  function communityRenderRegistry(){
+    const host=$('#community-results');if(!host)return;const rows=communityFilteredTabs(),installed=communityInstalledByPackage(),downloads=id=>Number(communityRegistryStats?.downloads?.[id]||0);
+    if(!rows.length){host.innerHTML='<div class="muted empty-state">No Community Tabs match those filters.</div>';return}
+    host.innerHTML='';
+    for(const entry of rows){
+      const local=installed.get(entry.id),current=local?.community?.publishedVersion||'',hasUpdate=!!(local&&communityVersionCompare(entry.version,current||'0.0.0')>0),compatible=communitySDKCompatible(entry),card=document.createElement('article');card.className='community-tab-card';
+      const caps=(entry.capabilities||[]).map(x=>`<span class="community-chip">${communityEscape(x)}</span>`).join(''),tags=(entry.tags||[]).map(x=>`<span class="community-chip subtle">${communityEscape(x)}</span>`).join('');
+      card.innerHTML=`<div class="community-card-head"><div><div class="section-kicker">${communityEscape(communityCategoryLabel(entry.category||'utility'))}</div><h2>${communityEscape(entry.name)}</h2><div class="muted">by ${communityEscape(entry.author||'Unknown')} · v${communityEscape(entry.version)}</div></div><div class="community-downloads"><strong>${downloads(entry.id).toLocaleString()}</strong><span>downloads</span></div></div><p>${communityEscape(entry.description||'')}</p><div class="community-chip-row">${caps}${tags}</div><div class="community-card-foot"><span class="muted">${compatible?`SDK ${communityEscape(entry.jacobSdk||'')}`:`Requires ${communityEscape(entry.jacobSdk||'newer JACoB')}`}${entry.derivedFrom?` · remix of ${communityEscape(entry.derivedFrom.id)}`:''}</span><div class="row community-actions"></div></div>`;
+      const actions=card.querySelector('.community-actions');
+      if(local){const open=document.createElement('button');open.className='secondary';open.textContent='Open';open.onclick=()=>switchTab(navIDForTab(local));actions.appendChild(open);if(hasUpdate){const update=document.createElement('button');update.textContent=`Update to ${entry.version}`;update.disabled=!compatible;update.onclick=()=>communityInstallEntry(entry,local.id);actions.appendChild(update)}else{const badge=document.createElement('span');badge.className='status-mark online';badge.textContent='INSTALLED';actions.appendChild(badge)}}
+      else{const install=document.createElement('button');install.textContent=compatible?'Install':'Needs newer JACoB';install.disabled=!compatible;install.onclick=()=>communityInstallEntry(entry,'');actions.appendChild(install)}
+      host.appendChild(card);
+    }
+  }
+  async function communityDownloadArtifact(entry){
+    let text='';try{text=await communityFetchText(communityReleaseURL(entry))}catch{text=await communityFetchText(communityRawArtifactURL(entry))}
+    const bytes=new TextEncoder().encode(text),expectedSize=Number(entry?.artifact?.sizeBytes||0),expectedHash=String(entry?.artifact?.sha256||'').toLowerCase(),actualHash=await communitySHA256(bytes);
+    if(expectedSize&&bytes.length!==expectedSize)throw new Error(`Package size mismatch (${bytes.length} vs ${expectedSize})`);if(!expectedHash||actualHash!==expectedHash)throw new Error('Package SHA-256 did not match the registry. Installation was refused.');return text;
+  }
+  async function communityInstallEntry(entry,existingID=''){
+    if(!privilegedClient()){alert('Community tab installation must be done from the browser running on the JACoB host.');return}
+    const result=$('#community-registry-result');try{
+      if(existingID){const existing=await ensureSavedTabLoaded(existingID),meta=savedTabMeta(existingID),published=meta?.community?.publishedSha256||'';if(published){const currentHash=await communitySHA256(new TextEncoder().encode(existing.html||''));if(currentHash!==published&&!confirm('This installed tab has local edits. Updating will replace those edits.\n\nCancel and use Tab Manager → Community… → Share as a remix if you want to keep them.'))return}}
+      if(result)result.textContent=`Downloading and verifying ${entry.name} ${entry.version}…`;const html=await communityDownloadArtifact(entry),saved=await request('tabs.save',{id:existingID||'',name:entry.name,html});
+      const old=existingID?savedTabMeta(existingID)?.community:null,community={packageId:entry.id,publishedVersion:entry.version,lastSubmittedVersion:'',publishedSha256:entry.artifact.sha256,registry:'official',author:entry.author||'',description:entry.description||'',category:entry.category||'utility',tags:entry.tags||[],basedOn:entry.derivedFrom?{packageId:entry.derivedFrom.id,version:entry.derivedFrom.version}:null,localAuthor:!!old?.localAuthor,status:'published'};
+      await request('tabs.community.set',{id:saved.id,community});state.tabHTMLCache.set(saved.id,{updatedAt:saved.updatedAt||'',html});await loadSavedTabs();if(result)result.textContent=`${entry.name} ${entry.version} installed and verified.`;communityRenderRegistry();
+    }catch(e){if(result)result.textContent=`Install failed: ${e?.message||e}`}
+  }
+  function communityWireBrowser(){
+    const refresh=$('#community-refresh'),share=$('#community-share-own');if(refresh)refresh.onclick=()=>communityLoadRegistry(true);if(share)share.onclick=()=>{switchTab('tabmanager');$('#tab-manager-result').textContent='Choose a saved tab and click Share to publish it to Community Tabs.'};
+    for(const id of ['community-search','community-category-filter','community-capability-filter','community-status-filter','community-sort']){const el=$(`#${id}`);if(el)el.addEventListener(id==='community-search'?'input':'change',communityRenderRegistry)}
   }
   async function deleteSavedTab(id){
     const tab=state.savedTabs.find(t=>t.id===id);if(!tab)return;
@@ -1015,6 +1135,7 @@ Allow this capability on this browser?`);
   if($('#language-select'))$('#language-select').onchange=saveLocale;
   $('#upload-theme').onchange=async e=>{const f=e.target.files?.[0];if(!f)return;$('#theme-html').value=await f.text();await saveAppearance();e.target.value=''};
   if($('#home-add-tab'))$('#home-add-tab').onclick=()=>switchTab('tabmanager');
+  if($('#community-refresh'))communityWireBrowser();
   if($('#home-tutorial'))$('#home-tutorial').onclick=()=>switchTab('tutorial');
   if($('#tutorial-tab-manager'))$('#tutorial-tab-manager').onclick=()=>switchTab('tabmanager');
   if($('#tutorial-refresh'))$('#tutorial-refresh').onclick=()=>refreshTutorial();

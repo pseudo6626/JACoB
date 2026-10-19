@@ -20,15 +20,16 @@ const (
 	contentDirName = "custom-tabs"
 )
 
-var defaultNavIDs = []string{"dashboard", "tabmanager", "tutorial", "settings"}
+var defaultNavIDs = []string{"dashboard", "community", "tabmanager", "tutorial", "settings"}
 
 type Tab struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	HTML      string `json:"html,omitempty"`
-	SizeBytes int64  `json:"sizeBytes,omitempty"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	HTML      string         `json:"html,omitempty"`
+	SizeBytes int64          `json:"sizeBytes,omitempty"`
+	CreatedAt string         `json:"createdAt"`
+	UpdatedAt string         `json:"updatedAt"`
+	Community *CommunityInfo `json:"community,omitempty"`
 }
 
 type Layout struct {

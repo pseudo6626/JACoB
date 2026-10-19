@@ -52,6 +52,42 @@
   </article>
 </section>
 
+<section id="community" class="panel-page">
+  <div class="page-head">
+    <div><div class="section-kicker">COMMUNITY TABS</div><h1>Community</h1><p>Find, install, update, remix, and share JACoB tabs without managing package files by hand.</p></div>
+    <div class="row"><button id="community-refresh" class="secondary">Refresh registry</button><button id="community-share-own" class="primary">Share one of my tabs</button></div>
+  </div>
+
+  <div class="grid two community-intro-grid">
+    <article class="card">
+      <div class="section-kicker">FOR USERS</div>
+      <h2>Install community tools</h2>
+      <p>Browse the official registry, filter by category or capability, and install with one click. JACoB verifies the package size and SHA-256 before saving it.</p>
+      <p class="muted">Browsing and installing do not require a GitHub account.</p>
+    </article>
+    <article class="card">
+      <div class="section-kicker">FOR AUTHORS</div>
+      <h2>Sharing is three steps</h2>
+      <ol class="community-steps"><li>Build and test your tab in JACoB.</li><li>In Tab Manager, click <strong>Share</strong> and describe it.</li><li>Upload JACoB's generated submission file to GitHub and submit the form.</li></ol>
+      <p class="muted">GitHub sign-in is only required to publish or update a tab. GitHub identifies the maintainer; JACoB never receives the account password or login token.</p>
+    </article>
+  </div>
+
+  <article class="card community-browser-card">
+    <div class="card-head"><div><h2>Browse Community Tabs</h2><p class="muted">Search names, descriptions, authors, categories, tags, capabilities, and package IDs.</p></div></div>
+    <div class="community-toolbar">
+      <input id="community-search" type="search" placeholder="Search Community Tabs…" aria-label="Search Community Tabs">
+      <select id="community-category-filter" aria-label="Community category"><option value="">All categories</option></select>
+      <select id="community-capability-filter" aria-label="Required capability"><option value="">All capabilities</option><option value="clipboard">Clipboard</option><option value="control">Control</option><option value="network">Network</option><option value="recorder">Recorder</option><option value="overlay">Overlay</option><option value="video">Video</option><option value="vision">Vision</option><option value="intertab">Inter-tab</option></select>
+      <select id="community-status-filter" aria-label="Install status"><option value="">All tabs</option><option value="installed">Installed</option><option value="updates">Updates available</option><option value="not-installed">Not installed</option></select>
+      <select id="community-sort" aria-label="Sort Community Tabs"><option value="downloads">Most downloaded</option><option value="newest">Recently updated</option><option value="name">Name A–Z</option></select>
+    </div>
+    <pre id="community-registry-result" class="output small">Loading Community Tabs…</pre>
+    <div id="community-results" class="community-results"><div class="muted empty-state">Loading registry…</div></div>
+    <p class="muted community-privacy-note">Download counts are aggregate GitHub release statistics. JACoB does not send a user ID, account ID, or installation history when you install a tab.</p>
+  </article>
+</section>
+
 <section id="tabmanager" class="panel-page">
   <div class="page-head">
     <div><div class="section-kicker">CUSTOM TOOLS</div><h1>Tab Manager</h1><p>Paste or upload a self-contained HTML tab, preview it, then save it into the main navigation.</p></div>

@@ -1147,6 +1147,36 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 			return
 		}
 		s.sendResult(c, req.ID, tab)
+	case "tabs.community.set":
+		if !s.requireLocal(c, req.ID, "community-tab metadata") {
+			return
+		}
+		if s.tabs == nil {
+			_ = s.sendError(c, req.ID, "TABS_UNAVAILABLE", "custom tabs are unavailable")
+			return
+		}
+		id, _ := req.Params["id"].(string)
+		var info *customtabs.CommunityInfo
+		if raw, ok := req.Params["community"]; ok && raw != nil {
+			b, err := json.Marshal(raw)
+			if err != nil {
+				_ = s.sendError(c, req.ID, "BAD_PARAMS", "invalid community metadata")
+				return
+			}
+			var parsed customtabs.CommunityInfo
+			if err := json.Unmarshal(b, &parsed); err != nil {
+				_ = s.sendError(c, req.ID, "BAD_PARAMS", "invalid community metadata")
+				return
+			}
+			info = &parsed
+		}
+		tab, err := s.tabs.SetCommunity(id, info)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "TAB_COMMUNITY_FAILED", err.Error())
+			return
+		}
+		s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "community", "tab": tab}})
+		s.sendResult(c, req.ID, tab)
 	case "tabs.save":
 		if !s.requireLocal(c, req.ID, "custom-tab installation and editing") {
 			return

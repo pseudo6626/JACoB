@@ -61,32 +61,41 @@ func New() *Client {
 }
 
 func (c *Client) Check(ctx context.Context) (Info, error) {
-	url := "https://api.github.com/repos/" + buildinfo.Repository + "/releases?per_page=30"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return Info{}, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "JACoB/"+buildinfo.Version)
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return Info{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return Info{}, fmt.Errorf("GitHub release check returned %s", resp.Status)
-	}
-	var releases []releaseAPI
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&releases); err != nil {
-		return Info{}, err
-	}
-	candidates := make([]releaseAPI, 0, len(releases))
-	for _, rel := range releases {
-		if rel.Draft || strings.TrimSpace(rel.TagName) == "" {
-			continue
+	candidates := make([]releaseAPI, 0, 8)
+	for page := 1; page <= 20; page++ {
+		url := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=100&page=%d", buildinfo.Repository, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return Info{}, err
 		}
-		candidates = append(candidates, rel)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("User-Agent", "JACoB/"+buildinfo.Version)
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return Info{}, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			return Info{}, fmt.Errorf("GitHub release check returned %s", resp.Status)
+		}
+		var releases []releaseAPI
+		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&releases)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
+			return Info{}, decodeErr
+		}
+		for _, rel := range releases {
+			if rel.Draft || !isJACoBReleaseTag(rel.TagName) {
+				continue
+			}
+			candidates = append(candidates, rel)
+		}
+		// Releases are newest-first. Once an actual JACoB application release
+		// appears, older pages cannot contain a newer application build.
+		if len(candidates) > 0 || len(releases) < 100 {
+			break
+		}
 	}
 	if len(candidates) == 0 {
 		return Info{CurrentVersion: buildinfo.Version, LatestVersion: buildinfo.Version, Available: false, Installable: false, InstallNote: "No published JACoB releases were found."}, nil
@@ -119,6 +128,14 @@ func (c *Client) Check(ctx context.Context) (Info, error) {
 		}
 	}
 	return info, nil
+}
+
+func isJACoBReleaseTag(tag string) bool {
+	tag = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(tag, "v"), "V"))
+	if tag == "" {
+		return false
+	}
+	return tag[0] >= '0' && tag[0] <= '9'
 }
 
 func selectAsset(assets []Asset) *Asset {
