@@ -6,7 +6,7 @@ from pathlib import Path
 MAX_HTML_BYTES=4*1024*1024
 PACKAGE_RE=re.compile(r'^community\.[a-z0-9][a-z0-9-]{0,47}\.[a-f0-9]{6}$')
 SEMVER_RE=re.compile(r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')
-ALLOWED_CAPS={'clipboard','control','network','recorder','overlay','video','vision','intertab'}
+ALLOWED_CAPS={'clipboard','control','network','recorder','overlay','video','vision','intertab','storage'}
 ALLOWED_CATEGORIES={'accessibility','bgs','combat','engineering','exploration','fleet-carrier','hud','mining','navigation','racing','trading','utility','other'}
 
 

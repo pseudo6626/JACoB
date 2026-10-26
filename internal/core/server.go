@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -41,6 +43,7 @@ import (
 	"jacob/internal/platform"
 	"jacob/internal/spatial"
 	"jacob/internal/tabstate"
+	"jacob/internal/tabstorage"
 	"jacob/internal/updater"
 	"jacob/internal/vision"
 	"jacob/internal/webfetch"
@@ -75,6 +78,7 @@ type Server struct {
 	overlay       platform.OverlayDriver
 	tabs          *customtabs.Store
 	tabState      *tabstate.Store
+	tabStorage    *tabstorage.Store
 	appearance    *appearance.Store
 	locale        *localization.Store
 	updater       *updater.Client
@@ -195,6 +199,13 @@ func New(cfg Config) *Server {
 	} else {
 		s.tabState = stateStore
 		log.Printf("Tab state store: %s", stateStore.Path())
+	}
+	largeStore, largeErr := tabstorage.New(cfg.DataDir)
+	if largeErr != nil {
+		log.Printf("JACoB large tab storage unavailable: %v", largeErr)
+	} else {
+		s.tabStorage = largeStore
+		log.Printf("Tab large storage: %s", largeStore.Path())
 	}
 	s.bindings = bindings.NewWithControlDirs(cfg.BindingsDir, cfg.ControlSchemeDirs)
 	if cfg.AutoBind {
@@ -1218,8 +1229,208 @@ func (s *Server) handleRequest(c *wsClient, req envelope) {
 		if s.tabState != nil {
 			_ = s.tabState.Clear(id)
 		}
+		if s.tabStorage != nil {
+			_ = s.tabStorage.Clear(id)
+		}
 		s.broadcast(envelope{Type: "event", Event: "tabs.changed", Data: map[string]any{"action": "deleted", "id": id}})
 		s.sendResult(c, req.ID, map[string]any{"id": id, "deleted": true})
+	case "tabstorage.info":
+		if s.tabStorage == nil {
+			_ = s.sendError(c, req.ID, "TAB_STORAGE_UNAVAILABLE", "large custom-tab storage is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		if tabID == "" {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "tab id is required")
+			return
+		}
+		info, err := s.tabStorage.Info(tabID)
+		if err != nil {
+			_ = s.sendTabStorageError(c, req.ID, err)
+			return
+		}
+		s.sendResult(c, req.ID, info)
+	case "tabstorage.list":
+		if s.tabStorage == nil {
+			_ = s.sendError(c, req.ID, "TAB_STORAGE_UNAVAILABLE", "large custom-tab storage is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		prefix, _ := req.Params["prefix"].(string)
+		cursor, _ := req.Params["cursor"].(string)
+		if tabID == "" {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "tab id is required")
+			return
+		}
+		result, err := s.tabStorage.List(tabID, prefix, cursor, intParam(req.Params, "limit", 100))
+		if err != nil {
+			_ = s.sendTabStorageError(c, req.ID, err)
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "tabstorage.read":
+		if s.tabStorage == nil {
+			_ = s.sendError(c, req.ID, "TAB_STORAGE_UNAVAILABLE", "large custom-tab storage is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		name, _ := req.Params["name"].(string)
+		if tabID == "" || name == "" {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "tab id and object name are required")
+			return
+		}
+		result, err := s.tabStorage.Read(tabID, name, int64(intParam(req.Params, "offset", 0)), intParam(req.Params, "limit", tabstorage.ChunkBytes))
+		if err != nil {
+			_ = s.sendTabStorageError(c, req.ID, err)
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"item": result.Item, "offset": result.Offset, "data": base64.StdEncoding.EncodeToString(result.Data), "eof": result.EOF})
+	case "tabstorage.write.begin":
+		if s.tabStorage == nil {
+			_ = s.sendError(c, req.ID, "TAB_STORAGE_UNAVAILABLE", "large custom-tab storage is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		name, _ := req.Params["name"].(string)
+		typeName, _ := req.Params["type"].(string)
+		size := int64(intParam(req.Params, "sizeBytes", -1))
+		if tabID == "" || name == "" || size < 0 {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "tab id, object name, and non-negative sizeBytes are required")
+			return
+		}
+		result, err := s.tabStorage.Begin(tabID, name, typeName, size)
+		if err != nil {
+			_ = s.sendTabStorageError(c, req.ID, err)
+			return
+		}
+		s.sendResult(c, req.ID, result)
+	case "tabstorage.write.chunk":
+		if s.tabStorage == nil {
+			_ = s.sendError(c, req.ID, "TAB_STORAGE_UNAVAILABLE", "large custom-tab storage is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		uploadID, _ := req.Params["uploadId"].(string)
+		encoded, _ := req.Params["data"].(string)
+		if tabID == "" || uploadID == "" {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "tab id and upload id are required")
+			return
+		}
+		chunk, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", "storage chunk is not valid base64")
+			return
+		}
+		if err := s.tabStorage.WriteChunk(tabID, uploadID, int64(intParam(req.Params, "offset", 0)), chunk); err != nil {
+			_ = s.sendTabStorageError(c, req.ID, err)
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"written": len(chunk)})
+	case "tabstorage.write.commit":
+		if s.tabStorage == nil {
+			_ = s.sendError(c, req.ID, "TAB_STORAGE_UNAVAILABLE", "large custom-tab storage is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		uploadID, _ := req.Params["uploadId"].(string)
+		item, err := s.tabStorage.Commit(tabID, uploadID)
+		if err != nil {
+			_ = s.sendTabStorageError(c, req.ID, err)
+			return
+		}
+		s.sendResult(c, req.ID, item)
+	case "tabstorage.write.abort":
+		if s.tabStorage == nil {
+			_ = s.sendError(c, req.ID, "TAB_STORAGE_UNAVAILABLE", "large custom-tab storage is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		uploadID, _ := req.Params["uploadId"].(string)
+		if err := s.tabStorage.Abort(tabID, uploadID); err != nil && !errors.Is(err, tabstorage.ErrUploadNotFound) {
+			_ = s.sendTabStorageError(c, req.ID, err)
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"aborted": true})
+	case "tabstorage.batch":
+		if s.tabStorage == nil {
+			_ = s.sendError(c, req.ID, "TAB_STORAGE_UNAVAILABLE", "large custom-tab storage is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		raw, _ := req.Params["items"].([]any)
+		if tabID == "" || len(raw) == 0 || len(raw) > tabstorage.MaxBatchItems {
+			_ = s.sendError(c, req.ID, "BAD_PARAMS", fmt.Sprintf("storage batch must contain 1-%d items", tabstorage.MaxBatchItems))
+			return
+		}
+		total := int64(0)
+		saved := make([]tabstorage.Item, 0, len(raw))
+		for i, value := range raw {
+			itemMap, ok := value.(map[string]any)
+			if !ok {
+				_ = s.sendError(c, req.ID, "BAD_PARAMS", fmt.Sprintf("storage batch item %d is invalid", i))
+				return
+			}
+			name, _ := itemMap["name"].(string)
+			typeName, _ := itemMap["type"].(string)
+			encoded, _ := itemMap["data"].(string)
+			data, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				_ = s.sendError(c, req.ID, "BAD_PARAMS", fmt.Sprintf("storage batch item %d is not valid base64", i))
+				return
+			}
+			total += int64(len(data))
+			if total > tabstorage.MaxBatchBytes {
+				_ = s.sendError(c, req.ID, "BAD_PARAMS", fmt.Sprintf("storage batch exceeds %d byte transport limit", tabstorage.MaxBatchBytes))
+				return
+			}
+			stored, err := s.tabStorage.PutBytes(tabID, name, typeName, data)
+			if err != nil {
+				_ = s.sendTabStorageError(c, req.ID, fmt.Errorf("batch item %d: %w", i, err))
+				return
+			}
+			saved = append(saved, stored)
+		}
+		s.sendResult(c, req.ID, map[string]any{"items": saved})
+	case "tabstorage.delete":
+		if s.tabStorage == nil {
+			_ = s.sendError(c, req.ID, "TAB_STORAGE_UNAVAILABLE", "large custom-tab storage is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		name, _ := req.Params["name"].(string)
+		deleted, err := s.tabStorage.Delete(tabID, name)
+		if err != nil {
+			_ = s.sendTabStorageError(c, req.ID, err)
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"deleted": deleted, "name": name})
+	case "tabstorage.clear":
+		if s.tabStorage == nil {
+			_ = s.sendError(c, req.ID, "TAB_STORAGE_UNAVAILABLE", "large custom-tab storage is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		if err := s.tabStorage.Clear(tabID); err != nil {
+			_ = s.sendTabStorageError(c, req.ID, err)
+			return
+		}
+		s.sendResult(c, req.ID, map[string]any{"cleared": true})
+	case "tabstorage.quota.set":
+		if !s.requireLocal(c, req.ID, "large-storage quota changes") {
+			return
+		}
+		if s.tabStorage == nil {
+			_ = s.sendError(c, req.ID, "TAB_STORAGE_UNAVAILABLE", "large custom-tab storage is unavailable")
+			return
+		}
+		tabID, _ := req.Params["tabId"].(string)
+		quota := int64(intParam(req.Params, "quotaBytes", 0))
+		info, err := s.tabStorage.SetQuota(tabID, quota)
+		if err != nil {
+			_ = s.sendTabStorageError(c, req.ID, err)
+			return
+		}
+		s.sendResult(c, req.ID, info)
 	case "tabstate.get":
 		if s.tabState == nil {
 			_ = s.sendError(c, req.ID, "TAB_STATE_UNAVAILABLE", "persistent custom-tab state is unavailable")
@@ -2360,7 +2571,7 @@ func (s *Server) systemInfo(includeSecret bool) map[string]any {
 	// token. A tab with Video permission must never receive a WebSocket credential.
 	mediaToken := s.mediaToken
 	return map[string]any{
-		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": 14, "pid": os.Getpid(), "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken, "capabilities": s.capabilities(), "performance": s.performanceProfile(),
+		"prototype": buildinfo.Display, "version": buildinfo.Version, "product": "JACoB", "name": "Journal Aligned Control Bridge", "apiVersion": buildinfo.SDKVersion, "pid": os.Getpid(), "os": runtime.GOOS, "arch": runtime.GOARCH, "goRuntime": runtime.Version(), "host": host, "uptimeSeconds": int(time.Since(s.started).Seconds()), "mediaToken": mediaToken, "capabilities": s.capabilities(), "performance": s.performanceProfile(),
 		"journalDir": journalDir, "bindingsDir": bindingsDir, "bindingsFile": bindingsFile, "bindingsFiles": bindingsFiles, "bindingsSource": s.bindings.ActiveSource(), "bindingsCount": len(s.bindings.ListActions()), "autoBind": s.autoBind,
 		"input": map[string]any{"enabled": s.cfg.EnableInput, "available": s.input.Available(), "driver": s.input.Name()}, "recorder": s.recorder.Status(), "capture": map[string]any{"available": s.capture.Available(), "driver": s.capture.Name(), "eliteOnly": true, "foregroundOnly": true}, "vision": func() map[string]any {
 			if s.vision != nil {
@@ -2659,6 +2870,25 @@ func (s *Server) sendError(c *wsClient, id, code, msg string) error {
 	log.Printf("api/error: code=%s message=%q", code, truncateLogText(msg, 500))
 	ok := false
 	return s.send(c, envelope{Type: "response", ID: id, OK: &ok, Error: &apiError{Code: code, Message: msg}})
+}
+
+func (s *Server) sendTabStorageError(c *wsClient, id string, err error) error {
+	code := "TAB_STORAGE_FAILED"
+	switch {
+	case errors.Is(err, tabstorage.ErrNotFound):
+		code = "TAB_STORAGE_NOT_FOUND"
+	case errors.Is(err, tabstorage.ErrQuotaExceeded):
+		code = "TAB_STORAGE_QUOTA"
+	case errors.Is(err, tabstorage.ErrInvalidName):
+		code = "TAB_STORAGE_BAD_NAME"
+	case errors.Is(err, tabstorage.ErrObjectTooLarge):
+		code = "TAB_STORAGE_TOO_LARGE"
+	case errors.Is(err, tabstorage.ErrUploadNotFound):
+		code = "TAB_STORAGE_UPLOAD_NOT_FOUND"
+	case errors.Is(err, tabstorage.ErrBadOffset):
+		code = "TAB_STORAGE_BAD_OFFSET"
+	}
+	return s.sendError(c, id, code, err.Error())
 }
 
 func truncateLogText(v string, max int) string {

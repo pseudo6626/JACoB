@@ -48,9 +48,10 @@ The full custom-tab contract is recorded in:
 
 [`docs/JACOB_CUSTOM_TAB_REFERENCE.md`](docs/JACOB_CUSTOM_TAB_REFERENCE.md)
 
-SDK / protocol version **15** includes:
+SDK / protocol version **16** includes:
 
 - `Elite.clipboard.info()` / `Elite.clipboard.writeText()` for bounded, write-only host clipboard access with per-tab permission and no clipboard reads
+- `Elite.storage` for permissioned, tab-scoped large local data with Blob/binary support, JSON helpers, paged listing, batched writes, and user-approved quota expansion
 - a one-time boot HUD QR that can pair a phone/tablet in one scan for 30 seconds once the boot HUD surface is usable; the QR does not expose the reusable pair key
 
 - OS-neutral canonical Elite frame service: capture backends may differ by platform, while Vision/calibration coordinates and the no-desktop-fallback privacy rule remain identical

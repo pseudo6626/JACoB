@@ -59,7 +59,18 @@
             "tabstate.get",
             "tabstate.set",
             "tabstate.delete",
-            "tabstate.clear"
+            "tabstate.clear",
+            "tabstorage.info",
+            "tabstorage.list",
+            "tabstorage.read",
+            "tabstorage.write.begin",
+            "tabstorage.write.chunk",
+            "tabstorage.write.commit",
+            "tabstorage.write.abort",
+            "tabstorage.batch",
+            "tabstorage.delete",
+            "tabstorage.clear",
+            "tabstorage.quota.set"
           ]
         },
         "params": {

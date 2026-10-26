@@ -25,6 +25,7 @@ CAPABILITY_PATTERNS = {
     "video": (r"\bElite\.video\b",),
     "vision": (r"\bElite\.(?:vision|spatial)\b",),
     "intertab": (r"\bElite\.actions\.invoke\b",),
+    "storage": (r"\bElite\.storage\b",),
 }
 
 class SubmissionError(Exception):

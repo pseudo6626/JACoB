@@ -1,7 +1,7 @@
 # JACoB Custom Tab Developer Reference
 
-Version: Alpha 0.2.19
-SDK version: 15
+Version: Alpha 0.2.21
+SDK version: 16
 
 This is the canonical reference for building JACoB custom HTML tabs. It describes the tab runtime, the browser SDK, the direct WebSocket protocol, state and event shapes, input behavior, overlays, video, recorder support, persistence, security boundaries, and platform limitations.
 
@@ -20,6 +20,12 @@ the backend succeeds. There is no clipboard read API or game-input automation.
 See [Native clipboard API](NATIVE_CLIPBOARD.md) for platform requirements, errors,
 helper migration and the worked test tab. This API ships in Alpha 0.2.19 / SDK 15;
 feature-detect `Elite.clipboard` when supporting older hosts.
+
+---
+
+## Large local storage (SDK 16)
+
+SDK 16 adds `Elite.storage` for large tab-owned local data. It is separate from `Elite.store`: the existing store remains the small JSON state layer (512 KiB/value, 2 MiB/tab), while `Elite.storage` starts at 128 MiB/tab with 32 MiB objects, paged listing, binary `Blob` support, JSON helpers, and batched small-object writes. Access has its own per-tab permission and quota increases require explicit approval. See [Large local storage](LARGE_STORAGE.md).
 
 ---
 
@@ -159,7 +165,7 @@ Elite.journal
 The current SDK version is:
 
 ```js
-Elite.api.version === 9
+Elite.api.version === 16
 ```
 
 

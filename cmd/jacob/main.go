@@ -33,7 +33,7 @@ const (
 func main() {
 	dataDir := customtabs.DefaultDirectory()
 	setupLog(dataDir)
-	log.Printf("process/start: version=%s sdk=12 pid=%d os=%s arch=%s go=%s dataDir=%q", buildinfo.Version, os.Getpid(), runtime.GOOS, runtime.GOARCH, runtime.Version(), dataDir)
+	log.Printf("process/start: version=%s sdk=%d pid=%d os=%s arch=%s go=%s dataDir=%q", buildinfo.Version, buildinfo.SDKVersion, os.Getpid(), runtime.GOOS, runtime.GOARCH, runtime.Version(), dataDir)
 	if exe, err := os.Executable(); err == nil {
 		log.Printf("process/executable: %q", exe)
 	} else {

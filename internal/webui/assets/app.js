@@ -247,6 +247,15 @@ function onEvent(name,cb){if(!eventSubs.has(name))eventSubs.set(name,new Set());
 function sdkID64(value){if(typeof value==='number'){if(!Number.isSafeInteger(value)||value<0)throw Object.assign(new Error('id64 Number is unsafe; pass the decimal ID64 as a string'),{code:'BAD_PARAMS'});return String(value)}const s=String(value??'').trim();if(!/^\d+$/.test(s))throw Object.assign(new Error('id64 must be an unsigned decimal integer string'),{code:'BAD_PARAMS'});return s}
 function sdkNetShape(url,options={}){const out={url:String(url||''),method:options.method||'GET',headers:options.headers||{},body:typeof options.body==='string'?options.body:(options.body==null?'':JSON.stringify(options.body))};for(const k of ['group','minIntervalMs','retry','cacheTtlMs'])if(options[k]!=null)out[k]=options[k];return out}
 function cloneSDKValue(value){if(value===undefined)return undefined;if(typeof structuredClone==='function')return structuredClone(value);return JSON.parse(JSON.stringify(value))}
+function storageBase64(bytes){let binary='';const chunk=0x8000;for(let i=0;i<bytes.length;i+=chunk)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(bytes.length,i+chunk)));return btoa(binary)}
+function storageUnbase64(text){const binary=atob(String(text||'')),out=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)out[i]=binary.charCodeAt(i);return out}
+async function storageBytes(data,options={}){let bytes,type=String(options.type||'').trim();if(data instanceof Blob){bytes=new Uint8Array(await data.arrayBuffer());type=type||data.type}else if(data instanceof ArrayBuffer){bytes=new Uint8Array(data)}else if(ArrayBuffer.isView(data)){bytes=new Uint8Array(data.buffer,data.byteOffset,data.byteLength)}else if(typeof data==='string'){bytes=new TextEncoder().encode(data);type=type||'text/plain;charset=utf-8'}else throw Object.assign(new Error('storage.put accepts Blob, ArrayBuffer, typed arrays, or strings; use storage.putJSON for objects'),{code:'BAD_PARAMS'});return{bytes,type:type||'application/octet-stream'}}
+async function storagePutBytes(name,bytes,type){name=String(name||'');const begin=await request('tabstorage.write.begin',{name,sizeBytes:bytes.byteLength,type:type||'application/octet-stream'});let offset=0;try{const size=Math.max(16384,Number(begin?.chunkBytes)||524288);while(offset<bytes.byteLength){const end=Math.min(bytes.byteLength,offset+size);await request('tabstorage.write.chunk',{uploadId:begin.uploadId,offset,data:storageBase64(bytes.subarray(offset,end))});offset=end}return await request('tabstorage.write.commit',{uploadId:begin.uploadId})}catch(error){request('tabstorage.write.abort',{uploadId:begin?.uploadId||''}).catch(()=>{});throw error}}
+async function storagePut(name,data,options={}){const converted=await storageBytes(data,options);return storagePutBytes(String(name||''),converted.bytes,converted.type)}
+async function storageGet(name){name=String(name||'');let offset=0,item=null;const parts=[];try{for(;;){const r=await request('tabstorage.read',{name,offset,limit:524288});item=item||r?.item||null;const bytes=storageUnbase64(r?.data||'');parts.push(bytes);offset+=bytes.byteLength;if(r?.eof)return new Blob(parts,{type:item?.type||'application/octet-stream'})}}catch(error){if(error?.code==='TAB_STORAGE_NOT_FOUND')return null;throw error}}
+async function storagePutJSON(name,value,compact=false){const text=JSON.stringify(value,null,compact?0:2);return storagePut(name,new Blob([text],{type:'application/json;charset=utf-8'}))}
+async function storageGetJSON(name,fallback=null){const blob=await storageGet(name);if(blob===null)return fallback;return JSON.parse(await blob.text())}
+async function storagePutMany(items){if(!Array.isArray(items))throw Object.assign(new Error('storage.putMany requires an array'),{code:'BAD_PARAMS'});const out=[],batch=[];let batchBytes=0;async function flush(){if(!batch.length)return;const r=await request('tabstorage.batch',{items:batch.splice(0)});batchBytes=0;out.push(...(r?.items||[]))}for(const entry of items){if(!entry||typeof entry!=='object'||!entry.name)throw Object.assign(new Error('each storage.putMany item needs name and data'),{code:'BAD_PARAMS'});let data=entry.data,type=entry.type||'';if(data!==null&&typeof data==='object'&&!(data instanceof Blob)&&!(data instanceof ArrayBuffer)&&!ArrayBuffer.isView(data)){data=JSON.stringify(data);type=type||'application/json;charset=utf-8'}const converted=await storageBytes(data,{type}),n=converted.bytes.byteLength;if(n>1536*1024){await flush();out.push(await storagePutBytes(String(entry.name),converted.bytes,converted.type));continue}if(batch.length>=48||batchBytes+n>1536*1024)await flush();batch.push({name:String(entry.name),type:converted.type,data:storageBase64(converted.bytes)});batchBytes+=n}await flush();return out}
 function closeVideoElement(el){if(!el||typeof el.removeAttribute!=='function')return false;try{if(typeof el.pause==='function')el.pause()}catch{};try{el.removeAttribute('src');el.removeAttribute('srcset');if(el.dataset)delete el.dataset.jacobVideoActive;if(typeof el.load==='function')el.load();return true}catch{return false}}
 
 const hud=Object.freeze({
@@ -263,7 +272,7 @@ const hud=Object.freeze({
 });
 window.Elite=Object.freeze({
  clipboard:Object.freeze({info:()=>request('clipboard.info'),writeText:text=>request('clipboard.writeText',{text})}),
- api:Object.freeze({version:15}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health'),performance:()=>request('system.performance'),capabilities:()=>request('system.capabilities')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
+ api:Object.freeze({version:16}), core:Object.freeze({ping:()=>request('core.ping')}), system:Object.freeze({health:()=>request('system.health'),performance:()=>request('system.performance'),capabilities:()=>request('system.capabilities')}), state:Object.freeze({get:()=>request('state.get'),subscribe:cb=>onEvent('status',cb)}),
  bindings:Object.freeze({list:()=>request('bindings.list'),diagnostics:()=>request('bindings.diagnostics'),get:name=>request('bindings.get',{name}),reload:()=>request('bindings.reload'),press:action=>request('binding.press',{action}),down:action=>request('binding.down',{action}),up:action=>request('binding.up',{action}),hold:(action,durationMs=1000)=>request('binding.hold',{action,durationMs}),releaseAll:()=>request('bindings.releaseAll')}),
  input:Object.freeze({tap:(key,options={})=>request('input.tap',{key,delayMs:options.delayMs||0,modifiers:options.modifiers||[]}),hold:(key,durationMs=250,options={})=>request('input.hold',{key,durationMs,modifiers:options.modifiers||[]}),text:(text,options={})=>request('input.text',{text,intervalMs:options.intervalMs??15}),releaseAll:()=>request('input.releaseAll')}),
  recorder:Object.freeze({status:()=>request('recorder.status'),start:()=>request('recorder.start'),stop:()=>request('recorder.stop'),subscribe:cb=>onEvent('recorder.input',cb)}),
@@ -321,6 +330,19 @@ window.Elite=Object.freeze({
  update:async(key,updater,options={})=>{if(typeof updater!=='function')throw Object.assign(new Error('store.update requires an updater function'),{code:'BAD_PARAMS'});const retries=Math.max(1,Math.min(20,Number(options.retries)||8));for(let attempt=1;attempt<=retries;attempt++){const before=await request('tabstate.get',{key}),found=!!before?.found,current=found?cloneSDKValue(before.value):cloneSDKValue(options.defaultValue??null),next=await updater(cloneSDKValue(current),{found,attempt});if(next===undefined)throw Object.assign(new Error('store.update updater must return a JSON value; use store.delete() to remove a key'),{code:'BAD_PARAMS'});const result=await request('tabstate.cas',{key,expectedFound:found,expected:before?.value??null,value:next});if(result?.swapped)return result.value}throw Object.assign(new Error('store.update could not commit because the value kept changing'),{code:'TAB_STATE_CONFLICT'})},
  batch:operations=>request('tabstate.batch',{operations:Array.isArray(operations)?operations:[]})
 }),
+ storage:Object.freeze({
+  info:()=>request('tabstorage.info'),
+  usage:()=>request('tabstorage.info'),
+  list:(prefix='',options={})=>request('tabstorage.list',{prefix:String(prefix||''),cursor:String(options.cursor||''),limit:Number(options.limit)||100}),
+  put:storagePut,
+  get:storageGet,
+  putJSON:storagePutJSON,
+  getJSON:storageGetJSON,
+  putMany:storagePutMany,
+  delete:name=>request('tabstorage.delete',{name:String(name||'')}),
+  clear:()=>request('tabstorage.clear'),
+  requestQuota:quotaBytes=>request('tabstorage.quota.request',{quotaBytes:Number(quotaBytes)||0})
+ }),
  actions:Object.freeze({
   register:async(name,handler,options={})=>{name=String(name||'').trim();if(!name)throw Object.assign(new Error('action name is required'),{code:'BAD_PARAMS'});if(typeof handler!=='function')throw Object.assign(new Error('action handler must be a function'),{code:'BAD_PARAMS'});actionHandlers.set(name,handler);try{await request('actions.register',{name,label:String(options.label||''),description:String(options.description||'')})}catch(error){if(actionHandlers.get(name)===handler)actionHandlers.delete(name);throw error}return async()=>{if(actionHandlers.get(name)===handler)actionHandlers.delete(name);try{return await request('actions.unregister',{name})}catch(error){if(error?.code!=='ACTION_NOT_FOUND')throw error;return{unregistered:true,name}}}},
   unregister:async name=>{name=String(name||'').trim();actionHandlers.delete(name);return request('actions.unregister',{name})},
@@ -370,7 +392,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     const box=document.createElement('div');box.appendChild(frag);return box.innerHTML;
   }
   const defaultBrand='<strong>JACoB</strong><span>Journal Aligned Control Bridge</span>';
-  const defaultFooter='<span>JACoB Alpha 0.2.19 · SDK 15</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';
+  const defaultFooter='<span>JACoB Alpha 0.2.21 · SDK 16</span><a href="/docs/index.html" target="_blank" rel="noopener">Documentation</a>';
   function applyAppearance(html=''){
     state.themeHTML=html||'';
     $('#jacob-user-theme').textContent='';
@@ -587,7 +609,8 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     overlay:{label:'Draw an Elite overlay',detail:'place graphics in JACoB’s game overlay'},
     video:{label:'View the Elite video feed',detail:'display the focus-gated Elite Dangerous capture stream'},
     vision:{label:'Use derived game vision',detail:'receive derived measurements, OCR text and calibration results computed from Elite-only frames; raw pixels are never exposed to custom tabs'},
-    intertab:{label:'Control other JACoB tabs',detail:'invoke actions that other saved tabs explicitly publish through the JACoB action broker'}
+    intertab:{label:'Control other JACoB tabs',detail:'invoke actions that other saved tabs explicitly publish through the JACoB action broker'},
+    storage:{label:'Use large local storage',detail:'store and read larger tab-owned files on this computer. Storage is isolated to this saved tab, starts with a 128 MiB quota, and is deleted when the tab is removed'}
   };
   function tabPermissionKey(frame){const id=frame?.dataset?.savedTabId||frame?.dataset?.overlayLayer||'preview';const version=frame?.dataset?.savedTabId?(savedTabMeta(id)?.updatedAt||'unknown'):'session';return `jacob-tab-permissions:${id}:${version}`}
   const previewPermissions=new WeakMap();
@@ -608,6 +631,7 @@ parent.postMessage({channel:'jacob-tab',kind:'ready'},'*');})();<\/script>`;
     if(method==='recorder.start'||method==='recorder.stop')return'recorder';
     if(method==='overlay.set'||method==='overlay.clear')return'overlay';
     if(method==='actions.invoke')return'intertab';
+    if(method.startsWith('tabstorage.'))return'storage';
     if(method==='macros.run'||method.startsWith('input.')||method.startsWith('binding.'))return'control';
     return'';
   }
@@ -632,6 +656,8 @@ Allow this capability on this browser?`);
     let gap=0;
     if(method==='vision.sample'||method==='vision.inspect'||method==='spatial.update'||method==='journal.read')gap=75;
     else if(method==='net.fetch'||method==='net.fetchQueued'||method==='net.fetchBatch'||method==='catalog.system.get')gap=100;
+    else if(method==='tabstorage.read'||method==='tabstorage.write.chunk')gap=5;
+    else if(method.startsWith('tabstorage.'))gap=20;
     else if(method==='tabstate.set'||method==='tabstate.cas'||method==='tabstate.batch'||method==='tabstate.delete'||method==='tabstate.clear')gap=50;
     const last=r.last.get(method)||-Infinity;if(now-last<gap){tabRequestRates.set(frame,r);return false}
     r.count++;r.last.set(method,now);tabRequestRates.set(frame,r);return true;
@@ -737,7 +763,7 @@ Allow this capability on this browser?`);
   async function refreshTutorial(){
     const core=state.core,snap=state.snapshot;
     if(!core){tutorialMark('core','blocked','Core connection is offline.');return}
-    tutorialMark('core',Number(core.apiVersion)===12?'ready':'check',`${core.product||'JACoB'} ${core.version||core.prototype||''}\nSDK ${core.apiVersion||'?'} · ${core.os||'?'} / ${core.arch||'?'}`);
+    tutorialMark('core',Number(core.apiVersion)===16?'ready':'check',`${core.product||'JACoB'} ${core.version||core.prototype||''}\nSDK ${core.apiVersion||'?'} · ${core.os||'?'} / ${core.arch||'?'}`);
     let paths=state.paths;if(privilegedClient()&&!paths){try{paths=await loadPathSettings()}catch{}}
     const journalDir=core.journalDir||paths?.effective?.journalDir||'',bindingsDir=core.bindingsDir||paths?.effective?.bindingsDir||'';
     tutorialMark('path',journalDir&&bindingsDir?'ready':'check',privilegedClient()&&paths?pathSummary(paths):`Journal: ${journalDir||'not detected'}\nBindings: ${bindingsDir||'not detected'}`);
@@ -944,7 +970,7 @@ Allow this capability on this browser?`);
   function communityPackageID(name){return `community.${communitySlug(name)}.${communityRandomHex(3)}`}
   function communityVersionTuple(v){const m=String(v||'').match(/^(\d+)\.(\d+)\.(\d+)$/);return m?m.slice(1).map(Number):[1,0,0]}
   function communityNextVersion(base,change){let [major,minor,patch]=communityVersionTuple(base);if(change==='breaking')return `${major+1}.0.0`;if(change==='feature')return `${major}.${minor+1}.0`;return `${major}.${minor}.${patch+1}`}
-  function communityDetectCapabilities(html){const rules={clipboard:/\bElite\.clipboard\b/,control:/\bElite\.(?:input|bindings|macros)\b/,network:/\bElite\.(?:net|catalog)\b/,recorder:/\bElite\.recorder\b/,overlay:/\bElite\.(?:overlay|hud)\b/,video:/\bElite\.video\b/,vision:/\bElite\.(?:vision|spatial)\b/,intertab:/\bElite\.actions\.invoke\b/};return Object.entries(rules).filter(([,re])=>re.test(html)).map(([name])=>name).sort()}
+  function communityDetectCapabilities(html){const rules={clipboard:/\bElite\.clipboard\b/,control:/\bElite\.(?:input|bindings|macros)\b/,network:/\bElite\.(?:net|catalog)\b/,recorder:/\bElite\.recorder\b/,overlay:/\bElite\.(?:overlay|hud)\b/,video:/\bElite\.video\b/,vision:/\bElite\.(?:vision|spatial)\b/,intertab:/\bElite\.actions\.invoke\b/,storage:/\bElite\.storage\b/};return Object.entries(rules).filter(([,re])=>re.test(html)).map(([name])=>name).sort()}
   async function communitySHA256(bytes){const digest=await crypto.subtle.digest('SHA-256',bytes);return [...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('')}
   function communityBytesToBase64(bytes){let binary='';const chunk=0x8000;for(let i=0;i<bytes.length;i+=chunk)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(bytes.length,i+chunk)));return btoa(binary)}
   function communityDownload(name,text){const blob=new Blob([text],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.style.display='none';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)}
@@ -1295,10 +1321,16 @@ Allow this capability on this browser?`);
         if(!requireTabCapability(frame,'video')){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:'video permission was not granted'}});return}
         sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result:videoURL(m.params||{})});return
       }
-      const allowed=new Set(['clipboard.info','clipboard.writeText','core.ping','system.health','state.get','bindings.list','bindings.diagnostics','bindings.get','bindings.reload','input.tap','input.hold','input.text','binding.press','binding.down','binding.up','binding.hold','recorder.status','recorder.start','recorder.stop','macros.list','macros.get','macros.run','video.info','vision.info','vision.sample','vision.inspect','spatial.info','spatial.begin','spatial.update','spatial.observe','spatial.pose','spatial.landmarks','spatial.project','spatial.export','spatial.import','spatial.end','overlay.info','overlay.set','overlay.clear','galaxy.parseSystemName','galaxy.decodeAddress','galaxy.encodeAddress','galaxy.addressForSequence','galaxy.boxel','galaxy.boxelHierarchy','catalog.system.get','net.fetch','net.fetchQueued','net.fetchBatch','elitefiles.list','elitefiles.get','journal.files','journal.read','tabstate.get','tabstate.set','tabstate.cas','tabstate.batch','tabstate.delete','tabstate.clear','locale.get']);
+      if(m.method==='tabstorage.quota.request'){
+        if(!requireTabCapability(frame,'storage')){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:'storage permission was not granted'}});return}
+        const tabId=frame?.dataset?.savedTabId||'';if(!tabId){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'TAB_STORAGE_PREVIEW',message:'large storage is available after the tab is saved'}});return}
+        const quota=Number(m.params?.quotaBytes||0),tiers=[128,256,512,1024].map(x=>x*1024*1024);if(!Number.isSafeInteger(quota)||!tiers.includes(quota)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'BAD_PARAMS',message:'quota must be 128, 256, 512, or 1024 MiB'}});return}
+        try{const current=await request('tabstorage.info',{tabId});if(quota<=Number(current?.quotaBytes||0)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result:current});return}const meta=savedTabMeta(tabId),name=meta?.name||'This tab',mb=Math.round(quota/1024/1024);if(!confirm(name+' wants to increase its large local storage allowance to '+mb+' MiB.\n\nThis data stays on the computer running JACoB and is deleted when the tab is removed. Allow this increase?')){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:'storage quota increase was not approved'}});return}const result=await request('tabstorage.quota.set',{tabId,quotaBytes:quota});sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}return
+      }
+      const allowed=new Set(['clipboard.info','clipboard.writeText','core.ping','system.health','state.get','bindings.list','bindings.diagnostics','bindings.get','bindings.reload','input.tap','input.hold','input.text','binding.press','binding.down','binding.up','binding.hold','recorder.status','recorder.start','recorder.stop','macros.list','macros.get','macros.run','video.info','vision.info','vision.sample','vision.inspect','spatial.info','spatial.begin','spatial.update','spatial.observe','spatial.pose','spatial.landmarks','spatial.project','spatial.export','spatial.import','spatial.end','overlay.info','overlay.set','overlay.clear','galaxy.parseSystemName','galaxy.decodeAddress','galaxy.encodeAddress','galaxy.addressForSequence','galaxy.boxel','galaxy.boxelHierarchy','catalog.system.get','net.fetch','net.fetchQueued','net.fetchBatch','elitefiles.list','elitefiles.get','journal.files','journal.read','tabstate.get','tabstate.set','tabstate.cas','tabstate.batch','tabstate.delete','tabstate.clear','tabstorage.info','tabstorage.list','tabstorage.read','tabstorage.write.begin','tabstorage.write.chunk','tabstorage.write.commit','tabstorage.write.abort','tabstorage.batch','tabstorage.delete','tabstorage.clear','locale.get']);
       if(!allowed.has(m.method)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'SDK_DENIED',message:'method not exposed by JACoB SDK'}});return}
       const capability=capabilityForMethod(m.method);if(capability&&!requireTabCapability(frame,capability)){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error:{code:'PERMISSION_DENIED',message:`${capability} permission was not granted`}});return}
-      try{let params=m.params||{};if(m.method==='overlay.set'||m.method==='overlay.clear')params={...params,layer:overlayLayerForFrame(frame)};if(m.method.startsWith('tabstate.')){const tabId=frame?.dataset?.savedTabId||'';if(!tabId)throw{code:'TAB_STATE_PREVIEW',message:'persistent state is available after the tab is saved'};params={...params,tabId}}const result=await request(m.method,params);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}
+      try{let params=m.params||{};if(m.method==='overlay.set'||m.method==='overlay.clear')params={...params,layer:overlayLayerForFrame(frame)};if(m.method.startsWith('tabstate.')){const tabId=frame?.dataset?.savedTabId||'';if(!tabId)throw{code:'TAB_STATE_PREVIEW',message:'persistent state is available after the tab is saved'};params={...params,tabId}}if(m.method.startsWith('tabstorage.')){const tabId=frame?.dataset?.savedTabId||'';if(!tabId)throw{code:'TAB_STORAGE_PREVIEW',message:'large storage is available after the tab is saved'};params={...params,tabId}}const result=await request(m.method,params);sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:true,result})}catch(error){sendToFrame(frame,{channel:'jacob-host',kind:'response',id:m.id,ok:false,error})}
     }
   });
 
